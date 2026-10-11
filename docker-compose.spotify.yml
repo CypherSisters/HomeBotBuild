@@ -1,0 +1,164 @@
+# PuffPAI Spotify Connect -- librespot (MIT, librespot-org/librespot)
+#
+# Usage:
+#   docker compose -f /data/puffpai/spotify/docker-compose.spotify.yml up -d
+#   docker compose -f /data/puffpai/spotify/docker-compose.spotify.yml logs -f
+#
+# WHY ZEROCONF / DISCOVERY MODE AND NO STORED CREDENTIALS
+# -------------------------------------------------------
+# This appliance is shared by a household. It must NOT hold anyone's Spotify
+# identity. In zeroconf (discovery) mode librespot advertises itself on the
+# LAN as a Connect speaker named "PuffPAI" and stays logged OUT until a
+# person picks it in THEIR OWN Spotify app; the session then runs under
+# THAT person's account and ends when they disconnect. Whoever connects next
+# plays under their own account, with their own library and Premium status.
+#
+# Consequences that are deliberate, not oversights:
+#   * NO SPOTIFY_USERNAME / SPOTIFY_PASSWORD / OAuth env vars, and no
+#     /user/config/credentials.txt mount. Setting any of them would pin the
+#     device to one account and break the per-user requirement.
+#   * DISABLE_CREDENTIAL_CACHE=Y -- no user auth blob is ever written to
+#     disk on this box. A stolen or RMA'd appliance carries no Spotify
+#     identity.
+#   * DISABLE_AUDIO_CACHE=Y -- no decrypted audio spooled to disk either.
+#   * There is no volume mount at all. The container is stateless by design.
+#
+# WHY host NETWORKING
+# -------------------
+# Spotify Connect discovery is mDNS/DNS-SD (multicast UDP 5353). Multicast
+# does not survive the docker0 bridge NAT, so a bridged container is simply
+# never seen by phones on the LAN. Host mode is a requirement here, not a
+# convenience -- which is also why this container is pinned to a non-root
+# uid with all capabilities dropped (below): in the host netns there is no
+# network namespace boundary left to fall back on.
+#
+# EXPOSURE / FIREWALL
+# -------------------
+# Host networking bypasses Docker port publishing, so an INPUT policy you
+# install yourself is the only control -- this release ships no packet
+# filter, so on a stock box nothing filters these. librespot needs two
+# inbound ports, LAN-only:
+#     udp/5353   mDNS discovery
+#     tcp/40123  zeroconf session/handshake port (pinned, not ephemeral,
+#                so the firewall rule can be a single fixed port)
+# If your INPUT policy drops them, the device will not appear in anyone's
+# Spotify app -- the container is healthy but unreachable.
+#
+# Image is pinned by digest; :latest is never used on this appliance.
+#   giof71/librespot bookworm-2026-03-14 == librespot 0.8.0 (d36f9f1), arm64.
+
+services:
+  spotify:
+    image: giof71/librespot:bookworm-2026-03-14@sha256:0c7cd19a49547cd0e34ac7c6d9aadd4b2703c5cb13acd1dbfd4982c311d478fb
+    container_name: puffpai-spotify
+    hostname: puffpai-spotify
+    restart: unless-stopped
+
+    # See "WHY host NETWORKING" above. Not negotiable for Connect discovery.
+    network_mode: host
+
+    # Run as the puffpai uid/gid rather than root. The image entrypoint has a
+    # root "user mode" path (PUID/PGID) that useradds and then su's; setting
+    # user: here skips that block entirely, so the container never has a root
+    # process at all. group_add 29 == the HOST "audio" group, which owns
+    # /dev/snd/* (crw-rw---- root:audio) -- that is what grants playback.
+    user: "1000:1000"
+    group_add:
+      - "29"
+    devices:
+      - /dev/snd:/dev/snd
+
+    # Least privilege: librespot needs no capabilities (it binds 40123 and
+    # 5353, both >1024), cannot gain any via setuid, and writes nothing
+    # outside a small tmpfs. If any of this is ever relaxed, say why here.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+
+    # The ONLY mount, and it is read-only code, not state: the event script
+    # below. The container remains stateless -- nothing it writes survives it.
+    volumes:
+      - /data/puffpai/spotify/userscripts:/userscripts:ro
+      # The host's ALSA config. /dev/snd alone is NOT enough: the device
+      # NODES are only half of ALSA, the other half is the config that says
+      # what "default" MEANS. Without this the container has no default PCM,
+      # snd_pcm_open("default") fails with ENOENT, librespot cannot open a
+      # sink, and the phone connects but refuses to play. Mounting the host's
+      # own file makes the container resolve audio identically to the box
+      # (default -> plug -> hw:APE,0), so it also follows any change made
+      # there.
+      - /etc/asound.conf:/etc/asound.conf:ro
+
+    environment:
+      TZ: "${TZ:-Etc/UTC}"
+      # -> librespot --name PuffPAI
+      DEVICE_NAME: "PuffPAI"
+      # -> librespot --backend alsa
+      BACKEND: "alsa"
+      # -> librespot --bitrate 320
+      BITRATE: "320"
+      # -> librespot --zeroconf-port 40123   (fixed, so the firewall can pin it)
+      ZEROCONF_PORT: "40123"
+      # -> librespot --zeroconf-interface $PUFFPAI_BIND_IP
+      # WITHOUT this, librespot binds zeroconf to EVERY interface, and because
+      # host networking puts the docker0 bridge in scope it can advertise
+      # 172.17.0.1 -- an address that exists only inside this box. Phones then
+      # SEE "PuffPAI" in Spotify and fail the moment they try to connect.
+      # Pinned to the appliance's LAN address, which is already load-bearing
+      # in the dashboard CSP and the Jellyfin proxy target: if this box's IP
+      # ever changes, all three change together.
+      ZEROCONF_INTERFACE: "${PUFFPAI_BIND_IP:?set PUFFPAI_BIND_IP to this box LAN IPv4 address (scripts/install_orin.sh writes it to /opt/puffpai/.env)}"
+      # -> librespot --initial-volume 60
+      INITIAL_VOLUME: "60"
+      # -> librespot --disable-audio-cache
+      DISABLE_AUDIO_CACHE: "Y"
+      # -> librespot --disable-credential-cache
+      DISABLE_CREDENTIAL_CACHE: "Y"
+      # -> librespot --onevent <script that POSTs the event as JSON>
+      # Spotify Connect has no telemetry to pull: a session belongs to the
+      # phone that started it, and librespot exposes player state ONLY as
+      # these outbound events. Without this the Now Playing tile can never
+      # know anyone is casting. Loopback because the container is on the host
+      # netns (INPUT lo ACCEPT), so this never crosses the LAN.
+      ONEVENT_POST_ENDPOINT: "http://127.0.0.1:8000/apps/mediahub/spotify-event"
+      # -> librespot --onevent '/userscripts/post-event-json.py'
+      # The entrypoint gives ONEVENT_COMMAND precedence over the stock
+      # post-event-data.sh, which interpolates raw env vars into a JSON
+      # literal: a track with a quote in the title, or ANY multi-artist
+      # track (librespot newline-separates ARTISTS), produces an invalid
+      # body and the event is lost. Ours builds the payload with json.dumps
+      # and sends the multi-valued fields as arrays. It reads the
+      # destination from ONEVENT_POST_ENDPOINT above.
+      ONEVENT_COMMAND: "post-event-json.py"
+      # NOTE: the entrypoint also appends --zeroconf-backend libmdns (its
+      # default) whenever discovery is on. libmdns is librespot's own mDNS
+      # responder; it coexists with the host's avahi-daemon on 5353. The
+      # alternative (--zeroconf-backend avahi) would need the host D-Bus
+      # socket mounted into the container -- more privilege, no benefit.
+
+    # Liveness = the zeroconf handshake port is actually accepting. A plain
+    # "process is up" check would stay green while discovery is dead.
+    # Probed on the LAN address rather than loopback: that is the address
+    # zeroconf binds and advertises, so this checks the port phones
+    # actually connect to. (Loopback does not answer here.)
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/${PUFFPAI_BIND_IP:?set PUFFPAI_BIND_IP to this box LAN IPv4 address (scripts/install_orin.sh writes it to /opt/puffpai/.env)}/40123"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,20 @@
+# Shell scripts must keep LF even when checked out on Windows: bash refuses a
+# script whose shebang line ends in CR, and install.sh is run from WSL, from a
+# container and from a Linux box against the same checkout.
+*.sh text eol=lf
+
+# systemd reads unit files literally; a CR in a directive value becomes part of
+# the value.
+*.service text eol=lf
+systemd/** text eol=lf
+
+# Compose files are consumed by the Docker CLI on both platforms; keep them LF
+# so a Windows checkout and a Linux one hash the same.
+docker-compose*.yml text eol=lf
+
+# Vendored binary assets — never line-ending-convert these.
+*.woff2 binary
+*.woff binary
+*.ttf binary
+*.otf binary
+*.onnx binary

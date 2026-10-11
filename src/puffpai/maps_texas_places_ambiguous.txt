@@ -1,0 +1,58 @@
+# Texas towns from maps_texas_places.txt whose name usually means something
+# else: a first name or surname ("how far is Melissa" is about a person), a
+# famous place outside Texas ("how far is Paris"), or an everyday word
+# ("how do I get to fate"). For these, a weak phrasing ("how far is X", "how
+# do I get to X") counts as a place ask ONLY with a Texas qualifier ("Melissa,
+# Texas", "Paris TX"). A strong phrasing ("directions to Paris", "how do I
+# drive to Victoria") is still claimed. One name per line; judgment, not data.
+#
+# first names and surnames
+tyler
+melissa
+alice
+victoria
+allen
+bryan
+katy
+jasper
+graham
+alvin
+edna
+cameron
+irving
+vernon
+brady
+sherman
+murphy
+marshall
+bowie
+# famous places outside Texas
+paris
+atlanta
+princeton
+columbus
+cleveland
+portland
+richmond
+pasadena
+santa fe
+athens
+palestine
+jacksonville
+lancaster
+bedford
+dayton
+corinth
+odessa
+socorro
+roma
+selma
+sunnyvale
+carthage
+# everyday words and brands
+fate
+humble
+prosper
+manor
+converse
+cisco

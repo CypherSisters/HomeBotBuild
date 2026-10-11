@@ -1,0 +1,47 @@
+{
+  "schema": "puffpai_package/v1",
+  "id": "integrate",
+  "kind": "skill",
+  "version": "1.0.0",
+  "author": "puffpai",
+  "license": "Apache-2.0",
+  "label": "Getting it in",
+  "description": "Fetch and index what was chosen, and record what is really on disk.",
+  "reads": [
+    "sources",
+    "machine",
+    "posture"
+  ],
+  "writes": "knowledge",
+  "permissions": {
+    "network_hosts": [
+      "api.nasa.gov",
+      "docs.astropy.org",
+      "download.kiwix.org",
+      "medlineplus.gov"
+    ],
+    "files": [
+      "data"
+    ],
+    "ha_domains": [],
+    "secrets": []
+  },
+  "doors": [],
+  "secrets": [],
+  "egress": "build_only",
+  "estimate": {
+    "bytes": 0,
+    "seconds": 0,
+    "basis": "unknown"
+  },
+  "rerun": "additive",
+  "undo": "reversible_with_residue",
+  "blocking": false,
+  "provides": [
+    "knowledge.status"
+  ],
+  "needs": [
+    "sources.plan"
+  ],
+  "builtin": true
+}

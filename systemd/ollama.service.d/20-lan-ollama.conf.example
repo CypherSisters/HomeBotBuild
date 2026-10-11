@@ -1,0 +1,32 @@
+# OPT-IN, NOT INSTALLED. Exposing Ollama beyond loopback.
+#
+#   ⚠ READ THIS BEFORE COPYING IT INTO PLACE ⚠
+#
+# Ollama has no authentication, no rate limit and no audit log. OLLAMA_HOST
+# accepts exactly ONE host:port, so it cannot bind loopback AND the docker
+# bridge at the same time — the only way to serve a container over
+# host.docker.internal is to bind every interface, which also means the LAN.
+#
+# This appliance ships with NO host packet filter. If you install this file
+# as-is, every device on your home network can:
+#   * run prompts through your household model (and be billed nothing, while
+#     you pay the electricity and the GPU is busy when you ask it something),
+#   * list which models you have pulled,
+#   * push or DELETE models (`ollama rm` is an unauthenticated HTTP call).
+#
+# Install this ONLY if you have a packet filter that permits 11434 from
+# loopback and the docker bridge (172.17.0.0/16) and DROPS it from the LAN,
+# and only if you actually need the Node-RED health_check tile. Verify after
+# every change, from another machine on the LAN:
+#
+#   curl --max-time 3 http://<this-box-lan-ip>:11434/api/tags   # must FAIL
+#
+# To install:
+#   sudo install -D -m 0644 systemd/ollama.service.d/20-lan-ollama.conf.example \
+#       /etc/systemd/system/ollama.service.d/20-lan-ollama.conf
+#   sudo systemctl daemon-reload && sudo systemctl restart ollama
+#
+# The 20- prefix sorts after override.conf, so this wins.
+
+[Service]
+Environment="OLLAMA_HOST=0.0.0.0:11434"

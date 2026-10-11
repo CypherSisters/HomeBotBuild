@@ -1,0 +1,89 @@
+# HomeBotBuild — BASE requirements (Python 3.10+)
+#
+# Everything in this file must install on BOTH of these with a plain
+# `pip install -r requirements.txt` and no system packages:
+#
+#   * python:3.12-slim (x86-64 Linux, CPU only, no compiler)
+#   * Windows 10/11 x64 with python.org CPython
+#
+# That is the portability contract for HomeBotBuild. Anything that needs a
+# compiler, a GPU, a sound server, a system binary or a Linux-only kernel
+# feature is an EXTRA in setup.py, not a line here:
+#
+#   pip install -e ".[voice]"   mic + wake word + Whisper/Vosk + Piper (needs
+#                               PortAudio on Linux; CPU-heavy)
+#   pip install -e ".[ocr]"     image/scanned-PDF text (needs tesseract-ocr and
+#                               poppler-utils installed by the OS)
+#   pip install -e ".[zone3]"   Zone 3 network-edge bootstrap (Linux only)
+#   pip install -e ".[ml]"      second-stage device classifier (scikit-learn)
+#   pip install -e ".[dev]"     pytest / black / flake8 / mypy
+#   pip install -e ".[orin]"    the Founders-appliance superset
+#
+# Keep this list boring. A base install that fails on one of the two platforms
+# above is a bug, not a note in the docs.
+
+# Vector Database
+chromadb>=1.5.0,<2.0
+
+# LangChain Framework
+langchain>=1.2.0,<2.0
+langchain-community>=0.4.0,<1.0
+langchain-ollama>=1.0.0,<2.0
+langgraph>=1.0.0,<2.0
+
+# Web Framework
+flask>=3.0.0,<4.0
+
+# HTTP Requests
+requests>=2.31.0,<3.0
+
+# Home Assistant WebSocket event listener (puffpai.ha_events).
+# Pure-Python, no build step. Home Assistant itself is optional; this dependency
+# is small enough that gating it behind an extra would buy nothing.
+websocket-client>=1.7.0,<2.0
+
+# HTML Parsing
+beautifulsoup4>=4.12.0,<5.0
+
+# Web Search
+ddgs>=9.0.0,<10.0
+
+# Image Processing
+Pillow>=12.0.0,<13.0
+# HEIC/HEIF (iPhone photos) — PIL cannot open these without it
+pillow-heif>=0.18.0
+
+# PDF Extraction
+pypdf>=6.0.0,<7.0
+
+# Document Parsing (docx/pdf/xlsx/pptx extraction)
+python-docx>=1.1.0
+pdfplumber>=0.11.0
+openpyxl>=3.1.0
+python-pptx>=1.0.0
+
+# Encryption -- vault DEK (AES-256-GCM), PBKDF2-HMAC-SHA256 / scrypt key
+# derivation, and the app-data log envelope. No X.509, no PKCS#7/CMS, no cert-chain
+# verification anywhere in this tree.
+#
+# The floor is 48.0.1, not 41.0.0: every wheel below it statically links an
+# OpenSSL predating the 2026-06-09 secadv (GHSA-537c-gmf6-5ccf), which is the
+# one advisory that applies regardless of which APIs you call. 49.0.0 and
+# 50.0.0 additionally close PYSEC-2026-3554/3553 (X.509 name-constraint escape,
+# path-building DoS) and PYSEC-2026-3552 (PKCS#7 EnvelopedData decrypt oracle) --
+# unreachable here, but taken anyway because nothing costs us to take them.
+#
+# The range resolves to 50.0.1 on every platform that publishes a wheel for it,
+# including the Orin (cp39-abi3 manylinux2014_aarch64, cp310-compatible). Only
+# 32-bit Windows and Intel macOS have no 49+/50+ wheel and land on 48.0.1.
+# DO NOT lower the floor without re-checking the advisories above.
+cryptography>=48.0.1,<51.0
+
+# Utilities
+python-dotenv>=1.0.0,<2.0
+pydantic>=2.0.0,<3.0
+
+# OS keychain backend for the secrets provider. Present on every platform;
+# with no keychain service available the provider falls through to the
+# vault/env tiers instead of failing.
+keyring>=25.0

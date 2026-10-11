@@ -1,0 +1,381 @@
+# Texas cities and towns, one per line. Data for puffpai.maps_directions:
+# a "how far is X" / "how do I get to X" ask counts as a place ask when X is
+# one of these. Not an official list: about 370 Texas cities and towns,
+# written from general knowledge (no offline copy of the ~1,200 incorporated
+# places was available to source). Names that are also everyday words
+# (Center, Post, Spring, Temple, Mission, Kyle...) are left out on purpose.
+# Extend freely; matching is case- and
+# punctuation-insensitive.
+abilene
+addison
+alamo
+alamo heights
+aledo
+alice
+allen
+alpine
+alton
+alvarado
+alvin
+amarillo
+andrews
+angleton
+anson
+aransas pass
+argyle
+arlington
+athens
+atlanta
+austin
+azle
+balch springs
+ballinger
+bandera
+bastrop
+bay city
+baytown
+beaumont
+bedford
+beeville
+bellaire
+bellmead
+belton
+benbrook
+big spring
+blanco
+boerne
+bonham
+borger
+bowie
+brady
+brenham
+bridgeport
+brownfield
+brownsville
+brownwood
+bryan
+buda
+bulverde
+burkburnett
+burleson
+burnet
+caldwell
+cameron
+canyon
+canyon lake
+carrizo springs
+carrollton
+carthage
+castroville
+cedar hill
+cedar park
+celina
+channelview
+childress
+cibolo
+cisco
+clarksville
+cleburne
+cleveland
+clute
+coleman
+college station
+colleyville
+columbus
+comanche
+conroe
+converse
+coppell
+copperas cove
+corinth
+corpus christi
+corsicana
+crockett
+crowley
+crystal city
+cuero
+dalhart
+dallas
+dayton
+decatur
+deer park
+del rio
+denison
+denton
+desoto
+devine
+diboll
+dickinson
+dimmitt
+donna
+dripping springs
+dumas
+duncanville
+eagle lake
+eagle pass
+edinburg
+edna
+el campo
+el paso
+elgin
+ennis
+euless
+everman
+fair oaks ranch
+fairview
+falfurrias
+farmers branch
+fate
+floresville
+flower mound
+forest hill
+forney
+fort stockton
+fort worth
+fredericksburg
+freeport
+friendswood
+frisco
+gainesville
+galena park
+galveston
+garden ridge
+garland
+gatesville
+georgetown
+giddings
+gilmer
+gladewater
+glenn heights
+glen rose
+gonzales
+graham
+granbury
+grand prairie
+grand saline
+grapevine
+greenville
+groves
+gun barrel city
+haltom city
+harker heights
+harlingen
+haskell
+hearne
+helotes
+henderson
+hereford
+hewitt
+hidalgo
+highland park
+highland village
+hillsboro
+hitchcock
+hondo
+horizon city
+houston
+hudson oaks
+humble
+huntsville
+hurst
+hutto
+ingleside
+iowa park
+irving
+jacinto city
+jacksonville
+jasper
+jersey village
+jourdanton
+katy
+kaufman
+keller
+kemah
+kenedy
+kennedale
+kerrville
+kilgore
+killeen
+kingsville
+la feria
+la grange
+la joya
+la marque
+la porte
+lacy lakeview
+lago vista
+lake dallas
+lake jackson
+lake worth
+lakeway
+lamesa
+lampasas
+lancaster
+laredo
+league city
+leander
+leon valley
+levelland
+lewisville
+liberty hill
+little elm
+littlefield
+live oak
+livingston
+llano
+lockhart
+longview
+lubbock
+lufkin
+luling
+lumberton
+mabank
+madisonville
+manor
+mansfield
+marble falls
+marfa
+marlin
+marshall
+mathis
+mcallen
+mckinney
+melissa
+mercedes
+mesquite
+mexia
+midland
+midlothian
+mineola
+mineral wells
+missouri city
+monahans
+mount pleasant
+muleshoe
+murphy
+nacogdoches
+navasota
+nederland
+new braunfels
+north richland hills
+odessa
+olney
+ovilla
+palestine
+palmview
+pampa
+pantego
+paris
+pasadena
+pearland
+pearsall
+pecos
+pflugerville
+pharr
+pilot point
+plainview
+plano
+pleasanton
+port aransas
+port arthur
+port isabel
+port lavaca
+port neches
+portland
+pottsboro
+princeton
+prosper
+quinlan
+raymondville
+red oak
+richardson
+richland hills
+richmond
+rio grande city
+river oaks
+roanoke
+robstown
+rockdale
+rockport
+rockwall
+roma
+rosenberg
+round rock
+rowlett
+royse city
+rusk
+sachse
+saginaw
+san angelo
+san antonio
+san benito
+san juan
+san marcos
+sanger
+santa fe
+schertz
+seabrook
+seagoville
+sealy
+seguin
+selma
+shavano park
+sherman
+silsbee
+sinton
+slaton
+smithville
+snyder
+socorro
+somerset
+sonora
+south padre island
+southlake
+spring valley village
+stafford
+stephenville
+sugar land
+sulphur springs
+sunnyvale
+sweetwater
+taft
+terrell
+texarkana
+texas city
+the colony
+the woodlands
+tomball
+trophy club
+tyler
+universal city
+university park
+uvalde
+van alstyne
+vernon
+victoria
+vidor
+waco
+wake village
+watauga
+waxahachie
+weatherford
+webster
+weimar
+weslaco
+west lake hills
+west university place
+westlake
+wharton
+white oak
+white settlement
+whitehouse
+wichita falls
+willis
+wills point
+wimberley
+windcrest
+winnsboro
+wolfforth
+woodway
+wylie
+yoakum

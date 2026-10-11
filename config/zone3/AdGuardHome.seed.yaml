@@ -1,0 +1,234 @@
+# PuffPAI Zone 3 (the Bridge) -- AdGuard Home seed configuration.
+#
+# GENERATED, THEN HARDENED. This file was produced by AdGuard Home v0.107.79
+# itself (its own /control/install/configure wizard, run non-interactively),
+# then edited only where PuffPAI policy differs from AdGuard's defaults. It is
+# kept verbatim-from-the-source on purpose: hand-writing a schema_version 34
+# document is how you get an appliance that silently reverts to a first-run
+# wizard on a network the router is already pointing at.
+#
+# WHY IT IS SEEDED AT ALL: AdGuard Home refuses its FIRST launch as anything
+# but uid 0 ("you must run it as administrator"). Placing a valid config in
+# the conf volume means there is no first launch, so the resolver can run as
+# nobody with one capability from the very first boot. See
+# docker-compose.zone3.yml for the measurements behind that.
+#
+# RENDERING: scripts/zone3_bootstrap_adguard.py substitutes
+# __ADGUARD_BCRYPT__ with a bcrypt hash of the generated admin
+# password. The PLAINTEXT password is never written here, never committed,
+# and lives only in config/.zone3.env (mode 0600) on the appliance.
+#
+# The bootstrap script then re-applies the whole policy over the REST API, so
+# this file only has to be good enough to boot; the API is authoritative.
+#
+# POLICY THIS FILE ENCODES, AND WHY:
+#   protection_enabled: false   monitor-first. Logs every query, blocks
+#                               nothing. Flip it only after reading a few
+#                               days of the query log.
+#   filters: (absent)           AdGuard's own subscription lists are NOT
+#                               installed. Two reasons: turning protection on
+#                               would then block tens of thousands of domains
+#                               nobody in this house chose, and the 24-hourly
+#                               list refresh is an outbound connection to
+#                               adguardteam.github.io that no door declares.
+#                               PuffPAI's rules are the only rules.
+#   filters_update_interval: 0  no periodic fetch, for the same reason.
+#   querylog.interval: 90d      the review window the runbook assumes.
+#   dhcp.enabled: false         the router does DHCP. Always.
+#   clients.runtime_sources.whois: false
+#                               a WHOIS lookup asks a stranger about an
+#                               address on your network. Client names come
+#                               from ARP/DHCP/hosts instead.
+#   use_private_ptr_resolvers: false
+#                               no reverse lookup of a LAN address is ever
+#                               sent upstream, so device names cannot leak to
+#                               the resolver.
+#   dns.port: 5353              the listener is unprivileged; Docker maps the
+#                               host's :53 onto it.
+#
+http:
+  pprof:
+    port: 6060
+    enabled: false
+  doh:
+    routes:
+      - GET /dns-query
+      - POST /dns-query
+      - GET /dns-query/{ClientID}
+      - POST /dns-query/{ClientID}
+    insecure_enabled: false
+  address: 0.0.0.0:3000
+  session_ttl: 30d
+users:
+  - name: puffpai
+    password: __ADGUARD_BCRYPT__
+auth_attempts: 5
+block_auth_min: 15
+http_proxy: ""
+language: ""
+theme: auto
+dns:
+  bind_hosts:
+    - 0.0.0.0
+  port: 5353
+  anonymize_client_ip: false
+  ratelimit: 20
+  ratelimit_subnet_len_ipv4: 24
+  ratelimit_subnet_len_ipv6: 56
+  ratelimit_whitelist: []
+  refuse_any: true
+  upstream_dns:
+    - https://dns.quad9.net/dns-query
+  upstream_dns_file: ""
+  bootstrap_dns:
+    - 9.9.9.9
+    - 149.112.112.112
+  fallback_dns:
+    - tls://dns.quad9.net
+  upstream_mode: load_balance
+  fastest_timeout: 1s
+  allowed_clients: []
+  disallowed_clients: []
+  blocked_hosts:
+    - version.bind
+    - id.server
+    - hostname.bind
+  trusted_proxies:
+    - 127.0.0.0/8
+    - ::1/128
+  cache_enabled: true
+  cache_size: 4194304
+  cache_ttl_min: 0
+  cache_ttl_max: 0
+  cache_optimistic: false
+  cache_optimistic_answer_ttl: 30s
+  cache_optimistic_max_age: 12h
+  bogus_nxdomain: []
+  aaaa_disabled: false
+  enable_dnssec: true
+  edns_client_subnet:
+    custom_ip: ""
+    enabled: false
+    use_custom: false
+  max_goroutines: 300
+  handle_ddr: true
+  ipset: []
+  ipset_file: ""
+  bootstrap_prefer_ipv6: false
+  upstream_timeout: 10s
+  private_networks: []
+  use_private_ptr_resolvers: false
+  local_ptr_upstreams: []
+  use_dns64: false
+  dns64_prefixes: []
+  serve_http3: false
+  use_http3_upstreams: false
+  serve_plain_dns: true
+  hostsfile_enabled: true
+  pending_requests:
+    enabled: true
+tls:
+  enabled: false
+  server_name: ""
+  force_https: false
+  port_https: 443
+  port_dns_over_tls: 853
+  port_dns_over_quic: 853
+  port_dnscrypt: 0
+  dnscrypt_config_file: ""
+  certificate_chain: ""
+  private_key: ""
+  certificate_path: ""
+  private_key_path: ""
+  strict_sni_check: false
+querylog:
+  dir_path: ""
+  ignored: []
+  interval: 90d
+  size_memory: 1000
+  enabled: true
+  ignored_enabled: false
+  file_enabled: true
+statistics:
+  dir_path: ""
+  ignored: []
+  interval: 1d
+  enabled: true
+  ignored_enabled: false
+filters: []
+whitelist_filters: []
+user_rules: []
+dhcp:
+  enabled: false
+  interface_name: ""
+  local_domain_name: lan
+  dhcpv4:
+    gateway_ip: ""
+    subnet_mask: ""
+    range_start: ""
+    range_end: ""
+    lease_duration: 86400
+    icmp_timeout_msec: 1000
+    options: []
+  dhcpv6:
+    range_start: ""
+    lease_duration: 86400
+    ra_slaac_only: false
+    ra_allow_slaac: false
+filtering:
+  blocking_ipv4: ""
+  blocking_ipv6: ""
+  blocked_services:
+    schedule:
+      time_zone: UTC
+    ids: []
+  protection_disabled_until: null
+  safe_search:
+    enabled: false
+    bing: true
+    duckduckgo: true
+    ecosia: true
+    google: true
+    pixabay: true
+    yandex: true
+    youtube: true
+  blocking_mode: default
+  parental_block_host: family-block.dns.adguard.com
+  safebrowsing_block_host: standard-block.dns.adguard.com
+  rewrites: []
+  safe_fs_patterns:
+    - /opt/adguardhome/work/userfilters/*
+  max_http_size: 256MB
+  safebrowsing_cache_size: 1048576
+  safesearch_cache_size: 1048576
+  parental_cache_size: 1048576
+  cache_time: 30
+  filters_update_interval: 0
+  blocked_response_ttl: 10
+  filtering_enabled: true
+  rewrites_enabled: true
+  parental_enabled: false
+  safebrowsing_enabled: false
+  protection_enabled: false
+clients:
+  runtime_sources:
+    whois: false
+    arp: true
+    rdns: true
+    dhcp: true
+    hosts: true
+  persistent: []
+log:
+  enabled: true
+  file: ""
+  max_backups: 0
+  max_size: 100
+  max_age: 3
+  compress: false
+  local_time: false
+  verbose: false
+os:
+  group: ""
+  user: ""
+  rlimit_nofile: 0
+schema_version: 34

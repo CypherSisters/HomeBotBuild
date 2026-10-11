@@ -1,0 +1,499 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Shared chrome for the five HomeBot app routes (/dashboard/apps/*)
+
+   Why this file exists
+   -------------------
+   The five app pages were each styled with Tailwind `dark:` utilities and
+   hard-coded hex values. `.dark` is permanently on <html> (app/layout.tsx),
+   so every `dark:` utility renders in BOTH palettes and day mode survives
+   only on the ~30 `!important` remaps at _theme.css:646+. The fix is to stop
+   emitting `dark:` in app code and paint from the canonical tokens instead
+   (--bg --card --card2 --line --text --text2 --text3 --sky --lav --pink
+   --magenta --mint --lemon --shadow), which are already defined per palette
+   on html[data-puff-theme].
+
+   Everything here is palette-agnostic: no literal colour appears below, only
+   tokens, so both palettes come out of one rule set.
+
+   Motion: nothing here animates on a loop. Per the motion governor
+   (_theme.css:195+) the only looping carrier the app pages may use is the
+   ambient bucket (.animate-pulse on a loading skeleton), which freezes at
+   idle and unmounts when data lands.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Page frame ──────────────────────────────────────────────────────────
+   The shell's containerMaxW caps content at 1720px, which on the 2560 wall
+   leaves a wide band of bare wallpaper. App routes run to the
+   full width instead, capped only where line length would get silly. */
+.puff-app {
+  width: 100%;
+  max-width: 2400px;
+  margin-inline: auto;
+  padding: clamp(16px, 1.4vw, 32px);
+  display: flex;
+  flex-direction: column;
+  gap: clamp(14px, 1.1vw, 26px);
+}
+
+.puff-app-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.puff-app-title {
+  font-family: var(--font-fredoka), var(--font-nunito), sans-serif;
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  /* Wall type floor: content never below ~18px at 2560. */
+  font-size: clamp(1.6rem, 1.5vw, 2.6rem);
+  margin: 0;
+}
+.puff-app-hint {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: clamp(0.8rem, 0.55vw, 1rem);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text2);
+  margin-top: 6px;
+}
+.puff-app-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ── Surfaces ── */
+.puff-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  color: var(--text);
+}
+.puff-card-quiet {
+  background: var(--card2);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  color: var(--text);
+}
+.puff-pad {
+  padding: clamp(14px, 0.9vw, 22px);
+}
+
+/* Section caption above a block — structure floor is ~14px at 2560. */
+.puff-cap {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: clamp(0.72rem, 0.5vw, 0.95rem);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text2);
+}
+
+/* ── Numerals: JetBrains Mono, tabular, so columns line up ── */
+.puff-num {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  color: var(--text);
+}
+
+/* ── Rows ────────────────────────────────────────────────────────────────
+   Hairline row, radius 16, optional 5px person stripe fed by --pc.
+   The stripe is decoration; identity of record is the ≥16px mono initial
+   (colour separates three people, four is the ceiling). */
+.puff-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: clamp(10px, 0.6vw, 18px);
+  padding: clamp(10px, 0.6vw, 16px) clamp(12px, 0.7vw, 20px);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--card2);
+  color: var(--text);
+  overflow: hidden;
+}
+.puff-row-stripe { padding-left: calc(clamp(12px, 0.7vw, 20px) + 9px); }
+.puff-row-stripe::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  background: var(--pc, var(--sky));
+}
+.puff-row-initial {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.9em;
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: clamp(1rem, 0.7vw, 1.2rem); /* ≥16px floor */
+  font-weight: 600;
+  color: var(--pc, var(--text2));
+}
+.puff-row-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 500;
+  font-size: clamp(0.95rem, 0.62vw, 1.15rem);
+  color: var(--text);
+}
+.puff-row-meta {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: clamp(0.78rem, 0.5vw, 0.95rem);
+  color: var(--text2);
+}
+
+/* ── Stats ── */
+.puff-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: clamp(10px, 0.7vw, 18px);
+}
+.puff-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: clamp(12px, 0.8vw, 20px);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--card);
+}
+.puff-stat-value {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1;
+  font-size: clamp(1.5rem, 1.5vw, 2.6rem);
+  color: var(--text);
+}
+.puff-stat-label {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: clamp(0.72rem, 0.5vw, 0.95rem);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text2);
+}
+
+/* ── Touch targets ───────────────────────────────────────────────────────
+   48px floor on the wall. html.puff-big-touch already scales
+   the root font-size 112%, so rem-based sizing grows with it; these are the
+   absolute floor for icon-only controls that carry no text. */
+.puff-tap {
+  min-width: 48px;
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 9999px;
+  border: 1px solid var(--line);
+  background: var(--chip);
+  color: var(--text);
+  padding-inline: 14px;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+.puff-tap:hover { background: var(--card); border-color: var(--text3); }
+.puff-tap:disabled { opacity: 0.45; cursor: not-allowed; }
+.puff-tap-accent { background: var(--sky); border-color: transparent; color: var(--onAccent); font-weight: 600; }
+.puff-tap-accent:hover { background: var(--sky); filter: brightness(1.08); }
+.puff-tap-danger { color: var(--puff-red); border-color: color-mix(in srgb, var(--puff-red) 40%, transparent); }
+
+/* ── Empty / error skeletons ─────────────────────────────────────────────
+   An empty Calendar must still look like a calendar, so the
+   app supplies its own skeleton and the kit only dims it and lays the
+   message over the top. */
+.puff-state {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(12px, 0.8vw, 20px);
+}
+.puff-state-skeleton {
+  opacity: 0.32;
+  pointer-events: none;
+  user-select: none;
+}
+.puff-state-msg {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: clamp(0.85rem, 0.58vw, 1.05rem);
+  color: var(--text2);
+}
+.puff-state-msg-error { color: var(--puff-red); }
+.puff-state-say {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: clamp(0.78rem, 0.52vw, 0.95rem);
+  color: var(--text3);
+}
+
+/* ── Phone reflow ────────────────────────────────────────────────────────
+   390px is the target. Nothing may clip; wide blocks scroll inside their
+   own container, the page body never scrolls sideways. */
+.puff-scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+@media (max-width: 640px) {
+  .puff-app { padding: 12px; gap: 12px; }
+  .puff-app-head { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .puff-stats { grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); }
+  .puff-row { flex-wrap: wrap; }
+}
+
+/* ── Text on a filled accent ─────────────────────────────────────────────
+   `.text-white` is NOT white: _theme.css:578 maps it to --puff-text-strong,
+   which day mode makes dark ink. A label sitting on a filled --sky/--mint/
+   --pink button therefore needs its own token, not text-white. The old
+   on-accent guard (_theme.css:694+) keyed off the hard-coded hex background
+   classes these pages no longer emit. */
+:root,
+html[data-puff-theme="day"],
+html[data-puff-theme="light"] { --onAccent: #ffffff; }
+html[data-puff-theme="night"],
+html[data-puff-theme="plum"],
+html:not([data-puff-theme]) { --onAccent: var(--bg); }
+.puff-on-accent { color: var(--onAccent) !important; }
+
+/* ── Big mono countdown ──────────────────────────────────────────────────
+   On the wall the number IS the interface: the most-glanced value in the
+   house must never render at ~13px. */
+.puff-countdown {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1;
+  font-size: clamp(1.5rem, 1.5vw, 2.8rem);
+  color: var(--text);
+}
+.puff-countdown-alert { color: var(--puff-red); }
+
+/* ── Icon-button rows ────────────────────────────────────────────────────
+   Wrap a row of shared <Button> controls in this to lift them to the 48px
+   wall floor without forking the shared component. */
+.puff-taprow > button,
+.puff-taprow > a,
+.puff-taprow > * > button,
+.puff-taprow > * > a {
+  min-width: 48px;
+  min-height: 48px;
+}
+
+/* ── Wall grids ──────────────────────────────────────────────────────────
+   Lists become multi-column as the viewport grows, so 2560 is filled with
+   content instead of a centred column on wallpaper. */
+.puff-grid-wide {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
+  gap: clamp(10px, 0.7vw, 18px);
+}
+.puff-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr));
+  gap: clamp(12px, 0.9vw, 22px);
+  align-items: start;
+}
+
+/* ── Tables inside an app route ──────────────────────────────────────────
+   css/_table.css paints legacy cyberpunk row fills that read as washed-out
+   grey bands on the day palette. Inside .puff-app the table is hairline rows
+   on the card, in both palettes. */
+.puff-app table { width: 100%; border-collapse: collapse; }
+.puff-app table thead th {
+  background: transparent !important;
+  color: var(--text2) !important;
+  border-bottom: 1px solid var(--line) !important;
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: clamp(0.72rem, 0.5vw, 0.9rem);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.puff-app table tbody tr { background: transparent !important; }
+.puff-app table tbody tr:hover { background: var(--chip) !important; }
+.puff-app table tbody td {
+  background: transparent !important;
+  color: var(--text) !important;
+  border-bottom: 1px solid var(--line) !important;
+}
+
+/* ── Form controls inside an app route ───────────────────────────────────
+   css/main.css:51-63 paints EVERY input/textarea/select navy-with-white-text:
+
+     .dark input[type="text"], ... .dark select {
+       background-color: var(--color-slate-800) !important;
+       color: white !important;
+     }
+
+   `.dark` is permanently on <html> (app/layout.tsx:59), so that rule fires in
+   BOTH palettes and outranks the pages' own non-!important classes. The
+   result on the day palette is 21 inputs and 2 textareas rendering as
+   near-black bars across a pastel page, and 19 Calendar <select>s rendering
+   white-on-near-white - the selected value literally invisible.
+
+   Specificity note, mirroring the escape hatch already documented at
+   _theme.css:714-731: main.css's rule is (0,2,1) !important and lands later
+   in the cascade, so `html.dark .puff-app <type>` at (0,2,2) is what actually
+   outranks it. The bare `.puff-app` copy keeps this correct if `.dark` ever
+   stops being hardcoded on the root.
+
+   Deliberately NOT covered: checkbox, radio, range, file and color. main.css
+   does not target them, they already inherit the palette correctly, and
+   repainting them would break their native rendering. */
+.puff-app input[type="text"],
+.puff-app input[type="email"],
+.puff-app input[type="url"],
+.puff-app input[type="password"],
+.puff-app input[type="number"],
+.puff-app input[type="search"],
+.puff-app input[type="tel"],
+.puff-app input[type="date"],
+.puff-app input[type="time"],
+.puff-app input[type="datetime-local"],
+.puff-app input:not([type]),
+.puff-app textarea,
+.puff-app select,
+html.dark .puff-app input[type="text"],
+html.dark .puff-app input[type="email"],
+html.dark .puff-app input[type="url"],
+html.dark .puff-app input[type="password"],
+html.dark .puff-app input[type="number"],
+html.dark .puff-app input[type="search"],
+html.dark .puff-app input[type="tel"],
+html.dark .puff-app input[type="date"],
+html.dark .puff-app input[type="time"],
+html.dark .puff-app input[type="datetime-local"],
+html.dark .puff-app input:not([type]),
+html.dark .puff-app textarea,
+html.dark .puff-app select {
+  background-color: var(--card2) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 14px !important;
+  /* The 48px wall floor applies to fields too, not just buttons. */
+  min-height: 48px;
+  padding: 10px 14px;
+}
+.puff-app textarea,
+html.dark .puff-app textarea { min-height: 72px; }
+
+.puff-app input::placeholder,
+.puff-app textarea::placeholder,
+html.dark .puff-app input::placeholder,
+html.dark .puff-app textarea::placeholder { color: var(--text3) !important; }
+
+/* The native dropdown list is painted by the OS from the option's own colours,
+   so it needs the tokens too or it reopens the white-on-white problem. */
+.puff-app select option,
+html.dark .puff-app select option {
+  background-color: var(--bg) !important;
+  color: var(--text) !important;
+}
+
+.puff-app input:focus,
+.puff-app textarea:focus,
+.puff-app select:focus,
+html.dark .puff-app input:focus,
+html.dark .puff-app textarea:focus,
+html.dark .puff-app select:focus {
+  outline: none !important;
+  border-color: var(--sky) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sky) 20%, transparent) !important;
+}
+
+/* ── Themed buttons (AppButton) ──────────────────────────────────────────
+   app/_lib/colors.ts is hard-coded stock Tailwind and is shared with every
+   other dashboard page, so it is not ours to change. AppButton passes the
+   neutral `white` base through the shared Button and adds these classes,
+   which repaint from tokens and impose the 48px wall floor.
+
+   !important is needed only against the base's own `bg-white text-black
+   border-white hover:bg-gray-100` utilities, which sit in the same layer. */
+.puff-app .puff-btn,
+.puff-btn {
+  min-height: 48px;
+  min-width: 48px;
+  gap: 4px;
+  border-width: 1px !important;
+  border-style: solid !important;
+  font-weight: 600;
+  transition: filter 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
+}
+.puff-btn:not(:disabled):hover { filter: brightness(1.08); }
+.puff-btn:disabled { opacity: 0.45 !important; }
+
+/* Filled tones: the label rides on --onAccent, never .text-white, because
+   _theme.css:578 maps .text-white to --puff-text-strong (dark ink by day). */
+.puff-btn-primary { background-color: var(--sky) !important; border-color: var(--sky) !important; color: var(--onAccent) !important; }
+.puff-btn-ok      { background-color: var(--mint) !important; border-color: var(--mint) !important; color: var(--onAccent) !important; }
+.puff-btn-warn    { background-color: var(--lemon) !important; border-color: var(--lemon) !important; color: var(--onAccent) !important; }
+.puff-btn-danger  { background-color: var(--magenta) !important; border-color: var(--magenta) !important; color: var(--onAccent) !important; }
+
+/* Quiet: secondary and unselected. Glass, not a filled accent. */
+.puff-btn-quiet,
+.puff-btn-off {
+  background-color: var(--chip) !important;
+  border-color: var(--line) !important;
+  color: var(--text) !important;
+}
+.puff-btn-quiet:not(:disabled):hover,
+.puff-btn-off:not(:disabled):hover { background-color: var(--card) !important; }
+
+/* ── Pills ───────────────────────────────────────────────────────────────
+   Filter and category chips are raw <button>s, not the shared Button, so they
+   need the 48px floor of their own. `puff-pill-on` is the selected state. */
+.puff-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 48px;
+  padding: 0 16px;
+  border-radius: 9999px;
+  border: 1px solid var(--line);
+  background: var(--chip);
+  color: var(--text2);
+  font-size: clamp(0.8rem, 0.52vw, 0.95rem);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+.puff-pill:hover { background: var(--card); color: var(--text); }
+.puff-pill-on {
+  background: var(--sky);
+  border-color: var(--sky);
+  color: var(--onAccent);
+  font-weight: 600;
+}
+
+/* ── Size-only touch floor ───────────────────────────────────────────────
+   For controls that already carry the right paint and only need the 48px wall
+   floor. html.puff-big-touch bumps root font-size ~12% (_theme.css:273-275)
+   but imposes no floor of its own, which is why VERIFY §5 still measured
+   27-43px controls with it active. */
+.puff-48 { min-height: 48px; min-width: 48px; }
+/* A full-width strip (a collapsible form header) needs the height, not a
+   square minimum. */
+.puff-48-h { min-height: 48px; }
+
+/* ── The shared section-title row's fallback control ─────────────────────
+   Section/TitleLineWithButton renders a bare `mdiCog` Button when a title has
+   no children. It carries no handler and no href - it is a placeholder - but
+   it is focusable and clickable, and it measured 38x38 under puff-big-touch.
+   The component is shared with the rest of the dashboard so it is not ours to
+   change; scoping the floor to .puff-app fixes it only for the app routes. */
+.puff-app section > button { min-height: 48px; min-width: 48px; }

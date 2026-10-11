@@ -1,0 +1,78 @@
+name: CI
+
+# The full suite is 12,157 tests and is not a pull-request gate. This runs a
+# named subset that covers the surfaces a contributor is most likely to break
+# -- the wizard, the setup API, the release contracts, config and household --
+# and finishes in minutes. Widen the list deliberately, not by switching it to
+# `pytest tests`.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: pytest (subset) - Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -e ".[dev]"
+          python -m pip install pytest-timeout
+
+      - name: Test (named subset)
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: >-
+          python -m pytest -q -x --timeout=300
+          tests/test_wizard_*.py
+          tests/test_setup_api_*.py
+          tests/test_release_*.py
+          tests/test_config.py
+          tests/test_household.py
+
+  dashboard:
+    name: dashboard (typecheck + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: dashboard
+        run: npx tsc --noEmit
+
+      - name: Build
+        working-directory: dashboard
+        run: npm run build

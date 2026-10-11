@@ -1,0 +1,2291 @@
+{
+  "_about": "PuffPAI offline workout library. Programs follow published exercise-science guidance (sources listed per program). Not medical advice — consult a physician before starting a new program. Optional web refresh can extend this library later; the base always works offline.",
+  "_ids": "Every resistance exercise carries an 'id' matching the dashboard's EXERCISE_DB (app/_lib/fitnessScience.ts). That id is what fit_log_set stores, so a session picked from this library round-trips into FitFam history, PRs and Epley 1RMs without a name-matching step. Play/cardio items have no id on purpose: there is nothing to load-log.",
+  "_version": "2026-08-14",
+  "programs": {
+    "functional_system": {
+      "title": "Functional Strength System",
+      "audience": "A sample five-day program for a small home kit. Equipment: 35 lb kettlebell · 2 x 25 lb dumbbells · pull-up bar · 20 kg barbell + 2 x 25 lb plates · ruck pack + 2 x 10 lb plates",
+      "days_per_week": 5,
+      "sources": [
+        "PuffPAI sample program: training sheet",
+        "PuffPAI sample program: weekly plan",
+        "PuffPAI sample program: 20-minute express versions",
+        "PuffPAI sample program: barbell add-on",
+        "PuffPAI sample program: 10-minute morning routine"
+      ],
+      "guidance": "Three time tiers per training day: Full 45-55 min, Express 20-25 min, Minimum 12-15 min. None of them is a compromise, intensity and consistency beat volume. Progression is reps before rounds, rounds before weight. On express work the last 1-2 reps of every set must be genuinely hard. The barbell has exactly two settings ,  44 lb bare or 94 lb with both plates ,  so pick one load and stay there for the session; no plate juggling. Squats and hinges at 94 lb are light for a trained lifter, so tempo, pauses and higher reps are what make them bite; pressing at 94 lb is real strength work.",
+      "equipment": {
+        "kettlebell_lb": 35,
+        "dumbbells_lb": 25,
+        "barbell_bare_lb": 44,
+        "barbell_loaded_lb": 94,
+        "ruck_lb": 22,
+        "pull_up_bar": true
+      },
+      "rotation": [
+        "day1-full",
+        "day2-full",
+        "day3-barbell-complex",
+        "day4-gtg",
+        "day5-carries"
+      ],
+      "sessions": [
+        {
+          "id": "morning-routine",
+          "why_label": "10-minute morning routine",
+          "name": "Morning Routine",
+          "label": "Morning routine",
+          "day": 0,
+          "tier": "morning",
+          "duration_min": 10,
+          "exercises": [
+            {
+              "id": "cat-cow",
+              "name": "Cat-Cow",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "8 slow",
+              "rest_sec": 0,
+              "notes": "Spine warm-up. Match the movement to your breathing."
+            },
+            {
+              "id": "worlds-greatest-stretch",
+              "name": "World's Greatest Stretch",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "3/side",
+              "rest_sec": 0,
+              "notes": "Hips, mid-back, hamstrings. Short on time? Do just this, the scapular pull-ups, the squat to stand and the dead hang."
+            },
+            {
+              "id": "scapular-pullup",
+              "name": "Scapular Pull-Ups",
+              "sets": 1,
+              "reps": "8-10",
+              "rest_sec": 0,
+              "notes": "Hang, then pull your shoulders down without bending your arms. Wakes up your lats and grip, and it feeds your pull-ups."
+            },
+            {
+              "id": "pushup",
+              "name": "Push-Ups",
+              "sets": 1,
+              "reps": "10-15",
+              "rest_sec": 0,
+              "notes": "A primer, not a set. Finish these feeling warm, not worked."
+            },
+            {
+              "id": "squat-to-stand",
+              "name": "Squat to Stand",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "10",
+              "rest_sec": 0,
+              "notes": "Hold the bottom for 2-3 seconds on the last rep."
+            },
+            {
+              "id": "hip-90-90",
+              "name": "90/90 Hip Switches",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "5/side",
+              "rest_sec": 0,
+              "notes": "Hip rotation. This is what keeps your squats and hinges comfortable."
+            },
+            {
+              "id": "dead-hang",
+              "name": "Dead Hang",
+              "sets": 1,
+              "reps": "30-45s",
+              "rest_sec": 0,
+              "notes": "Just hang. Decompresses your spine and shoulders and builds grip for free."
+            },
+            {
+              "id": "thoracic-opener",
+              "name": "T-Spine Rotation",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "5/side",
+              "rest_sec": 0,
+              "notes": "For pressing and posture."
+            },
+            {
+              "id": "box-breathing",
+              "name": "Box Breathing",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "4-6 cycles",
+              "rest_sec": 0,
+              "notes": "In for 4, hold 4, out 4, hold 4."
+            },
+            {
+              "id": "glute-bridge",
+              "name": "Glute Bridges",
+              "sets": 1,
+              "reps": "10-15",
+              "rest_sec": 0,
+              "notes": "Training-day primer. It wakes up the back of your hips before you train."
+            },
+            {
+              "id": "shoulder-dislocate",
+              "name": "Shoulder Dislocates",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "10",
+              "rest_sec": 0,
+              "notes": "Towel or band. The second training-day primer, to prep your shoulders for pressing."
+            }
+          ]
+        },
+        {
+          "id": "morning-routine-rest",
+          "why_label": "rest-day mobility",
+          "name": "Rest-Day Mobility",
+          "label": "Rest-day mobility",
+          "day": 0,
+          "tier": "recovery",
+          "duration_min": 12,
+          "exercises": [
+            {
+              "id": "cat-cow",
+              "name": "Cat-Cow",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "8 slow",
+              "rest_sec": 0,
+              "notes": "Slow and easy, breathing with the movement."
+            },
+            {
+              "id": "worlds-greatest-stretch",
+              "name": "World's Greatest Stretch",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "3/side",
+              "rest_sec": 0,
+              "notes": "The whole body in one move."
+            },
+            {
+              "id": "couch-stretch",
+              "name": "Couch Stretch",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "60s/side",
+              "rest_sec": 0,
+              "notes": "Longer hold today. This is the rest-day swap for the hanging and rotation work."
+            },
+            {
+              "id": "pigeon-pose",
+              "name": "Pigeon",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "60s/side",
+              "rest_sec": 0,
+              "notes": "Settle in and breathe. Back off the moment it turns sharp."
+            },
+            {
+              "id": "forward-fold",
+              "name": "Forward Fold + Hang",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "60s",
+              "rest_sec": 0,
+              "notes": "Let your head and arms hang heavy."
+            },
+            {
+              "id": "box-breathing",
+              "name": "Box Breathing",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "6 cycles",
+              "rest_sec": 0,
+              "notes": "In for 4, hold 4, out 4, hold 4. On a rest day this is the actual work."
+            },
+            {
+              "id": "easy-walk",
+              "name": "Easy Walk",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "20-30 min",
+              "rest_sec": 0,
+              "notes": "Unloaded and conversational. Just an easy walk."
+            }
+          ]
+        },
+        {
+          "id": "day1-full",
+          "why_label": "full hinge and pull day",
+          "name": "Day 1: Hinge + Pull",
+          "label": "Full session",
+          "day": 1,
+          "tier": "full",
+          "focus": "hinge-pull",
+          "duration_min": 50,
+          "exercises": [
+            {
+              "id": "kettlebell-swing",
+              "name": "KB Swings",
+              "sets": 5,
+              "reps": "15-20",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 90,
+              "notes": "Hip-driven and explosive. Snap your hips, never squat the bell up."
+            },
+            {
+              "id": "pullup",
+              "name": "Pull-Ups",
+              "sets": 4,
+              "reps": "5-8",
+              "rest_sec": 90,
+              "notes": "Weighted once strict reps come easy. Hold the 35 lb bell between your feet."
+            },
+            {
+              "id": "kb-single-leg-rdl",
+              "name": "KB Single-Leg RDL",
+              "sets": 3,
+              "reps": "8-10/leg",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 60,
+              "notes": "Slow. Balance beats speed here. Barbell day: swap in the barbell RDL at 94 lb for a real hinge load."
+            },
+            {
+              "id": "dumbbell-row",
+              "name": "DB Single-Arm Row",
+              "sets": 3,
+              "reps": "10-12/side",
+              "load_lb": 25,
+              "load_note": "each hand",
+              "rest_sec": 60,
+              "notes": "Three seconds down, strict form. Barbell day: bent-over rows at 94 lb instead."
+            },
+            {
+              "id": "kb-high-pull",
+              "name": "KB High Pull",
+              "sets": 3,
+              "reps": "12-15",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 60,
+              "notes": "Pick one, high pulls or rear delt flies, and alternate weeks."
+            },
+            {
+              "id": "hanging-leg-raise",
+              "name": "Hanging Leg Raise",
+              "sets": 3,
+              "reps": "8-12",
+              "rest_sec": 60,
+              "notes": "Controlled, no swinging."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "seated-hamstring-stretch",
+              "name": "Seated Hamstring Stretch",
+              "hold": "45s per side"
+            },
+            {
+              "id": "figure-four-glute-stretch",
+              "name": "Figure-Four Glute Stretch",
+              "hold": "45s per side"
+            },
+            {
+              "id": "childs-pose-lat-stretch",
+              "name": "Child's Pose (lat bias)",
+              "hold": "45s per side"
+            },
+            {
+              "id": "forearm-flexor-stretch",
+              "name": "Forearm Flexor Stretch",
+              "hold": "30s per side"
+            }
+          ]
+        },
+        {
+          "id": "day1-express",
+          "why_label": "20-minute hinge and pull",
+          "name": "Day 1 Express: Hinge + Pull",
+          "label": "Express",
+          "day": 1,
+          "tier": "express",
+          "focus": "hinge-pull",
+          "duration_min": 20,
+          "exercises": [
+            {
+              "id": "kettlebell-swing",
+              "name": "KB Swings (block A)",
+              "sets": 4,
+              "reps": "15",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 0,
+              "notes": "Straight into the pull-ups, no rest between the pair."
+            },
+            {
+              "id": "pullup",
+              "name": "Pull-Ups (block A)",
+              "sets": 4,
+              "reps": "5-8",
+              "rest_sec": 50,
+              "notes": "Rest 45-60 seconds after the pair, then go again. Four rounds."
+            },
+            {
+              "id": "dumbbell-row",
+              "name": "DB Single-Arm Row (block B)",
+              "sets": 3,
+              "reps": "10/side",
+              "load_lb": 25,
+              "load_note": "each hand",
+              "rest_sec": 0,
+              "notes": "Straight into the single-leg RDL, no rest between the pair."
+            },
+            {
+              "id": "kb-single-leg-rdl",
+              "name": "KB Single-Leg RDL (block B)",
+              "sets": 3,
+              "reps": "8/leg",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 45,
+              "notes": "Rest 45 seconds after the pair. Three rounds."
+            },
+            {
+              "id": "hanging-leg-raise",
+              "name": "Hanging Leg Raise",
+              "sets": 1,
+              "reps": "max",
+              "rest_sec": 0,
+              "notes": "Optional finisher, about 90 seconds."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "seated-hamstring-stretch",
+              "name": "Seated Hamstring Stretch",
+              "hold": "45s per side"
+            },
+            {
+              "id": "childs-pose-lat-stretch",
+              "name": "Child's Pose (lat bias)",
+              "hold": "45s per side"
+            }
+          ]
+        },
+        {
+          "id": "day2-full",
+          "why_label": "full squat and press day",
+          "name": "Day 2: Squat + Push",
+          "label": "Full session",
+          "day": 2,
+          "tier": "full",
+          "focus": "squat-push",
+          "duration_min": 50,
+          "exercises": [
+            {
+              "id": "goblet-squat",
+              "name": "KB Goblet Squat",
+              "sets": 4,
+              "reps": "10-12",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 90,
+              "notes": "Two-second pause at the bottom of every rep. Barbell day: front or back squat at 94 lb, kept slow so the light bar still bites."
+            },
+            {
+              "id": "dumbbell-shoulder-press",
+              "name": "KB Single-Arm Press",
+              "sets": 4,
+              "reps": "6-8/side",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 90,
+              "notes": "Full lockout, brace your core. Barbell day: overhead press at 94 lb. That is your biggest upgrade, and it is real strength work."
+            },
+            {
+              "id": "bulgarian-split-squat",
+              "name": "Bulgarian Split Squat",
+              "sets": 3,
+              "reps": "10/leg",
+              "load_lb": 25,
+              "load_note": "each hand",
+              "rest_sec": 60,
+              "notes": "Front foot flat, slow the whole way down."
+            },
+            {
+              "id": "db-floor-press",
+              "name": "DB Floor Press",
+              "sets": 3,
+              "reps": "12-15",
+              "load_lb": 25,
+              "load_note": "each hand",
+              "rest_sec": 60,
+              "notes": "Slow on the way down. No bench needed, press off the floor. Barbell day: barbell floor press at 94 lb."
+            },
+            {
+              "id": "pike-pushup",
+              "name": "Pike Push-Ups",
+              "sets": 3,
+              "reps": "6-10",
+              "rest_sec": 60,
+              "notes": "Working toward handstand push-ups. Hips high, head between your hands."
+            },
+            {
+              "id": "hollow-hold",
+              "name": "Hollow Hold",
+              "sets": 3,
+              "reps": "30-45s",
+              "rest_sec": 60,
+              "notes": "Lower back pressed flat into the floor the whole time."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "doorway-pec-stretch",
+              "name": "Doorway Pec Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "standing-quad-stretch",
+              "name": "Standing Quad Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "kneeling-hip-flexor-stretch",
+              "name": "Kneeling Hip Flexor Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "overhead-triceps-stretch",
+              "name": "Overhead Triceps Stretch",
+              "hold": "30s per side"
+            }
+          ]
+        },
+        {
+          "id": "day2-express",
+          "why_label": "20-minute squat and press",
+          "name": "Day 2 Express: Squat + Push",
+          "label": "Express",
+          "day": 2,
+          "tier": "express",
+          "focus": "squat-push",
+          "duration_min": 20,
+          "exercises": [
+            {
+              "id": "goblet-squat",
+              "name": "KB Goblet Squat (block A)",
+              "sets": 4,
+              "reps": "12",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 0,
+              "notes": "Two-second pause at the bottom, then straight into the press, no rest between the pair."
+            },
+            {
+              "id": "dumbbell-shoulder-press",
+              "name": "KB Single-Arm Press (block A)",
+              "sets": 4,
+              "reps": "6-8/side",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 50,
+              "notes": "Rest 45-60 seconds after the pair. Four rounds."
+            },
+            {
+              "id": "bulgarian-split-squat",
+              "name": "Bulgarian Split Squat (block B)",
+              "sets": 3,
+              "reps": "10/leg",
+              "load_lb": 25,
+              "load_note": "each hand",
+              "rest_sec": 0,
+              "notes": "Straight into the floor press, no rest between the pair."
+            },
+            {
+              "id": "db-floor-press",
+              "name": "DB Floor Press (block B)",
+              "sets": 3,
+              "reps": "12-15",
+              "load_lb": 25,
+              "load_note": "each hand",
+              "rest_sec": 45,
+              "notes": "Rest 45 seconds after the pair. Three rounds."
+            },
+            {
+              "id": "hollow-hold",
+              "name": "Hollow Hold",
+              "sets": 2,
+              "reps": "30s",
+              "rest_sec": 0,
+              "notes": "Optional finisher, about 90 seconds."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "doorway-pec-stretch",
+              "name": "Doorway Pec Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "standing-quad-stretch",
+              "name": "Standing Quad Stretch",
+              "hold": "30s per side"
+            }
+          ]
+        },
+        {
+          "id": "day3-barbell-complex",
+          "why_label": "barbell complex",
+          "name": "Day 3: Barbell Complex",
+          "label": "Barbell complex",
+          "day": 3,
+          "tier": "full",
+          "focus": "conditioning",
+          "duration_min": 25,
+          "exercises": [
+            {
+              "id": "barbell-row",
+              "name": "Bent-Over Row",
+              "sets": 5,
+              "reps": "5-6",
+              "load_lb": 94,
+              "load_note": "both plates",
+              "rest_sec": 0,
+              "notes": "Flat back, pull to your navel. The bar does not touch the floor until the round is done."
+            },
+            {
+              "id": "hang-power-clean",
+              "name": "Hang Power Clean",
+              "sets": 5,
+              "reps": "5-6",
+              "load_lb": 94,
+              "load_note": "both plates",
+              "rest_sec": 0,
+              "notes": "Explosive hip snap to the rack position. Lean on your Olympic lifting here."
+            },
+            {
+              "id": "front-squat",
+              "name": "Front Squat",
+              "sets": 5,
+              "reps": "5-6",
+              "load_lb": 94,
+              "load_note": "both plates",
+              "rest_sec": 0,
+              "notes": "Straight out of the rack position, elbows high."
+            },
+            {
+              "id": "push-press",
+              "name": "Push Press",
+              "sets": 5,
+              "reps": "5-6",
+              "load_lb": 94,
+              "load_note": "both plates",
+              "rest_sec": 0,
+              "notes": "Leg drive overhead, not strict. At 94 lb a strict press would be the bottleneck and the chain would stall."
+            },
+            {
+              "id": "back-squat",
+              "name": "Back Squat",
+              "sets": 5,
+              "reps": "5-6",
+              "load_lb": 94,
+              "load_note": "both plates",
+              "rest_sec": 90,
+              "notes": "Lower the bar behind your neck, then squat. Rest 90 seconds, that is the end of the round. Five rounds, about 15 minutes. Short on time or new to the chain? Three rounds, or run the bare 44 lb bar to groove it first."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "standing-quad-stretch",
+              "name": "Standing Quad Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "childs-pose-lat-stretch",
+              "name": "Child's Pose",
+              "hold": "45s"
+            },
+            {
+              "id": "thoracic-extension-stretch",
+              "name": "Thoracic Extension",
+              "hold": "5 slow reaches"
+            }
+          ]
+        },
+        {
+          "id": "day3-kb-complex",
+          "why_label": "kettlebell complex",
+          "name": "Day 3: KB Complex",
+          "label": "KB complex",
+          "day": 3,
+          "tier": "express",
+          "focus": "conditioning",
+          "duration_min": 15,
+          "exercises": [
+            {
+              "id": "kb-clean",
+              "name": "KB Clean to Rack",
+              "sets": 5,
+              "reps": "5/side",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 0,
+              "notes": "Tame the arc. Keep the bell close so it never bangs your wrist."
+            },
+            {
+              "id": "dumbbell-shoulder-press",
+              "name": "KB Overhead Press",
+              "sets": 5,
+              "reps": "5/side",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 0,
+              "notes": "Full lockout, squeeze your core and glutes."
+            },
+            {
+              "id": "goblet-squat",
+              "name": "KB Front Squat",
+              "sets": 5,
+              "reps": "5/side",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 0,
+              "notes": "The bell stays racked. Hit full depth."
+            },
+            {
+              "id": "kettlebell-swing",
+              "name": "KB Swing",
+              "sets": 5,
+              "reps": "5/side",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 75,
+              "notes": "Hinge, don't squat, then re-clean. Rest 60-75 seconds, that is the round. Five rounds. If you only have time for one thing all week, this is it."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "figure-four-glute-stretch",
+              "name": "Figure-Four Glute Stretch",
+              "hold": "45s per side"
+            },
+            {
+              "id": "childs-pose-lat-stretch",
+              "name": "Child's Pose",
+              "hold": "45s"
+            }
+          ]
+        },
+        {
+          "id": "day3-emom",
+          "why_label": "16-minute EMOM",
+          "name": "Day 3: EMOM 16",
+          "label": "EMOM",
+          "day": 3,
+          "tier": "minimum",
+          "focus": "conditioning",
+          "duration_min": 16,
+          "exercises": [
+            {
+              "id": "kettlebell-swing",
+              "name": "KB Swings (odd minutes)",
+              "sets": 8,
+              "reps": "15",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 0,
+              "notes": "Every minute on the minute: start at the top of each odd minute and rest with whatever is left."
+            },
+            {
+              "id": "pullup",
+              "name": "Pull-Ups (even minutes)",
+              "sets": 8,
+              "reps": "5",
+              "rest_sec": 0,
+              "notes": "Top of each even minute, straight into the push-ups."
+            },
+            {
+              "id": "pushup",
+              "name": "Push-Ups (even minutes)",
+              "sets": 8,
+              "reps": "8",
+              "rest_sec": 0,
+              "notes": "Same minute as the pull-ups. As you tire the rest shrinks on its own, which is the whole design."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "childs-pose-lat-stretch",
+              "name": "Child's Pose",
+              "hold": "45s"
+            },
+            {
+              "id": "doorway-pec-stretch",
+              "name": "Doorway Pec Stretch",
+              "hold": "30s per side"
+            }
+          ]
+        },
+        {
+          "id": "day3-amrap",
+          "why_label": "five-round AMRAP",
+          "name": "Day 3: AMRAP / For Time",
+          "label": "AMRAP",
+          "day": 3,
+          "tier": "alt",
+          "focus": "conditioning",
+          "duration_min": 25,
+          "exercises": [
+            {
+              "id": "kettlebell-swing",
+              "name": "KB Swings",
+              "sets": 5,
+              "reps": "10",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 0,
+              "notes": "Five rounds, moving straight through the list."
+            },
+            {
+              "id": "goblet-squat",
+              "name": "Goblet Squats",
+              "sets": 5,
+              "reps": "10",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 0,
+              "notes": "Keep moving."
+            },
+            {
+              "id": "pullup",
+              "name": "Pull-Ups",
+              "sets": 5,
+              "reps": "5",
+              "rest_sec": 0,
+              "notes": "Break them up if you need to, but keep the clock running."
+            },
+            {
+              "id": "pushup",
+              "name": "Push-Ups",
+              "sets": 5,
+              "reps": "10",
+              "rest_sec": 0,
+              "notes": "Chest to the floor every rep."
+            },
+            {
+              "id": "plank",
+              "name": "Plank",
+              "sets": 5,
+              "reps": "30s",
+              "rest_sec": 60,
+              "notes": "Then rest and start the next round."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "seated-hamstring-stretch",
+              "name": "Seated Hamstring Stretch",
+              "hold": "45s per side"
+            },
+            {
+              "id": "childs-pose-lat-stretch",
+              "name": "Child's Pose",
+              "hold": "45s"
+            }
+          ]
+        },
+        {
+          "id": "day4-gtg",
+          "why_label": "grease-the-groove day",
+          "name": "Day 4: Grease the Groove",
+          "label": "GTG practice",
+          "day": 4,
+          "tier": "gtg",
+          "focus": "practice",
+          "duration_min": 20,
+          "exercises": [
+            {
+              "id": "pullup",
+              "name": "Pull-Up Practice",
+              "sets": 4,
+              "reps": "50% of max",
+              "rest_sec": 0,
+              "notes": "Spread these through the day and never go to failure. Staying fresh is the point."
+            },
+            {
+              "id": "turkish-get-up",
+              "name": "Turkish Get-Up",
+              "sets": 1,
+              "reps": "5/side",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 60,
+              "notes": "Slow and deliberate. Settle into every position."
+            },
+            {
+              "id": "worlds-greatest-stretch",
+              "name": "World's Greatest Stretch",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "5/side",
+              "rest_sec": 0,
+              "notes": "Start of the 10-15 minute mobility flow."
+            },
+            {
+              "id": "hip-90-90",
+              "name": "90/90 Hip Switches",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "8/side",
+              "rest_sec": 0,
+              "notes": "Hips."
+            },
+            {
+              "id": "thoracic-opener",
+              "name": "T-Spine Rotation",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "8/side",
+              "rest_sec": 0,
+              "notes": "Shoulders and mid-back. Easy does it, this is practice, not training."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "kneeling-hip-flexor-stretch",
+              "name": "Kneeling Hip Flexor Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "downward-dog-stretch",
+              "name": "Downward Dog",
+              "hold": "45s"
+            }
+          ]
+        },
+        {
+          "id": "day5-carries",
+          "why_label": "carry day",
+          "name": "Day 5: GTG + Carries",
+          "label": "Carries",
+          "day": 5,
+          "tier": "gtg",
+          "focus": "carries",
+          "duration_min": 20,
+          "exercises": [
+            {
+              "id": "farmer-carry",
+              "name": "Farmer's Walk",
+              "sets": 3,
+              "reps": "30-40s",
+              "load_lb": 25,
+              "load_note": "each hand",
+              "rest_sec": 60,
+              "notes": "Tall posture, full grip. Carries build grip, core and posture all at once."
+            },
+            {
+              "id": "suitcase-carry",
+              "name": "Suitcase Carry",
+              "sets": 3,
+              "reps": "30s/side",
+              "load_lb": 35,
+              "load_note": "kettlebell",
+              "rest_sec": 60,
+              "notes": "Don't lean, fight the side bend. That fight is the exercise."
+            },
+            {
+              "id": "pullup",
+              "name": "Pull-Up Practice",
+              "sets": 3,
+              "reps": "50% of max",
+              "rest_sec": 0,
+              "notes": "Spread through the day, never to failure."
+            },
+            {
+              "id": "worlds-greatest-stretch",
+              "name": "World's Greatest Stretch",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "5/side",
+              "rest_sec": 0,
+              "notes": "Ten minutes of light mobility to finish. Optional."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "forearm-flexor-stretch",
+              "name": "Forearm Flexor Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "standing-quad-stretch",
+              "name": "Standing Quad Stretch",
+              "hold": "30s per side"
+            }
+          ]
+        },
+        {
+          "id": "day1-express-bar",
+          "why_label": "20-minute hinge and pull with the bar",
+          "name": "Day 1 Express + Bar: Hinge + Pull",
+          "label": "Express + bar",
+          "day": 1,
+          "tier": "express-bar",
+          "focus": "hinge-pull",
+          "duration_min": 20,
+          "exercises": [
+            {
+              "id": "kettlebell-swing",
+              "name": "KB Swings (block A)",
+              "sets": 4,
+              "reps": "15",
+              "rest_sec": 0,
+              "notes": "Keep this one as it is. No barbell version needed. Straight into the pull-ups.",
+              "load_lb": 35,
+              "load_note": "kettlebell"
+            },
+            {
+              "id": "pullup",
+              "name": "Pull-Ups (block A)",
+              "sets": 4,
+              "reps": "5-8",
+              "rest_sec": 50,
+              "notes": "Rest 45-60 seconds after the pair, then go again. Four rounds."
+            },
+            {
+              "id": "barbell-row",
+              "name": "Barbell Bent-Over Row (block B)",
+              "sets": 3,
+              "reps": "8-10",
+              "rest_sec": 0,
+              "notes": "Bilateral and heavier than the 25s. Flat back, pull to your navel. Straight into the RDL.",
+              "load_lb": 94,
+              "load_note": "both plates"
+            },
+            {
+              "id": "rdl",
+              "name": "Barbell RDL (block B)",
+              "sets": 3,
+              "reps": "8-10",
+              "rest_sec": 45,
+              "notes": "A real hinge load at last. Rest 45 seconds after the pair. Three rounds.",
+              "load_lb": 94,
+              "load_note": "both plates"
+            },
+            {
+              "id": "hanging-leg-raise",
+              "name": "Hanging Leg Raise",
+              "sets": 1,
+              "reps": "max",
+              "rest_sec": 0,
+              "notes": "Optional finisher, about 90 seconds."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "seated-hamstring-stretch",
+              "name": "Seated Hamstring Stretch",
+              "hold": "45s per side"
+            },
+            {
+              "id": "childs-pose-lat-stretch",
+              "name": "Child's Pose (lat bias)",
+              "hold": "45s per side"
+            }
+          ]
+        },
+        {
+          "id": "day2-express-bar",
+          "why_label": "20-minute squat and press with the bar",
+          "name": "Day 2 Express + Bar: Squat + Push",
+          "label": "Express + bar",
+          "day": 2,
+          "tier": "express-bar",
+          "focus": "squat-push",
+          "duration_min": 20,
+          "exercises": [
+            {
+              "id": "back-squat",
+              "name": "Barbell Squat (block A)",
+              "sets": 4,
+              "reps": "8-10",
+              "rest_sec": 0,
+              "notes": "Front or back, your pick. 94 lb is light for your legs, so use tempo and a pause at the bottom to make it count. Straight into the press.",
+              "load_lb": 94,
+              "load_note": "both plates"
+            },
+            {
+              "id": "ohp",
+              "name": "Barbell Overhead Press (block A)",
+              "sets": 4,
+              "reps": "6-8",
+              "rest_sec": 50,
+              "notes": "The biggest upgrade the bar gives you. Treat it as real strength work. Rest 45-60 seconds after the pair. Four rounds.",
+              "load_lb": 94,
+              "load_note": "both plates"
+            },
+            {
+              "id": "bulgarian-split-squat",
+              "name": "Bulgarian Split Squat (block B)",
+              "sets": 3,
+              "reps": "10/leg",
+              "rest_sec": 0,
+              "notes": "Dumbbells here, there is no barbell version worth the setup. Straight into the floor press.",
+              "load_lb": 25,
+              "load_note": "each hand"
+            },
+            {
+              "id": "barbell-floor-press",
+              "name": "Barbell Floor Press (block B)",
+              "sets": 3,
+              "reps": "8-10",
+              "rest_sec": 45,
+              "notes": "No bench needed, press off the floor. Rest 45 seconds after the pair. Three rounds.",
+              "load_lb": 94,
+              "load_note": "both plates"
+            },
+            {
+              "id": "hollow-hold",
+              "name": "Hollow Hold",
+              "sets": 2,
+              "reps": "30s",
+              "rest_sec": 0,
+              "notes": "Optional finisher, about 90 seconds."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "doorway-pec-stretch",
+              "name": "Doorway Pec Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "standing-quad-stretch",
+              "name": "Standing Quad Stretch",
+              "hold": "30s per side"
+            }
+          ]
+        },
+        {
+          "id": "day1-full-bar",
+          "why_label": "full hinge and pull day with the bar",
+          "name": "Day 1 + Bar: Hinge + Pull",
+          "label": "Full + bar",
+          "day": 1,
+          "tier": "full-bar",
+          "focus": "hinge-pull",
+          "duration_min": 50,
+          "exercises": [
+            {
+              "id": "kettlebell-swing",
+              "name": "KB Swings",
+              "sets": 5,
+              "reps": "15-20",
+              "rest_sec": 90,
+              "notes": "Hip-driven and explosive. Snap your hips, never squat the bell up.",
+              "load_lb": 35,
+              "load_note": "kettlebell"
+            },
+            {
+              "id": "pullup",
+              "name": "Pull-Ups",
+              "sets": 4,
+              "reps": "5-8",
+              "rest_sec": 90,
+              "notes": "Weighted once strict reps come easy. Hold the 35 lb bell between your feet."
+            },
+            {
+              "id": "rdl",
+              "name": "Barbell RDL",
+              "sets": 3,
+              "reps": "8-10",
+              "rest_sec": 90,
+              "notes": "The swap that pays off most on this day: a real hinge load instead of the bell.",
+              "load_lb": 94,
+              "load_note": "both plates"
+            },
+            {
+              "id": "barbell-row",
+              "name": "Barbell Bent-Over Row",
+              "sets": 3,
+              "reps": "8-10",
+              "rest_sec": 60,
+              "notes": "Bilateral and heavier than the 25s. Flat back, pull to your navel.",
+              "load_lb": 94,
+              "load_note": "both plates"
+            },
+            {
+              "id": "kb-high-pull",
+              "name": "KB High Pull",
+              "sets": 3,
+              "reps": "12-15",
+              "rest_sec": 60,
+              "notes": "Pick one, high pulls or rear delt flies, and alternate weeks.",
+              "load_lb": 35,
+              "load_note": "kettlebell"
+            },
+            {
+              "id": "hanging-leg-raise",
+              "name": "Hanging Leg Raise",
+              "sets": 3,
+              "reps": "8-12",
+              "rest_sec": 60,
+              "notes": "Controlled, no swinging."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "seated-hamstring-stretch",
+              "name": "Seated Hamstring Stretch",
+              "hold": "45s per side"
+            },
+            {
+              "id": "figure-four-glute-stretch",
+              "name": "Figure-Four Glute Stretch",
+              "hold": "45s per side"
+            },
+            {
+              "id": "childs-pose-lat-stretch",
+              "name": "Child's Pose (lat bias)",
+              "hold": "45s per side"
+            },
+            {
+              "id": "forearm-flexor-stretch",
+              "name": "Forearm Flexor Stretch",
+              "hold": "30s per side"
+            }
+          ]
+        },
+        {
+          "id": "day2-full-bar",
+          "why_label": "full squat and press day with the bar",
+          "name": "Day 2 + Bar: Squat + Push",
+          "label": "Full + bar",
+          "day": 2,
+          "tier": "full-bar",
+          "focus": "squat-push",
+          "duration_min": 50,
+          "exercises": [
+            {
+              "id": "back-squat",
+              "name": "Barbell Squat",
+              "sets": 4,
+              "reps": "8-10",
+              "rest_sec": 90,
+              "notes": "Front or back, your pick. Tempo and a two-second pause at the bottom, because 94 lb is light for your legs.",
+              "load_lb": 94,
+              "load_note": "both plates"
+            },
+            {
+              "id": "ohp",
+              "name": "Barbell Overhead Press",
+              "sets": 4,
+              "reps": "6-8",
+              "rest_sec": 90,
+              "notes": "Full lockout, brace your core. At 94 lb this is genuine strength work, the biggest thing the bar adds.",
+              "load_lb": 94,
+              "load_note": "both plates"
+            },
+            {
+              "id": "bulgarian-split-squat",
+              "name": "Bulgarian Split Squat",
+              "sets": 3,
+              "reps": "10/leg",
+              "rest_sec": 60,
+              "notes": "Front foot flat, slow the whole way down. Dumbbells for this one.",
+              "load_lb": 25,
+              "load_note": "each hand"
+            },
+            {
+              "id": "barbell-floor-press",
+              "name": "Barbell Floor Press",
+              "sets": 3,
+              "reps": "8-10",
+              "rest_sec": 60,
+              "notes": "Press off the floor, no bench needed. Slow on the way down.",
+              "load_lb": 94,
+              "load_note": "both plates"
+            },
+            {
+              "id": "pike-pushup",
+              "name": "Pike Push-Ups",
+              "sets": 3,
+              "reps": "6-10",
+              "rest_sec": 60,
+              "notes": "Working toward handstand push-ups. Hips high, head between your hands."
+            },
+            {
+              "id": "hollow-hold",
+              "name": "Hollow Hold",
+              "sets": 3,
+              "reps": "30-45s",
+              "rest_sec": 60,
+              "notes": "Lower back pressed flat into the floor the whole time."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "doorway-pec-stretch",
+              "name": "Doorway Pec Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "standing-quad-stretch",
+              "name": "Standing Quad Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "kneeling-hip-flexor-stretch",
+              "name": "Kneeling Hip Flexor Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "overhead-triceps-stretch",
+              "name": "Overhead Triceps Stretch",
+              "hold": "30s per side"
+            }
+          ]
+        },
+        {
+          "id": "day3-barbell-bare",
+          "why_label": "bare-bar version of the barbell complex",
+          "name": "Day 3: Barbell Complex, Bare Bar",
+          "label": "Bare bar",
+          "day": 3,
+          "tier": "alt",
+          "focus": "conditioning",
+          "duration_min": 20,
+          "exercises": [
+            {
+              "id": "barbell-row",
+              "name": "Bent-Over Row",
+              "sets": 4,
+              "reps": "5-6",
+              "rest_sec": 0,
+              "notes": "Bare 44 lb bar. This version is for grooving the sequence, so every rep is a technique rep.",
+              "load_lb": 44,
+              "load_note": "bare bar"
+            },
+            {
+              "id": "hang-power-clean",
+              "name": "Hang Power Clean",
+              "sets": 4,
+              "reps": "5-6",
+              "rest_sec": 0,
+              "notes": "Explosive hip snap to the rack position. The light bar is the point here, get the timing right.",
+              "load_lb": 44,
+              "load_note": "bare bar"
+            },
+            {
+              "id": "front-squat",
+              "name": "Front Squat",
+              "sets": 4,
+              "reps": "5-6",
+              "rest_sec": 0,
+              "notes": "Straight out of the rack position, elbows high.",
+              "load_lb": 44,
+              "load_note": "bare bar"
+            },
+            {
+              "id": "push-press",
+              "name": "Push Press",
+              "sets": 4,
+              "reps": "5-6",
+              "rest_sec": 0,
+              "notes": "Leg drive overhead, not strict. Strict press is fine at this weight if you want it.",
+              "load_lb": 44,
+              "load_note": "bare bar"
+            },
+            {
+              "id": "back-squat",
+              "name": "Back Squat",
+              "sets": 4,
+              "reps": "5-6",
+              "rest_sec": 90,
+              "notes": "Lower the bar behind your neck, then squat. Rest 90 seconds, that is the round. Four rounds. Move up to 94 lb once the chain feels smooth.",
+              "load_lb": 44,
+              "load_note": "bare bar"
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "standing-quad-stretch",
+              "name": "Standing Quad Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "childs-pose-lat-stretch",
+              "name": "Child's Pose",
+              "hold": "45s"
+            }
+          ]
+        },
+        {
+          "id": "day3-emom-20",
+          "why_label": "20-minute EMOM",
+          "name": "Day 3: EMOM 20",
+          "label": "EMOM",
+          "day": 3,
+          "tier": "alt",
+          "focus": "conditioning",
+          "duration_min": 20,
+          "exercises": [
+            {
+              "id": "kettlebell-swing",
+              "name": "KB Swings (odd minutes)",
+              "sets": 10,
+              "reps": "15",
+              "rest_sec": 0,
+              "notes": "Every minute on the minute: start at the top of each odd minute and rest with whatever is left.",
+              "load_lb": 35,
+              "load_note": "kettlebell"
+            },
+            {
+              "id": "pullup",
+              "name": "Pull-Ups (even minutes)",
+              "sets": 10,
+              "reps": "5",
+              "rest_sec": 0,
+              "notes": "Top of each even minute, straight into the push-ups."
+            },
+            {
+              "id": "pushup",
+              "name": "Push-Ups (even minutes)",
+              "sets": 10,
+              "reps": "10",
+              "rest_sec": 0,
+              "notes": "Same minute as the pull-ups. Twenty minutes total, the longer of the two EMOMs."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "childs-pose-lat-stretch",
+              "name": "Child's Pose",
+              "hold": "45s"
+            },
+            {
+              "id": "doorway-pec-stretch",
+              "name": "Doorway Pec Stretch",
+              "hold": "30s per side"
+            }
+          ]
+        },
+        {
+          "id": "ruck",
+          "why_label": "ruck",
+          "name": "Ruck",
+          "label": "Ruck 30",
+          "day": 0,
+          "tier": "ruck",
+          "focus": "conditioning",
+          "duration_min": 30,
+          "exercises": [
+            {
+              "id": "ruck",
+              "name": "Ruck",
+              "sets": 1,
+              "reps": "20-30 min",
+              "load_lb": 22,
+              "load_note": "pack",
+              "rest_sec": 0,
+              "notes": "Two 10 lb plates, pack and water, about 22-25 lb. Weeks 1-2: 20-25 min, easy pace, flat. Weeks 3-4: 30-40 min with gentle hills. Weeks 5-6: 45-60 min, varied terrain, conversational zone-2 pace. After that, add load or pace only if it feels easy. Duration first, same as your lifting."
+            },
+            {
+              "id": "easy-walk",
+              "name": "Cool-Down Walk",
+              "pattern": "recovery",
+              "sets": 1,
+              "reps": "5 min",
+              "rest_sec": 0,
+              "notes": "Drop the pack and walk it off. Watch your shoulders and lower back the first week. If the pack digs or your posture breaks down, drop weight or time."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "calf-wall-stretch",
+              "name": "Calf Wall Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "kneeling-hip-flexor-stretch",
+              "name": "Kneeling Hip Flexor Stretch",
+              "hold": "30s per side"
+            }
+          ],
+          "offer": false
+        }
+      ]
+    },
+    "readiness_minimalist": {
+      "title": "Readiness Minimalist",
+      "audience": "Experienced lifter, home gym: bodyweight, pull-up bar, a fixed 45 lb Olympic bar (no plates), one ~35 lb kettlebell",
+      "days_per_week": 4,
+      "sources": [
+        "ACSM Position Stand: Progression Models in Resistance Training for Healthy Adults (Med Sci Sports Exerc)",
+        "Schoenfeld et al.: Effects of Load on Muscular Adaptations, 6-20+ rep loads grow muscle when taken near failure (J Strength Cond Res)",
+        "Pak/Grgic: Effort and time-under-tension as progression levers when external load is fixed"
+      ],
+      "guidance": "No fixed weekly split, the engine picks train/light/rest from daily readiness. Load is deliberately light (45 lb bar, 35 lb KB), so progression is reps, tempo, density, single-arm/unilateral loading, and bodyweight skill steps, NOT plates. Take working sets to RPE 8; when you clear the top of a rep range with clean form, advance the movement (harder variation, slower tempo, or hang the KB) rather than hunting for weight you do not own.",
+      "sessions": [
+        {
+          "name": "Push",
+          "duration_min": 45,
+          "exercises": [
+            {
+              "id": "ohp",
+              "name": "Strict Overhead Press",
+              "sets": 4,
+              "reps": "6-8",
+              "rest_sec": 150,
+              "notes": "45 lb bar. Keep your legs still and let your shoulders do the pressing, no bouncing to help it up. Since the weight's fixed, get stronger by pausing at your forehead and lowering slowly over about 3 seconds before you add a set."
+            },
+            {
+              "id": "pushup",
+              "name": "Push-Up",
+              "sets": 4,
+              "reps": "12-20",
+              "rest_sec": 90,
+              "notes": "Bodyweight. Once you can do 20 clean reps, make it harder with feet-up or one-sided push-ups. That's how you progress here, not by adding weight."
+            },
+            {
+              "id": "dip",
+              "name": "Dip",
+              "sets": 3,
+              "reps": "8-12",
+              "rest_sec": 120,
+              "notes": "Bodyweight on bars or between two solid surfaces. Lower yourself slowly, about 3 seconds; once 12 reps feel easy, hang the 35 lb kettlebell from a belt for more."
+            },
+            {
+              "id": "dumbbell-shoulder-press",
+              "name": "Single-Arm KB Press",
+              "sets": 3,
+              "reps": "8-10/arm",
+              "rest_sec": 90,
+              "notes": "35 lb kettlebell, one arm at a time. The weight's on one side, so it'll try to tip you over. That's the point. Stay tall and even, don't lean."
+            },
+            {
+              "id": "lateral-raise",
+              "name": "KB Lateral Raise",
+              "sets": 2,
+              "reps": "12-15/arm",
+              "rest_sec": 60,
+              "notes": "One arm with the 35 lb kettlebell, or something lighter. Raise slowly with no swinging. You're after the burn, not how high it goes."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "doorway-pec-stretch",
+              "name": "Doorway Pec Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "cross-body-shoulder-stretch",
+              "name": "Cross-Body Shoulder Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "overhead-triceps-stretch",
+              "name": "Overhead Triceps Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "thoracic-extension-stretch",
+              "name": "Thoracic Extension",
+              "hold": "5 slow reaches"
+            }
+          ]
+        },
+        {
+          "name": "Pull",
+          "duration_min": 45,
+          "exercises": [
+            {
+              "id": "pullup",
+              "name": "Pull-Up",
+              "sets": 4,
+              "reps": "6-10",
+              "rest_sec": 150,
+              "notes": "Bodyweight, from a full hang up to your chin over the bar. Once you can do 12 clean reps, hang the 35 lb kettlebell from a belt to make it harder."
+            },
+            {
+              "id": "barbell-row",
+              "name": "Barbell Row",
+              "sets": 4,
+              "reps": "8-12",
+              "rest_sec": 120,
+              "notes": "45 lb bar, upper body bent forward. The weight's fixed, so add reps, squeeze for a second at the top, and lower the bar back down slowly."
+            },
+            {
+              "id": "dumbbell-row",
+              "name": "Single-Arm KB Row",
+              "sets": 3,
+              "reps": "10-12/arm",
+              "rest_sec": 90,
+              "notes": "35 lb kettlebell, one arm, with your other hand braced on a bench or knee. Let it stretch all the way down, then pull your elbow back toward your hip."
+            },
+            {
+              "id": "barbell-curl",
+              "name": "Barbell Curl",
+              "sets": 3,
+              "reps": "10-15",
+              "rest_sec": 75,
+              "notes": "45 lb bar. No swinging, lower it slowly over about 3 seconds and squeeze hard at the top, and even a light bar gives you plenty."
+            },
+            {
+              "id": "face-pull",
+              "name": "Face Pull",
+              "sets": 3,
+              "reps": "15-20",
+              "rest_sec": 60,
+              "notes": "Use a band, or row a bar or rings toward your face. Hold the squeeze for a second at the end. This keeps the backs of your shoulders healthy."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "childs-pose-lat-stretch",
+              "name": "Child's Pose (lat bias)",
+              "hold": "45s per side"
+            },
+            {
+              "id": "biceps-wall-stretch",
+              "name": "Biceps Wall Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "forearm-flexor-stretch",
+              "name": "Forearm Flexor Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "neck-side-stretch",
+              "name": "Neck Side Stretch",
+              "hold": "30s per side"
+            }
+          ]
+        },
+        {
+          "name": "Legs",
+          "duration_min": 45,
+          "exercises": [
+            {
+              "id": "front-squat",
+              "name": "Tempo Front Squat",
+              "sets": 4,
+              "reps": "8-12",
+              "rest_sec": 120,
+              "notes": "45 lb bar held across the front of your shoulders. Lower over 3 seconds, pause 1 second at the bottom, stand up in 1, a light bar moved slowly is not an easy set. Swap in goblet squats if the front hold is uncomfortable."
+            },
+            {
+              "id": "bulgarian-split-squat",
+              "name": "KB Bulgarian Split Squat",
+              "sets": 4,
+              "reps": "10-15/leg",
+              "rest_sec": 90,
+              "notes": "Your best friend when weight is limited, hold the 35 lb kettlebell at your chest, or in one hand down at your side. Add reps, then lower slowly and pause at the bottom so you never miss having more weight."
+            },
+            {
+              "id": "rdl",
+              "name": "Romanian Deadlift",
+              "sets": 3,
+              "reps": "10-15",
+              "rest_sec": 120,
+              "notes": "45 lb bar. Push your hips back and feel the stretch down the back of your thighs, go for a good stretch and a full pause at the bottom, not a big number."
+            },
+            {
+              "id": "kettlebell-swing",
+              "name": "Kettlebell Swing",
+              "sets": 4,
+              "reps": "15-20",
+              "rest_sec": 75,
+              "notes": "35 lb kettlebell. Snap your hips forward hard and stand tall and straight at the top. This builds power and gets you breathing. Keep every rep sharp."
+            },
+            {
+              "id": "hanging-leg-raise",
+              "name": "Hanging Leg Raise",
+              "sets": 3,
+              "reps": "8-15",
+              "rest_sec": 60,
+              "notes": "Hanging from the pull-up bar. Start with bent knees; once you can do 15 clean, move to straight-leg raises."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "standing-quad-stretch",
+              "name": "Standing Quad Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "seated-hamstring-stretch",
+              "name": "Seated Hamstring Stretch",
+              "hold": "45s per side"
+            },
+            {
+              "id": "figure-four-glute-stretch",
+              "name": "Figure-Four Glute Stretch",
+              "hold": "45s per side"
+            },
+            {
+              "id": "calf-wall-stretch",
+              "name": "Calf Wall Stretch",
+              "hold": "30s per side"
+            }
+          ]
+        },
+        {
+          "name": "Full-Body / Conditioning",
+          "duration_min": 40,
+          "exercises": [
+            {
+              "id": "turkish-get-up",
+              "name": "Turkish Get-Up",
+              "sets": 3,
+              "reps": "3-5/side",
+              "rest_sec": 90,
+              "notes": "35 lb kettlebell, slow and deliberate, settle into every position. This builds whole-body control and steady shoulders; go for quality, not speed."
+            },
+            {
+              "id": "kettlebell-swing",
+              "name": "Kettlebell Swing",
+              "sets": 4,
+              "reps": "20",
+              "rest_sec": 60,
+              "notes": "35 lb kettlebell at a steady, breathless pace. Keep snapping your hips sharply even when you're breathing hard."
+            },
+            {
+              "id": "farmer-carry",
+              "name": "Farmer Carry",
+              "sets": 4,
+              "reps": "40m",
+              "rest_sec": 75,
+              "notes": "35 lb kettlebell, one in each hand if you have two, otherwise carry one at your side like a suitcase and switch hands each round. Stand tall, ribs down."
+            },
+            {
+              "id": "goblet-squat",
+              "name": "Goblet Squat",
+              "sets": 3,
+              "reps": "12-15",
+              "rest_sec": 75,
+              "notes": "35 lb kettlebell held at your chest. Stay upright, squat all the way down, stay controlled. Keep your rests short so it stays challenging."
+            },
+            {
+              "id": "plank",
+              "name": "Plank",
+              "sets": 3,
+              "reps": "45-60s",
+              "rest_sec": 45,
+              "notes": "Squeeze your core and glutes tight. Once 60 seconds feels easy, add time or slow shoulder taps."
+            }
+          ],
+          "cooldown": [
+            {
+              "id": "worlds-greatest-stretch",
+              "name": "World's Greatest Stretch",
+              "hold": "5 reaches per side"
+            },
+            {
+              "id": "downward-dog-stretch",
+              "name": "Downward Dog",
+              "hold": "45s"
+            },
+            {
+              "id": "kneeling-hip-flexor-stretch",
+              "name": "Kneeling Hip Flexor Stretch",
+              "hold": "30s per side"
+            },
+            {
+              "id": "childs-pose-lat-stretch",
+              "name": "Child's Pose",
+              "hold": "45s"
+            }
+          ]
+        }
+      ]
+    },
+    "intermediate_strength": {
+      "title": "Upper/Lower Strength Split",
+      "audience": "Adults, intermediate (6+ months consistent training)",
+      "days_per_week": 4,
+      "sources": [
+        "ACSM Position Stand: Progression Models in Resistance Training for Healthy Adults (Med Sci Sports Exerc)",
+        "NSCA Essentials of Strength Training and Conditioning, 4th ed."
+      ],
+      "guidance": "3-4 sets, 6-12 reps for hypertrophy or 4-6 for strength emphasis; 2-3 min rest on compound lifts; progress load ~2-5% when all sets hit the top of the rep range at RPE 8 or below.",
+      "sessions": [
+        {
+          "name": "Upper Push",
+          "duration_min": 45,
+          "exercises": [
+            {
+              "id": "bench-press",
+              "name": "Barbell Bench Press",
+              "sets": 4,
+              "reps": "6-8",
+              "rest_sec": 180
+            },
+            {
+              "id": "ohp",
+              "name": "Overhead Press",
+              "sets": 3,
+              "reps": "8-10",
+              "rest_sec": 150
+            },
+            {
+              "id": "dumbbell-bench",
+              "name": "Incline DB Press",
+              "sets": 3,
+              "reps": "10-12",
+              "rest_sec": 90
+            },
+            {
+              "id": "lateral-raise",
+              "name": "Lateral Raises",
+              "sets": 3,
+              "reps": "12-15",
+              "rest_sec": 60
+            },
+            {
+              "id": "tricep-pushdown",
+              "name": "Triceps Pushdown",
+              "sets": 3,
+              "reps": "10-12",
+              "rest_sec": 60
+            }
+          ]
+        },
+        {
+          "name": "Lower Strength",
+          "duration_min": 50,
+          "exercises": [
+            {
+              "id": "deadlift",
+              "name": "Conventional Deadlift",
+              "sets": 4,
+              "reps": "4-5",
+              "rest_sec": 210
+            },
+            {
+              "id": "back-squat",
+              "name": "Back Squat",
+              "sets": 3,
+              "reps": "6-8",
+              "rest_sec": 180
+            },
+            {
+              "id": "bulgarian-split-squat",
+              "name": "Bulgarian Split Squat",
+              "sets": 3,
+              "reps": "10/leg",
+              "rest_sec": 90
+            },
+            {
+              "id": "calf-raise",
+              "name": "Standing Calf Raise",
+              "sets": 3,
+              "reps": "12-15",
+              "rest_sec": 60
+            },
+            {
+              "id": "plank",
+              "name": "Plank",
+              "sets": 3,
+              "reps": "45-60s",
+              "rest_sec": 60
+            }
+          ]
+        },
+        {
+          "name": "Upper Pull",
+          "duration_min": 45,
+          "exercises": [
+            {
+              "id": "barbell-row",
+              "name": "Barbell Row",
+              "sets": 4,
+              "reps": "6-8",
+              "rest_sec": 150
+            },
+            {
+              "id": "pullup",
+              "name": "Pull-ups",
+              "sets": 3,
+              "reps": "6-10",
+              "rest_sec": 150
+            },
+            {
+              "id": "lat-pulldown",
+              "name": "Lat Pulldown",
+              "sets": 3,
+              "reps": "10-12",
+              "rest_sec": 90
+            },
+            {
+              "id": "face-pull",
+              "name": "Face Pulls",
+              "sets": 3,
+              "reps": "12-15",
+              "rest_sec": 60
+            },
+            {
+              "id": "barbell-curl",
+              "name": "Barbell Curls",
+              "sets": 3,
+              "reps": "10-12",
+              "rest_sec": 60
+            }
+          ]
+        },
+        {
+          "name": "Lower Volume",
+          "duration_min": 45,
+          "exercises": [
+            {
+              "id": "front-squat",
+              "name": "Front Squat",
+              "sets": 3,
+              "reps": "8-10",
+              "rest_sec": 150
+            },
+            {
+              "id": "rdl",
+              "name": "Romanian Deadlift",
+              "sets": 3,
+              "reps": "10-12",
+              "rest_sec": 120
+            },
+            {
+              "id": "kettlebell-swing",
+              "name": "Kettlebell Swing",
+              "sets": 3,
+              "reps": "15",
+              "rest_sec": 75
+            },
+            {
+              "id": "farmer-carry",
+              "name": "Farmer's Carry",
+              "sets": 3,
+              "reps": "30m",
+              "rest_sec": 90
+            },
+            {
+              "id": "hanging-leg-raise",
+              "name": "Hanging Knee Raise",
+              "sets": 3,
+              "reps": "10-15",
+              "rest_sec": 60
+            }
+          ]
+        }
+      ]
+    },
+    "beginner_general": {
+      "title": "Full-Body Foundations",
+      "audience": "Adults, new or returning to exercise",
+      "days_per_week": 3,
+      "sources": [
+        "ACSM Guidelines for Exercise Testing and Prescription, 11th ed. (150 min/wk moderate aerobic + 2x/wk resistance)",
+        "WHO Guidelines on Physical Activity and Sedentary Behaviour (2020)"
+      ],
+      "guidance": "Start 1-2 sets of 10-15 reps at a comfortable load; add a set after two consistent weeks; a brisk 10-min walk warm-up counts toward the weekly aerobic target.",
+      "sessions": [
+        {
+          "name": "Full Body A",
+          "duration_min": 35,
+          "exercises": [
+            {
+              "id": "goblet-squat",
+              "name": "Goblet Squat",
+              "sets": 2,
+              "reps": "10-12",
+              "rest_sec": 90
+            },
+            {
+              "id": "pushup",
+              "name": "Push-ups",
+              "sets": 2,
+              "reps": "10-12",
+              "rest_sec": 90
+            },
+            {
+              "id": "dumbbell-row",
+              "name": "One-Arm DB Row",
+              "sets": 2,
+              "reps": "10-12/side",
+              "rest_sec": 90
+            },
+            {
+              "name": "Glute Bridge",
+              "sets": 2,
+              "reps": "12-15",
+              "rest_sec": 60
+            },
+            {
+              "name": "Brisk Walk / Cycle",
+              "sets": 1,
+              "reps": "15 min",
+              "rest_sec": 0
+            }
+          ]
+        },
+        {
+          "name": "Full Body B",
+          "duration_min": 35,
+          "exercises": [
+            {
+              "id": "rdl",
+              "name": "DB Romanian Deadlift",
+              "sets": 2,
+              "reps": "10-12",
+              "rest_sec": 90
+            },
+            {
+              "id": "dumbbell-shoulder-press",
+              "name": "Overhead DB Press",
+              "sets": 2,
+              "reps": "10-12",
+              "rest_sec": 90
+            },
+            {
+              "id": "lat-pulldown",
+              "name": "Lat Pulldown or Band Pull",
+              "sets": 2,
+              "reps": "10-12",
+              "rest_sec": 90
+            },
+            {
+              "name": "Step-ups",
+              "sets": 2,
+              "reps": "10/leg",
+              "rest_sec": 60
+            },
+            {
+              "name": "Brisk Walk / Cycle",
+              "sets": 1,
+              "reps": "15 min",
+              "rest_sec": 0
+            }
+          ]
+        },
+        {
+          "name": "Full Body C",
+          "duration_min": 35,
+          "exercises": [
+            {
+              "id": "dumbbell-bench",
+              "name": "DB Bench Press",
+              "sets": 2,
+              "reps": "10-12",
+              "rest_sec": 90
+            },
+            {
+              "id": "bulgarian-split-squat",
+              "name": "Split Squat (hold a rail)",
+              "sets": 2,
+              "reps": "8-10/leg",
+              "rest_sec": 90
+            },
+            {
+              "id": "face-pull",
+              "name": "Band Face Pull",
+              "sets": 2,
+              "reps": "12-15",
+              "rest_sec": 60
+            },
+            {
+              "id": "plank",
+              "name": "Plank",
+              "sets": 2,
+              "reps": "20-40s",
+              "rest_sec": 60
+            },
+            {
+              "name": "Brisk Walk / Cycle",
+              "sets": 1,
+              "reps": "15 min",
+              "rest_sec": 0
+            }
+          ]
+        },
+        {
+          "name": "Active Recovery",
+          "duration_min": 30,
+          "exercises": [
+            {
+              "name": "Walk, bike, or swim (easy pace)",
+              "sets": 1,
+              "reps": "30 min",
+              "rest_sec": 0
+            },
+            {
+              "name": "Full-body stretch",
+              "sets": 1,
+              "reps": "10 min",
+              "rest_sec": 0
+            }
+          ]
+        }
+      ]
+    },
+    "youth_developmental": {
+      "title": "Teen Athletic Development",
+      "audience": "Adolescents, technique first, no max lifts, adult supervision recommended",
+      "days_per_week": 3,
+      "sources": [
+        "NSCA Position Statement on Youth Resistance Training (Lloyd et al., J Strength Cond Res)",
+        "AAP Council on Sports Medicine: Strength Training by Children and Adolescents (Pediatrics)"
+      ],
+      "guidance": "1-2 sets of 10-15 reps with bodyweight or light loads; master form before adding weight; NO one-rep-max attempts; emphasize movement quality, speed, and fun.",
+      "sessions": [
+        {
+          "name": "Movement + Strength",
+          "duration_min": 35,
+          "exercises": [
+            {
+              "name": "Bodyweight Squat",
+              "sets": 2,
+              "reps": "12-15",
+              "rest_sec": 60
+            },
+            {
+              "id": "pushup",
+              "name": "Push-ups (incline if needed)",
+              "sets": 2,
+              "reps": "8-12",
+              "rest_sec": 60
+            },
+            {
+              "name": "Inverted Row (bar or rings)",
+              "sets": 2,
+              "reps": "8-12",
+              "rest_sec": 60
+            },
+            {
+              "name": "Broad Jumps",
+              "sets": 2,
+              "reps": "5",
+              "rest_sec": 90
+            },
+            {
+              "id": "plank",
+              "name": "Plank",
+              "sets": 2,
+              "reps": "30s",
+              "rest_sec": 45
+            }
+          ]
+        },
+        {
+          "name": "Speed + Agility",
+          "duration_min": 30,
+          "exercises": [
+            {
+              "name": "High-Knee Skips",
+              "sets": 3,
+              "reps": "20m",
+              "rest_sec": 60
+            },
+            {
+              "name": "Lateral Shuffle",
+              "sets": 3,
+              "reps": "10m each way",
+              "rest_sec": 60
+            },
+            {
+              "name": "Sprint Build-ups",
+              "sets": 4,
+              "reps": "30m",
+              "rest_sec": 120
+            },
+            {
+              "name": "Single-Leg Balance + Reach",
+              "sets": 2,
+              "reps": "8/leg",
+              "rest_sec": 45
+            }
+          ]
+        },
+        {
+          "name": "Power Circuit",
+          "duration_min": 35,
+          "exercises": [
+            {
+              "id": "goblet-squat",
+              "name": "Goblet Squat (light)",
+              "sets": 2,
+              "reps": "10-12",
+              "rest_sec": 75
+            },
+            {
+              "id": "kettlebell-swing",
+              "name": "Kettlebell Swing (light)",
+              "sets": 3,
+              "reps": "12",
+              "rest_sec": 75
+            },
+            {
+              "name": "Medicine Ball Chest Pass",
+              "sets": 3,
+              "reps": "8",
+              "rest_sec": 60
+            },
+            {
+              "name": "Box Step-up Jumps (low box)",
+              "sets": 3,
+              "reps": "6/leg",
+              "rest_sec": 90
+            },
+            {
+              "name": "Dead Bug",
+              "sets": 2,
+              "reps": "10/side",
+              "rest_sec": 45
+            }
+          ]
+        },
+        {
+          "name": "Play + Conditioning",
+          "duration_min": 40,
+          "exercises": [
+            {
+              "name": "Sport of choice (basketball, soccer, skating...)",
+              "sets": 1,
+              "reps": "30+ min",
+              "rest_sec": 0
+            },
+            {
+              "name": "Cool-down stretch",
+              "sets": 1,
+              "reps": "8 min",
+              "rest_sec": 0
+            }
+          ]
+        }
+      ]
+    },
+    "active_play": {
+      "title": "Adventure Hour for Kids",
+      "audience": "Children, activity through play, not structured lifting",
+      "days_per_week": 7,
+      "sources": [
+        "WHO: children 5-17 should average 60 min/day of moderate-to-vigorous activity",
+        "CDC Physical Activity Guidelines for School-Age Children"
+      ],
+      "guidance": "Make it a game. Mix running, climbing, balancing, throwing, and dancing. Muscle- and bone-strengthening play (hopping, climbing) at least 3 days a week.",
+      "sessions": [
+        {
+          "name": "Adventure Hour",
+          "duration_min": 60,
+          "exercises": [
+            {
+              "name": "Playground time (climb, swing, slide)",
+              "sets": 1,
+              "reps": "20 min",
+              "rest_sec": 0
+            },
+            {
+              "name": "Animal walks (bear crawl, frog hop, crab walk)",
+              "sets": 1,
+              "reps": "10 min",
+              "rest_sec": 0
+            },
+            {
+              "name": "Ball games (throw, catch, kick)",
+              "sets": 1,
+              "reps": "15 min",
+              "rest_sec": 0
+            },
+            {
+              "name": "Dance party or tag",
+              "sets": 1,
+              "reps": "15 min",
+              "rest_sec": 0
+            }
+          ]
+        },
+        {
+          "name": "Backyard Olympics",
+          "duration_min": 55,
+          "exercises": [
+            {
+              "name": "Obstacle course (set it up together)",
+              "sets": 3,
+              "reps": "1 lap",
+              "rest_sec": 0
+            },
+            {
+              "name": "Long jump / hopscotch",
+              "sets": 1,
+              "reps": "10 min",
+              "rest_sec": 0
+            },
+            {
+              "name": "Balance beam (a curb or a plank)",
+              "sets": 1,
+              "reps": "10 min",
+              "rest_sec": 0
+            },
+            {
+              "name": "Sprint races",
+              "sets": 5,
+              "reps": "20m",
+              "rest_sec": 0
+            }
+          ]
+        },
+        {
+          "name": "Rainy Day Moves",
+          "duration_min": 45,
+          "exercises": [
+            {
+              "name": "Freeze dance",
+              "sets": 1,
+              "reps": "12 min",
+              "rest_sec": 0
+            },
+            {
+              "name": "Pillow-path floor is lava",
+              "sets": 1,
+              "reps": "12 min",
+              "rest_sec": 0
+            },
+            {
+              "name": "Balloon keep-up",
+              "sets": 1,
+              "reps": "10 min",
+              "rest_sec": 0
+            },
+            {
+              "name": "Yoga animal poses",
+              "sets": 1,
+              "reps": "10 min",
+              "rest_sec": 0
+            }
+          ]
+        },
+        {
+          "name": "Wheels + Water",
+          "duration_min": 60,
+          "exercises": [
+            {
+              "name": "Bike, scooter, or skates",
+              "sets": 1,
+              "reps": "30 min",
+              "rest_sec": 0
+            },
+            {
+              "name": "Swim or sprinkler play",
+              "sets": 1,
+              "reps": "20 min",
+              "rest_sec": 0
+            },
+            {
+              "name": "Stretch and cool down",
+              "sets": 1,
+              "reps": "8 min",
+              "rest_sec": 0
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

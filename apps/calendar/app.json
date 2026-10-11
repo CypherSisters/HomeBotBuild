@@ -1,0 +1,64 @@
+{
+  "schema": "puffpai_app/v1",
+  "id": "calendar",
+  "name": "Calendar",
+  "blurb": "Family events, tasks, bills and medications on one month view.",
+  "version": "1.0.0",
+  "author": "Cypher Sisters",
+  "license": "Apache-2.0",
+  "order": 20,
+
+  "surfaces": ["comms.calendar"],
+
+  "data": {
+    "default": {
+      "family": [
+        { "id": "dad", "name": "Dad", "color": "#38bdf8", "emoji": "\ud83d\udc68", "role": "parent" },
+        { "id": "mom", "name": "Mom", "color": "#a78bfa", "emoji": "\ud83d\udc69", "role": "parent" },
+        { "id": "alex", "name": "Alex", "color": "#4ade80", "emoji": "\ud83d\udc66", "role": "child" },
+        { "id": "emma", "name": "Emma", "color": "#fbbf24", "emoji": "\ud83d\udc67", "role": "child" }
+      ],
+      "events": [],
+      "tasks": [],
+      "meds": [],
+      "bills": [],
+      "last_updated": ""
+    }
+  },
+
+  "ui": { "route": "/dashboard/apps/calendar", "icon": "mdiCalendar" },
+
+  "vocabulary": {
+    "keywords": [
+      "calendar",
+      "schedule",
+      "event",
+      "appointment",
+      "meeting",
+      "task",
+      "to do",
+      "todo"
+    ],
+    "examples": [
+      "what is on my calendar tomorrow"
+    ]
+  },
+
+  "actions": [
+    { "id": "cal_add_event", "says": "add a dentist appointment on friday at ten" },
+    { "id": "cal_list_day", "says": "what is on my calendar tomorrow" },
+    { "id": "cal_add_task", "says": "add taking the bins out to my tasks" }
+  ],
+
+  "doors": [
+    {
+      "hosts": [],
+      "purpose": "None. The family calendar is held on this box only.",
+      "data_sent_plain": "nothing"
+    }
+  ],
+  "credential": { "kind": "none" },
+  "children": { "may_be_used_by_minor": true },
+
+  "requires": { "home_assistant": false, "network": false, "ollama": false }
+}

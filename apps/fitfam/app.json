@@ -1,0 +1,44 @@
+{
+  "schema": "puffpai_app/v1",
+  "id": "fitfam",
+  "name": "FitFam",
+  "blurb": "Workouts per person, with streaks and a history that stays here.",
+  "version": "1.0.0",
+  "author": "Cypher Sisters",
+  "license": "Apache-2.0",
+  "order": 40,
+
+  "surfaces": ["daily.fitness"],
+
+  "ui": { "route": "/dashboard/apps/fitfam", "icon": "mdiFire" },
+
+  "vocabulary": {
+    "keywords": [
+      "workout",
+      "exercise",
+      "fitness"
+    ],
+    "examples": [
+      "log today's workout",
+      "how long is my workout streak"
+    ]
+  },
+
+  "actions": [
+    { "id": "fit_log_workout", "says": "log today's workout" },
+    { "id": "fit_log_set", "says": "log three sets of ten on the bench press" },
+    { "id": "fit_get_status", "says": "how long is my workout streak" }
+  ],
+
+  "doors": [
+    {
+      "hosts": [],
+      "purpose": "None. Workout history is written to this box and nowhere else.",
+      "data_sent_plain": "nothing"
+    }
+  ],
+  "credential": { "kind": "none" },
+  "children": { "may_be_used_by_minor": true },
+
+  "requires": { "home_assistant": false, "network": false, "ollama": false }
+}

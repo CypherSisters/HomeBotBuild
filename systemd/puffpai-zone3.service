@@ -1,0 +1,43 @@
+[Unit]
+# PuffPAI Zone 3 (the Bridge) — the house's DNS resolver.
+#
+# A docker compose stack with restart:unless-stopped comes back after a
+# DAEMON restart, but not reliably after a REBOOT if nothing ever brought the
+# project up in the first place. Zone 3 cannot take that chance: once the
+# router points the house at this box, a Zone 3 that does
+# not come back after a power cut takes the whole household's name resolution
+# with it. So it is a unit, enabled, with docker as a hard requirement.
+Description=PuffPAI Zone 3 — AdGuard Home DNS sinkhole
+Documentation=file:///opt/puffpai/docs/ZONE3_SETUP.md
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/puffpai
+# No --force-recreate: this holds a live query log and
+# a resolver cache, and recreating the container on every boot throws both
+# away for no gain. `up -d` is a no-op when the container is already correct.
+ExecStart=/usr/bin/docker compose -f /opt/puffpai/docker-compose.zone3.yml up -d
+ExecStop=/usr/bin/docker compose -f /opt/puffpai/docker-compose.zone3.yml down
+# Runs as ROOT, deliberately, and this is the LESS privileged of the two
+# options available.
+#
+# `docker compose` needs the docker socket, and socket access is
+# root-equivalent either way: anyone who can talk to it can bind-mount / into
+# a privileged container. The alternative — User=puffpai Group=docker — would
+# hand that root-equivalence to the `puffpai` account PERMANENTLY, and that
+# account also runs puffpai-api, the network-facing backend. A backend bug
+# would then be a root compromise.
+#
+# Keeping it root confines the privilege to this oneshot, which runs two fixed
+# `docker compose` commands against a path inside the read-only /opt tree and
+# then exits (RemainAfterExit is bookkeeping, not a live process).
+# scripts/provision_orin.sh keeps `puffpai` out of the docker group for the
+# same reason, and puffpai-nodered.service is root for the same reason.
+# Do NOT "fix" this by adding puffpai to the docker group.
+
+[Install]
+WantedBy=multi-user.target

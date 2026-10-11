@@ -1,0 +1,43 @@
+{
+  "schema": "puffpai_package/v1",
+  "id": "surfaces",
+  "kind": "skill",
+  "version": "1.0.0",
+  "author": "puffpai",
+  "license": "Apache-2.0",
+  "label": "Where you meet it",
+  "description": "Which surfaces this build loads, and where the bot itself appears.",
+  "reads": [
+    "persona",
+    "tools",
+    "knowledge",
+    "posture"
+  ],
+  "writes": "surfaces",
+  "permissions": {
+    "network_hosts": [],
+    "files": [
+      "data"
+    ],
+    "ha_domains": [],
+    "secrets": []
+  },
+  "doors": [],
+  "secrets": [],
+  "egress": "none",
+  "estimate": {
+    "bytes": 0,
+    "seconds": 0,
+    "basis": "unknown"
+  },
+  "rerun": "idempotent",
+  "undo": "reversible",
+  "blocking": false,
+  "provides": [
+    "surfaces.allowlist"
+  ],
+  "needs": [
+    "persona.goal"
+  ],
+  "builtin": true
+}

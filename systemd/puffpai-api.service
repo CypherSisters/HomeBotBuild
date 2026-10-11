@@ -1,0 +1,146 @@
+[Unit]
+# PuffPAI backend — Flask (NOT FastAPI), ~130 routes, SSE chat streaming,
+# plus in-process daemon threads started by start_background_services()
+# (LLM warm-up, Device Sentinel, chat history, agent team).
+Description=PuffPAI API (Flask backend)
+Documentation=file:///opt/puffpai/systemd/README.md
+After=network-online.target ollama.service
+Wants=network-online.target
+# Ollama is a soft dependency: the backend starts and serves without it,
+# LLM calls just fail until Ollama is up.
+Wants=ollama.service
+
+[Service]
+Type=simple
+User=puffpai
+Group=puffpai
+WorkingDirectory=/opt/puffpai
+
+# start_api.py is the launcher: it puts src/ on sys.path, calls
+# start_background_services(), then app.run(host=0.0.0.0, port=8000,
+# threaded=True). Note it hardcodes host/port — api_server.host/port in
+# puffpai_config.json is NOT read by this path.
+ExecStart=/opt/puffpai/venv/bin/python /opt/puffpai/start_api.py
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/puffpai/src
+# Writable state root for every module that resolves state through
+# puffpai.config.resolve_state_dir(), directly or via the puffpai.statedir
+# leaf: agent_events.py (agent_events.jsonl), agents/majordomo.py
+# (majordomo_tasks.jsonl, daily_briefing.json), agents/caretaker.py
+# (caretaker_restarts.json), agents/toolsmith.py (workspace/),
+# device_sentinel.py (sentinel_baseline.json, sentinel_alerts.jsonl),
+# security/consent_gate.py (device_consent.json, sentinel_reviews.jsonl),
+# security/consent_requests.py (consent_requests.json) and
+# zone3/adguard_controller.py (zone3_dns_rules.jsonl). Without this variable
+# ALL of them default to /opt/puffpai/data, which the ReadWritePaths entry for
+# that directory below does cover, so a queue of scheduled work, the restart
+# rate-limit ledger and the tool sandbox still persist. Keep setting this
+# anyway: it is the one line that puts ALL of them under the intended state
+# root instead of leaving state inside the deploy directory, where a redeploy
+# is free to overwrite it. An absolute paths.* key in puffpai_config.json
+# still overrides this per item.
+#
+# Note this var being set also suppresses the file-level adoption of files
+# left at a module's OLDER default (see systemd/README.md), deliberately, per
+# resolve_state_dir(): an explicit choice is never second-guessed. Nothing
+# needs seeding here, because those older defaults are not writable under
+# ProtectSystem=strict, so no appliance writes them. A box that ran with the
+# variable unset has files at the older defaults: copy them across once
+# before setting it.
+Environment=PUFFPAI_DATA_DIR=/data/puffpai/state
+# Log level for the 'puffpai' logger tree; start_api.py defaults to INFO and
+# also writes $PUFFPAI_DATA_DIR/logs/puffpai.log (rotating, 5 MB x 3). Set
+# DEBUG here only for a diagnosis session — it is loud and it is retained in
+# journald. Note the console half lands in journald on top of werkzeug's
+# per-request access lines, so check `journalctl --disk-usage` after a level
+# change rather than assuming headroom.
+#Environment=PUFFPAI_LOG_LEVEL=DEBUG
+# Stock Ollama port is the code default (puffpai.config.DEFAULT_OLLAMA_URL);
+# uncomment only if Ollama was moved.
+#Environment=PUFFPAI_OLLAMA_URL=http://127.0.0.1:11434
+# Secrets (PUFFPAI_API_KEY, HA_TOKEN, …) — file is 0640 root:puffpai, so the
+# service user can read it and nobody else can. The leading "-" makes it
+# optional; the vault/keyring path is preferred.
+EnvironmentFile=-/etc/puffpai/api.env
+
+# 0640 files / 0750 dirs instead of systemd's default 0022 (0644/0755). The
+# rotating log at $PUFFPAI_DATA_DIR/logs carries LLM reply fragments, uploaded
+# filenames and HA device names at INFO, and start_api.py can only chmod the
+# file it creates — the three rotated copies are opened later, so their mode
+# comes from here. puffpai-dashboard runs as the same user, so nothing else
+# loses read access.
+UMask=0027
+
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=180
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=puffpai-api
+
+# /run/puffpai, cleaned up on stop
+RuntimeDirectory=puffpai
+RuntimeDirectoryMode=0750
+
+# ── Sandbox ────────────────────────────────────────────────────────────────
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# Config-driven state lives under /data/puffpai (NVMe). paths.* in
+# puffpai_config.json MUST be absolute paths under it — the repo defaults are
+# relative ("./kiwix_rag_db", "chat_history") and would try to write into
+# /opt/puffpai, which is read-only here. See systemd/README.md.
+ReadWritePaths=/data/puffpai
+
+# Several modules ALSO write to hardcoded repo-relative paths with no config
+# hook. The specific paths are punched through the read-only /opt, one
+# ReadWritePaths entry each. provision_orin.sh creates all of them
+# owned by puffpai; the "-" prefix keeps the unit startable if one is missing.
+# There are TWO security_logs directories, at different depths, because the
+# modules compute the repo root differently. Both are real; neither is
+# redundant:
+#   src/security_logs/ -> audit_log.py's fallback location (it resolves
+#                     parent.parent.parent from src/puffpai/security/, landing
+#                     in src/ rather than the repo root). THIS is the SECURITY
+#                     AUDIT TRAIL. Its location is config-driven
+#                     (paths.security_logs_dir) and it keeps using this
+#                     directory only while it exists and the configured one
+#                     does not, so an existing trail is never orphaned. Keep
+#                     this entry until the trail is moved. It still fails open on
+#                     write and raises on mkdir — see README.
+#   security_logs/ -> dashboard_registry.py and dashboard_widgets.py resolve
+#                     from src/puffpai/, landing at the repo root.
+#   data/          -> firewall rules, dashboard camera/widget registries
+#                     (written via atomic os.replace, so the DIRECTORY must be
+#                     writable, not just the file), data/library_sources/, and
+#                     the built-in default for the consent
+#                     ledger, the consent-request queue and the agent event
+#                     log — the modules that converged on <repo>/data. With
+#                     PUFFPAI_DATA_DIR set (as above) they land in the state
+#                     root instead, so this entry is the safety net, not the
+#                     normal path.
+#   app_data/      -> app_data.py
+# All are "-" prefixed: neither directory is tracked in git, so on a fresh
+# checkout they do not exist until the third provision_orin.sh run creates them,
+# and an unprefixed missing path makes systemd fail namespace setup outright.
+ReadWritePaths=-/opt/puffpai/src/security_logs
+ReadWritePaths=-/opt/puffpai/security_logs
+ReadWritePaths=-/opt/puffpai/data
+ReadWritePaths=-/opt/puffpai/app_data
+ReadWritePaths=-/opt/puffpai/blocked_devices.json
+ReadWritePaths=-/opt/puffpai/emergency_inventory.json
+ReadWritePaths=-/opt/puffpai/src/puffpai/indexed_libraries.json
+
+# Zone 3 / nftables enforcement needs CAP_NET_ADMIN to run `nft`. Left off by
+# default: NftablesFirewall is untested on the appliance, so smoke-test it
+# first. Enable both lines together once it is verified.
+#AmbientCapabilities=CAP_NET_ADMIN
+#CapabilityBoundingSet=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

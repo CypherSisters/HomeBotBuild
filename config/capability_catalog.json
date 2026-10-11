@@ -1,0 +1,1999 @@
+{
+  "schema": "capability_catalog/v2",
+  "_maintainer_note": "The bundled, OFFLINE starter catalog the build interview searches by goal. It works with the WAN unplugged; nothing here does a live lookup. First-party only in v1: real knowledge packs (downloaded on demand from library.kiwix.org, with size shown before any download), the apps that ship with BuildBot, and the integrations the wizard can wire. Community and store items are NOT offered here yet, because untrusted contributions need the review model that is still being designed. Extend by adding domain-tagged rows; keep tags lowercase keywords a person would actually type. Two tag rules the matcher depends on: (a) never use a filler word as a tag - the goal side strips stopwords such as everything, help, and thing, so such a tag is dead vocabulary that can never match; (b) never tag an item with its own broad domain word, such as tagging the calendar app with home, because that makes every goal about that domain drag the item along with a reason nobody believes. Tag what the item DOES, not where it lives. Every pack in docs/KNOWLEDGE_PACKS.md has a knowledge_pack row here. A pack row says 'available': true only when every id in its 'source_ids' names a download row in config/source_registry.json, and it repeats that row's size_mb, license, license_url, license_checked (true or false), commercial_use and what_it_is so the owner sees them before choosing. Nothing in this repository ships the pack files themselves.",
+  "_surfaces_note": "Every item also carries a 'surfaces' list: the surfaces a build must LOAD for that item to work. The goal match proposes a surface allowlist from these; surfaces outside the allowlist are not loaded at all, not merely hidden. The taxonomy is deliberately small and is a closed set - add a surface to _surface_taxonomy first, then tag items with it, so the allowlist can never contain a surface nothing knows how to load. Naming is 'family.thing', six families: house (the physical home), media (playback and libraries), knowledge (offline reference corpora), instruments (read-only feeds from measuring gear), comms (scheduling and notification), and daily (the everyday personal apps). Surfaces marked sensitive:true are proposed like any other but the wizard calls them out by name so nobody acquires a camera feed by accident.",
+  "_surface_taxonomy": {
+    "house.lights": {
+      "label": "Lights and switches",
+      "sensitive": false
+    },
+    "house.climate": {
+      "label": "Thermostat and climate",
+      "sensitive": false
+    },
+    "house.sensors": {
+      "label": "Household sensors",
+      "sensitive": false
+    },
+    "house.cameras": {
+      "label": "Security cameras",
+      "sensitive": true
+    },
+    "media.video": {
+      "label": "Video library and playback",
+      "sensitive": false
+    },
+    "media.audio": {
+      "label": "Music and radio",
+      "sensitive": false
+    },
+    "media.books": {
+      "label": "Book and reading library",
+      "sensitive": false
+    },
+    "knowledge.library": {
+      "label": "Offline reference library",
+      "sensitive": false
+    },
+    "knowledge.medical": {
+      "label": "Medical reference",
+      "sensitive": true
+    },
+    "knowledge.maps": {
+      "label": "Maps and places",
+      "sensitive": false
+    },
+    "instruments.telescope": {
+      "label": "Telescope and sky feeds",
+      "sensitive": false
+    },
+    "comms.calendar": {
+      "label": "Calendar and events",
+      "sensitive": false
+    },
+    "comms.timers": {
+      "label": "Timers and alarms",
+      "sensitive": false
+    },
+    "daily.kitchen": {
+      "label": "Pantry and meals",
+      "sensitive": false
+    },
+    "daily.fitness": {
+      "label": "Fitness tracking",
+      "sensitive": true
+    },
+    "daily.games": {
+      "label": "Games and trivia",
+      "sensitive": false
+    },
+    "daily.notes": {
+      "label": "Notes and lists",
+      "sensitive": false
+    }
+  },
+  "items": [
+    {
+      "id": "pack:wikipedia",
+      "kind": "knowledge_pack",
+      "label": "Wikipedia, offline",
+      "domain": "reference",
+      "source": "library.kiwix.org",
+      "tags": [
+        "general knowledge",
+        "reference",
+        "encyclopedia",
+        "knowledge",
+        "facts",
+        "history",
+        "look up",
+        "gardening",
+        "garden",
+        "farming",
+        "farm",
+        "homestead"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "note": "The whole encyclopedia offline. Large; the wizard shows the size before downloading.",
+      "available": true,
+      "size_mb": 50250,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://en.wikipedia.org/wiki/Wikipedia:Copyrights",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "All of English Wikipedia without images. Enormous, and the broadest single thing on this list.",
+      "source_ids": [
+        "kiwix_wikipedia_en_nopic"
+      ]
+    },
+    {
+      "id": "pack:wikivoyage",
+      "kind": "knowledge_pack",
+      "label": "Wikivoyage travel guide",
+      "domain": "travel",
+      "source": "library.kiwix.org",
+      "tags": [
+        "travel",
+        "trip",
+        "geography",
+        "places",
+        "cities",
+        "maps"
+      ],
+      "surfaces": [
+        "knowledge.library",
+        "knowledge.maps"
+      ],
+      "available": true,
+      "size_mb": 1022,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "The Wikivoyage travel guide, with images.",
+      "source_ids": [
+        "kiwix_wikivoyage_maxi"
+      ]
+    },
+    {
+      "id": "pack:wikispecies",
+      "kind": "knowledge_pack",
+      "label": "Wikispecies",
+      "domain": "science",
+      "source": "library.kiwix.org",
+      "tags": [
+        "species",
+        "biology",
+        "nature",
+        "animals",
+        "plants",
+        "taxonomy",
+        "science",
+        "pests",
+        "weeds",
+        "trees",
+        "crops",
+        "insects",
+        "seedlings",
+        "soil"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 3272,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "A catalogue of all known species and their classification, with images.",
+      "source_ids": [
+        "kiwix_wikispecies_maxi"
+      ]
+    },
+    {
+      "id": "pack:stackexchange_science",
+      "kind": "knowledge_pack",
+      "label": "Science and astronomy Q&A (Stack Exchange)",
+      "domain": "science",
+      "source": "library.kiwix.org",
+      "tags": [
+        "science",
+        "astronomy",
+        "space",
+        "physics",
+        "math",
+        "chemistry",
+        "stars",
+        "telescope",
+        "observatory",
+        "observing",
+        "sky",
+        "night sky",
+        "planets",
+        "moon",
+        "galaxy",
+        "cosmology",
+        "orbit"
+      ],
+      "surfaces": [
+        "knowledge.library",
+        "instruments.telescope"
+      ],
+      "available": true,
+      "size_mb": 566,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://stackoverflow.com/help/licensing",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Every question and answer from the Astronomy Stack Exchange, offline. Every question and answer from the Space Exploration Stack Exchange, offline.",
+      "source_ids": [
+        "kiwix_astronomy_stackexchange",
+        "kiwix_space_stackexchange"
+      ]
+    },
+    {
+      "id": "pack:wikem",
+      "kind": "knowledge_pack",
+      "label": "WikEM emergency medicine",
+      "domain": "medical",
+      "source": "library.kiwix.org",
+      "tags": [
+        "medical",
+        "medicine",
+        "health",
+        "emergency",
+        "clinical",
+        "first aid",
+        "doctor",
+        "nurse"
+      ],
+      "surfaces": [
+        "knowledge.medical"
+      ],
+      "available": true,
+      "size_mb": 357,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://wikem.org/wiki/WikEM:Copyrights",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "WikEM, the open emergency medicine reference, with images. Reference, not advice.",
+      "source_ids": [
+        "kiwix_wikem_maxi"
+      ]
+    },
+    {
+      "id": "pack:medicine_libretexts",
+      "kind": "knowledge_pack",
+      "label": "Medicine LibreTexts",
+      "domain": "medical",
+      "source": "library.kiwix.org",
+      "tags": [
+        "medical",
+        "medicine",
+        "health",
+        "anatomy",
+        "physiology",
+        "study"
+      ],
+      "surfaces": [
+        "knowledge.medical"
+      ],
+      "available": true,
+      "size_mb": 1137,
+      "license": "Mixed: set per page, mostly CC-BY-NC-SA",
+      "license_url": "https://med.libretexts.org/",
+      "license_checked": false,
+      "commercial_use": false,
+      "what_it_is": "Medicine courses and textbooks from LibreTexts. Licenses are set per page; most are non-commercial.",
+      "source_ids": [
+        "kiwix_libretexts_medicine"
+      ]
+    },
+    {
+      "id": "pack:water_treatment",
+      "kind": "knowledge_pack",
+      "label": "Water treatment and purification",
+      "domain": "survival",
+      "source": "library.kiwix.org",
+      "tags": [
+        "water",
+        "survival",
+        "prepping",
+        "off grid",
+        "purification",
+        "homestead"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 20,
+      "license": "Mixed: documents by various authors",
+      "license_url": "https://library.kiwix.org/",
+      "license_checked": false,
+      "commercial_use": false,
+      "what_it_is": "Resources on collecting and purifying water.",
+      "source_ids": [
+        "kiwix_zimgit_water"
+      ]
+    },
+    {
+      "id": "pack:knots",
+      "kind": "knowledge_pack",
+      "label": "Knots library",
+      "domain": "survival",
+      "source": "library.kiwix.org",
+      "tags": [
+        "knots",
+        "survival",
+        "outdoors",
+        "camping",
+        "sailing",
+        "climbing"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 27,
+      "license": "Mixed: documents by various authors",
+      "license_url": "https://library.kiwix.org/",
+      "license_checked": false,
+      "commercial_use": false,
+      "what_it_is": "Illustrated resources on all kinds of knots, lashings and ladders.",
+      "source_ids": [
+        "kiwix_zimgit_knots"
+      ]
+    },
+    {
+      "id": "pack:ready_gov",
+      "kind": "knowledge_pack",
+      "label": "Ready.gov emergency prep",
+      "domain": "survival",
+      "source": "library.kiwix.org",
+      "tags": [
+        "emergency",
+        "prepping",
+        "disaster",
+        "survival",
+        "safety",
+        "readiness"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 2317,
+      "license": "PublicDomain-USGov",
+      "license_url": "https://www.ready.gov/website-policies",
+      "license_checked": false,
+      "commercial_use": false,
+      "what_it_is": "The US government's disaster preparedness site: weather, fire, making a plan and building a kit.",
+      "source_ids": [
+        "kiwix_ready_gov_en"
+      ]
+    },
+    {
+      "id": "pack:openstreetmap_wiki",
+      "kind": "knowledge_pack",
+      "label": "OpenStreetMap wiki",
+      "domain": "maps",
+      "source": "library.kiwix.org",
+      "tags": [
+        "maps",
+        "geography",
+        "navigation",
+        "location",
+        "osm"
+      ],
+      "surfaces": [
+        "knowledge.maps"
+      ],
+      "available": true,
+      "size_mb": 1186,
+      "license": "CC-BY-SA-2.0",
+      "license_url": "https://wiki.openstreetmap.org/wiki/Wiki_content_license",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "The OpenStreetMap wiki: how the map is made, tagged and used, with images.",
+      "source_ids": [
+        "kiwix_osm_wiki_maxi"
+      ]
+    },
+    {
+      "id": "pack:wikipedia_maxi",
+      "kind": "knowledge_pack",
+      "label": "Wikipedia (English, with images)",
+      "domain": "reference",
+      "source": "library.kiwix.org",
+      "tags": [
+        "wikipedia",
+        "encyclopedia",
+        "general knowledge"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 121515,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "All of English Wikipedia with images. The largest single pack on this list.",
+      "source_ids": [
+        "kiwix_wikipedia_en_maxi"
+      ]
+    },
+    {
+      "id": "pack:wikipedia_mini",
+      "kind": "knowledge_pack",
+      "label": "Wikipedia (English, article summaries)",
+      "domain": "reference",
+      "source": "library.kiwix.org",
+      "tags": [
+        "wikipedia",
+        "encyclopedia",
+        "summaries"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 13720,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "The opening section of every English Wikipedia article, without images.",
+      "source_ids": [
+        "kiwix_wikipedia_en_mini"
+      ]
+    },
+    {
+      "id": "pack:wikipedia_top",
+      "kind": "knowledge_pack",
+      "label": "Best of Wikipedia (English)",
+      "domain": "reference",
+      "source": "library.kiwix.org",
+      "tags": [
+        "wikipedia",
+        "encyclopedia"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 6667,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "A selection of about 50,000 of the best English Wikipedia articles, with images.",
+      "source_ids": [
+        "kiwix_wikipedia_en_top"
+      ]
+    },
+    {
+      "id": "pack:wikipedia_simple",
+      "kind": "knowledge_pack",
+      "label": "Simple English Wikipedia",
+      "domain": "education",
+      "source": "library.kiwix.org",
+      "tags": [
+        "simple english",
+        "wikipedia",
+        "encyclopedia",
+        "reading level"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 2976,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Wikipedia written in simple English words and grammar, with images.",
+      "source_ids": [
+        "kiwix_wikipedia_simple"
+      ]
+    },
+    {
+      "id": "pack:wikipedia_history",
+      "kind": "knowledge_pack",
+      "label": "Wikipedia history articles",
+      "domain": "reference",
+      "source": "library.kiwix.org",
+      "tags": [
+        "history",
+        "historical",
+        "ancient",
+        "wars",
+        "empires"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 701,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Wikipedia's history articles as a standalone pack, without images.",
+      "source_ids": [
+        "kiwix_wikipedia_history"
+      ]
+    },
+    {
+      "id": "pack:wikipedia_physics",
+      "kind": "knowledge_pack",
+      "label": "Wikipedia physics articles",
+      "domain": "science",
+      "source": "library.kiwix.org",
+      "tags": [
+        "physics",
+        "quantum",
+        "relativity",
+        "thermodynamics"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 1264,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Wikipedia's physics articles as a standalone pack, with images.",
+      "source_ids": [
+        "kiwix_wikipedia_physics"
+      ]
+    },
+    {
+      "id": "pack:mediawiki",
+      "kind": "knowledge_pack",
+      "label": "MediaWiki documentation",
+      "domain": "technology",
+      "source": "library.kiwix.org",
+      "tags": [
+        "mediawiki",
+        "wiki software"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 6514,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://www.mediawiki.org/wiki/Project:Copyrights",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "The manual and help pages for MediaWiki, the software that runs Wikipedia.",
+      "source_ids": [
+        "kiwix_mediawiki"
+      ]
+    },
+    {
+      "id": "pack:wikisource",
+      "kind": "knowledge_pack",
+      "label": "Wikisource library of texts",
+      "domain": "books",
+      "source": "library.kiwix.org",
+      "tags": [
+        "wikisource",
+        "source texts",
+        "historical documents",
+        "poetry",
+        "speeches"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 8217,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "A library of public domain texts: books, poems, speeches and historical documents.",
+      "source_ids": [
+        "kiwix_wikisource"
+      ]
+    },
+    {
+      "id": "pack:wiktionary",
+      "kind": "knowledge_pack",
+      "label": "Wiktionary dictionary",
+      "domain": "reference",
+      "source": "library.kiwix.org",
+      "tags": [
+        "dictionary",
+        "definitions",
+        "spelling",
+        "etymology",
+        "pronunciation",
+        "synonyms"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 8732,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "The English Wiktionary: definitions, spelling, pronunciation and word origins, without images.",
+      "source_ids": [
+        "kiwix_wiktionary"
+      ]
+    },
+    {
+      "id": "pack:wikibooks",
+      "kind": "knowledge_pack",
+      "label": "Wikibooks open textbooks",
+      "domain": "education",
+      "source": "library.kiwix.org",
+      "tags": [
+        "textbooks",
+        "textbook",
+        "tutorials"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 3345,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Open textbooks and manuals on many subjects, without images.",
+      "source_ids": [
+        "kiwix_wikibooks"
+      ]
+    },
+    {
+      "id": "pack:wikiversity",
+      "kind": "knowledge_pack",
+      "label": "Wikiversity courses",
+      "domain": "education",
+      "source": "library.kiwix.org",
+      "tags": [
+        "courses",
+        "lessons",
+        "coursework",
+        "homework"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 1554,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Open course material and learning projects, without images.",
+      "source_ids": [
+        "kiwix_wikiversity"
+      ]
+    },
+    {
+      "id": "pack:wikivoyage_nopic",
+      "kind": "knowledge_pack",
+      "label": "Wikivoyage travel guide (text only)",
+      "domain": "travel",
+      "source": "library.kiwix.org",
+      "tags": [
+        "travel",
+        "trip",
+        "travel guide",
+        "places",
+        "cities"
+      ],
+      "surfaces": [
+        "knowledge.library",
+        "knowledge.maps"
+      ],
+      "available": true,
+      "size_mb": 260,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "The Wikivoyage travel guide without images. Much smaller than the full version.",
+      "source_ids": [
+        "kiwix_wikivoyage_nopic"
+      ]
+    },
+    {
+      "id": "pack:wikispecies_nopic",
+      "kind": "knowledge_pack",
+      "label": "Wikispecies (text only)",
+      "domain": "science",
+      "source": "library.kiwix.org",
+      "tags": [
+        "species",
+        "taxonomy",
+        "biology",
+        "animals",
+        "plants"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 1461,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "A catalogue of all known species and their classification, without images.",
+      "source_ids": [
+        "kiwix_wikispecies_nopic"
+      ]
+    },
+    {
+      "id": "pack:wikem_nopic",
+      "kind": "knowledge_pack",
+      "label": "WikEM emergency medicine (text only)",
+      "domain": "medical",
+      "source": "library.kiwix.org",
+      "tags": [
+        "emergency medicine",
+        "emergency",
+        "clinical",
+        "first aid"
+      ],
+      "surfaces": [
+        "knowledge.medical"
+      ],
+      "available": true,
+      "size_mb": 331,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://wikem.org/wiki/WikEM:Copyrights",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "WikEM, the open emergency medicine reference, without images. Reference, not advice.",
+      "source_ids": [
+        "kiwix_wikem_nopic"
+      ]
+    },
+    {
+      "id": "pack:mdwiki",
+      "kind": "knowledge_pack",
+      "label": "MDWiki medical encyclopedia",
+      "domain": "medical",
+      "source": "library.kiwix.org",
+      "tags": [
+        "medical",
+        "medicine",
+        "health",
+        "disease",
+        "symptoms",
+        "treatment"
+      ],
+      "surfaces": [
+        "knowledge.medical"
+      ],
+      "available": true,
+      "size_mb": 2196,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://mdwiki.org/wiki/WikiProjectMed:Copyrights",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Healthcare articles curated by WikiProjectMed. Reference, not advice.",
+      "source_ids": [
+        "kiwix_mdwiki"
+      ]
+    },
+    {
+      "id": "pack:openstreetmap_wiki_nopic",
+      "kind": "knowledge_pack",
+      "label": "OpenStreetMap wiki (text only)",
+      "domain": "maps",
+      "source": "library.kiwix.org",
+      "tags": [
+        "openstreetmap",
+        "osm",
+        "mapping",
+        "navigation"
+      ],
+      "surfaces": [
+        "knowledge.maps"
+      ],
+      "available": true,
+      "size_mb": 456,
+      "license": "CC-BY-SA-2.0",
+      "license_url": "https://wiki.openstreetmap.org/wiki/Wiki_content_license",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "The OpenStreetMap wiki: how the map is made, tagged and used, without images.",
+      "source_ids": [
+        "kiwix_osm_wiki_nopic"
+      ]
+    },
+    {
+      "id": "pack:explainxkcd",
+      "kind": "knowledge_pack",
+      "label": "Explain xkcd",
+      "domain": "culture",
+      "source": "library.kiwix.org",
+      "tags": [
+        "xkcd",
+        "comics",
+        "webcomic"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 147,
+      "license": "CC-BY-SA-3.0 (comic images CC-BY-NC-2.5)",
+      "license_url": "https://www.explainxkcd.com/wiki/index.php/explain_xkcd:Copyrights",
+      "license_checked": true,
+      "commercial_use": false,
+      "what_it_is": "Every xkcd comic with a community explanation of the joke. The comics themselves are non-commercial only.",
+      "source_ids": [
+        "kiwix_explainxkcd"
+      ]
+    },
+    {
+      "id": "pack:rationalwiki",
+      "kind": "knowledge_pack",
+      "label": "RationalWiki",
+      "domain": "reference",
+      "source": "library.kiwix.org",
+      "tags": [
+        "pseudoscience",
+        "skepticism",
+        "conspiracy theories",
+        "misinformation",
+        "fact check"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 238,
+      "license": "CC-BY-SA-3.0",
+      "license_url": "https://rationalwiki.org/wiki/RationalWiki:Copyrights",
+      "license_checked": false,
+      "commercial_use": false,
+      "what_it_is": "Articles analysing and refuting pseudoscience and anti-science claims, with images.",
+      "source_ids": [
+        "kiwix_rationalwiki_maxi"
+      ]
+    },
+    {
+      "id": "pack:rationalwiki_nopic",
+      "kind": "knowledge_pack",
+      "label": "RationalWiki (text only)",
+      "domain": "reference",
+      "source": "library.kiwix.org",
+      "tags": [
+        "pseudoscience",
+        "skepticism",
+        "conspiracy theories",
+        "misinformation",
+        "fact check"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 80,
+      "license": "CC-BY-SA-3.0",
+      "license_url": "https://rationalwiki.org/wiki/RationalWiki:Copyrights",
+      "license_checked": false,
+      "commercial_use": false,
+      "what_it_is": "Articles analysing and refuting pseudoscience and anti-science claims, without images.",
+      "source_ids": [
+        "kiwix_rationalwiki_nopic"
+      ]
+    },
+    {
+      "id": "pack:incognito_cat",
+      "kind": "knowledge_pack",
+      "label": "Incognito Cat digital privacy guide",
+      "domain": "technology",
+      "source": "library.kiwix.org",
+      "tags": [
+        "online privacy",
+        "digital privacy",
+        "tracking",
+        "passwords",
+        "privacy"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 9,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://incognitocat.me/",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Plain guides to tools and habits that protect your privacy online.",
+      "source_ids": [
+        "kiwix_incognito_cat"
+      ]
+    },
+    {
+      "id": "pack:gutenberg",
+      "kind": "knowledge_pack",
+      "label": "Project Gutenberg library",
+      "domain": "books",
+      "source": "library.kiwix.org",
+      "tags": [
+        "ebooks",
+        "ebook",
+        "classics",
+        "novels",
+        "literature",
+        "gutenberg"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 211002,
+      "license": "PublicDomain-US (Project Gutenberg License)",
+      "license_url": "https://www.gutenberg.org/policy/license.html",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Every English book in Project Gutenberg: classic literature that is public domain in the US. Very large.",
+      "source_ids": [
+        "kiwix_gutenberg"
+      ]
+    },
+    {
+      "id": "pack:survivor_library",
+      "kind": "knowledge_pack",
+      "label": "Survivor Library",
+      "domain": "survival",
+      "source": "library.kiwix.org",
+      "tags": [
+        "self reliance",
+        "blacksmithing",
+        "old manuals",
+        "homesteading",
+        "pre-industrial"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 210140,
+      "license": "Mixed: mostly public domain scans, rights not checked title by title",
+      "license_url": "https://www.survivorlibrary.com/",
+      "license_checked": false,
+      "commercial_use": false,
+      "what_it_is": "Scanned books and manuals, mostly 1800s to early 1900s, on making and growing things without modern infrastructure. Rights are mixed: mostly old public domain works, not checked title by title. Very large.",
+      "source_ids": [
+        "kiwix_survivor_library"
+      ]
+    },
+    {
+      "id": "pack:ifixit",
+      "kind": "knowledge_pack",
+      "label": "iFixit repair guides",
+      "domain": "repair",
+      "source": "library.kiwix.org",
+      "tags": [
+        "repair",
+        "teardown",
+        "fix",
+        "appliance",
+        "broken"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 3405,
+      "license": "CC-BY-NC-SA-3.0",
+      "license_url": "https://www.ifixit.com/Info/Licensing",
+      "license_checked": true,
+      "commercial_use": false,
+      "what_it_is": "Step-by-step teardown and repair guides for consumer hardware. Non-commercial use only.",
+      "source_ids": [
+        "kiwix_ifixit"
+      ]
+    },
+    {
+      "id": "pack:diy_stackexchange",
+      "kind": "knowledge_pack",
+      "label": "Home Improvement Q&A (Stack Exchange)",
+      "domain": "repair",
+      "source": "library.kiwix.org",
+      "tags": [
+        "diy",
+        "home improvement",
+        "plumbing",
+        "electrical",
+        "drywall",
+        "renovation"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 1967,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://stackoverflow.com/help/licensing",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Every question and answer from the Home Improvement Stack Exchange, offline.",
+      "source_ids": [
+        "kiwix_diy_stackexchange"
+      ]
+    },
+    {
+      "id": "pack:electronics_stackexchange",
+      "kind": "knowledge_pack",
+      "label": "Electrical Engineering Q&A (Stack Exchange)",
+      "domain": "technology",
+      "source": "library.kiwix.org",
+      "tags": [
+        "electronics",
+        "circuit",
+        "circuits",
+        "soldering",
+        "arduino",
+        "microcontroller"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 4019,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://stackoverflow.com/help/licensing",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Every question and answer from the Electrical Engineering Stack Exchange, offline.",
+      "source_ids": [
+        "kiwix_electronics_stackexchange"
+      ]
+    },
+    {
+      "id": "pack:physics_stackexchange",
+      "kind": "knowledge_pack",
+      "label": "Physics Q&A (Stack Exchange)",
+      "domain": "science",
+      "source": "library.kiwix.org",
+      "tags": [
+        "physics",
+        "quantum",
+        "relativity",
+        "thermodynamics"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 1743,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://stackoverflow.com/help/licensing",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Every question and answer from the Physics Stack Exchange, offline.",
+      "source_ids": [
+        "kiwix_physics_stackexchange"
+      ]
+    },
+    {
+      "id": "pack:gardening_stackexchange",
+      "kind": "knowledge_pack",
+      "label": "Gardening and Landscaping Q&A (Stack Exchange)",
+      "domain": "nature",
+      "source": "library.kiwix.org",
+      "tags": [
+        "gardening",
+        "landscaping",
+        "lawn",
+        "pruning",
+        "houseplants"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 884,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://stackoverflow.com/help/licensing",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Every question and answer from the Gardening and Landscaping Stack Exchange, offline.",
+      "source_ids": [
+        "kiwix_gardening_stackexchange"
+      ]
+    },
+    {
+      "id": "pack:softwareengineering_stackexchange",
+      "kind": "knowledge_pack",
+      "label": "Software Engineering Q&A (Stack Exchange)",
+      "domain": "technology",
+      "source": "library.kiwix.org",
+      "tags": [
+        "software engineering",
+        "software design",
+        "programming"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 457,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://stackoverflow.com/help/licensing",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Every question and answer from the Software Engineering Stack Exchange, offline.",
+      "source_ids": [
+        "kiwix_softwareengineering_stackexchange"
+      ]
+    },
+    {
+      "id": "pack:security_stackexchange",
+      "kind": "knowledge_pack",
+      "label": "Information Security Q&A (Stack Exchange)",
+      "domain": "technology",
+      "source": "library.kiwix.org",
+      "tags": [
+        "information security",
+        "infosec",
+        "cybersecurity",
+        "encryption"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 419,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://stackoverflow.com/help/licensing",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Every question and answer from the Information Security Stack Exchange, offline.",
+      "source_ids": [
+        "kiwix_security_stackexchange"
+      ]
+    },
+    {
+      "id": "pack:mechanics_stackexchange",
+      "kind": "knowledge_pack",
+      "label": "Motor Vehicle Maintenance and Repair Q&A (Stack Exchange)",
+      "domain": "repair",
+      "source": "library.kiwix.org",
+      "tags": [
+        "car repair",
+        "auto repair",
+        "mechanic",
+        "vehicle",
+        "brakes"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 324,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://stackoverflow.com/help/licensing",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Every question and answer from the Motor Vehicle Maintenance and Repair Stack Exchange, offline.",
+      "source_ids": [
+        "kiwix_mechanics_stackexchange"
+      ]
+    },
+    {
+      "id": "pack:outdoors_stackexchange",
+      "kind": "knowledge_pack",
+      "label": "Great Outdoors Q&A (Stack Exchange)",
+      "domain": "outdoors",
+      "source": "library.kiwix.org",
+      "tags": [
+        "hiking",
+        "camping",
+        "backpacking",
+        "wilderness"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 135,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://stackoverflow.com/help/licensing",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Every question and answer from the Great Outdoors Stack Exchange, offline.",
+      "source_ids": [
+        "kiwix_outdoors_stackexchange"
+      ]
+    },
+    {
+      "id": "pack:cooking_stackexchange",
+      "kind": "knowledge_pack",
+      "label": "Cooking Q&A (Stack Exchange)",
+      "domain": "food",
+      "source": "library.kiwix.org",
+      "tags": [
+        "cooking",
+        "recipes",
+        "baking",
+        "food safety"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 226,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://stackoverflow.com/help/licensing",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Every question and answer from the Cooking Stack Exchange (Seasoned Advice), offline.",
+      "source_ids": [
+        "kiwix_cooking_stackexchange"
+      ]
+    },
+    {
+      "id": "pack:engineering_stackexchange",
+      "kind": "knowledge_pack",
+      "label": "Engineering Q&A (Stack Exchange)",
+      "domain": "technology",
+      "source": "library.kiwix.org",
+      "tags": [
+        "engineering",
+        "structural",
+        "mechanical engineering",
+        "civil engineering"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 244,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://stackoverflow.com/help/licensing",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Every question and answer from the Engineering Stack Exchange, offline.",
+      "source_ids": [
+        "kiwix_engineering_stackexchange"
+      ]
+    },
+    {
+      "id": "pack:ham_stackexchange",
+      "kind": "knowledge_pack",
+      "label": "Amateur Radio Q&A (Stack Exchange)",
+      "domain": "technology",
+      "source": "library.kiwix.org",
+      "tags": [
+        "amateur radio",
+        "ham radio",
+        "antenna",
+        "antennas"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 72,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://stackoverflow.com/help/licensing",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Every question and answer from the Amateur Radio Stack Exchange, offline.",
+      "source_ids": [
+        "kiwix_ham_stackexchange"
+      ]
+    },
+    {
+      "id": "pack:homebrew_stackexchange",
+      "kind": "knowledge_pack",
+      "label": "Homebrewing Q&A (Stack Exchange)",
+      "domain": "food",
+      "source": "library.kiwix.org",
+      "tags": [
+        "homebrewing",
+        "home brewing",
+        "beer",
+        "brewing",
+        "mead",
+        "cider"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 36,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://stackoverflow.com/help/licensing",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Every question and answer from the Homebrewing Stack Exchange, offline.",
+      "source_ids": [
+        "kiwix_homebrew_stackexchange"
+      ]
+    },
+    {
+      "id": "pack:medicalsciences_stackexchange",
+      "kind": "knowledge_pack",
+      "label": "Medical Sciences Q&A (Stack Exchange)",
+      "domain": "medical",
+      "source": "library.kiwix.org",
+      "tags": [
+        "medical sciences",
+        "medicine",
+        "physiology",
+        "pharmacology"
+      ],
+      "surfaces": [
+        "knowledge.medical"
+      ],
+      "available": true,
+      "size_mb": 58,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://stackoverflow.com/help/licensing",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Every question and answer from the Medical Sciences Stack Exchange, offline.",
+      "source_ids": [
+        "kiwix_medicalsciences_stackexchange"
+      ]
+    },
+    {
+      "id": "pack:sustainability_stackexchange",
+      "kind": "knowledge_pack",
+      "label": "Sustainable Living Q&A (Stack Exchange)",
+      "domain": "home",
+      "source": "library.kiwix.org",
+      "tags": [
+        "sustainability",
+        "sustainable living",
+        "recycling",
+        "energy saving"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 26,
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://stackoverflow.com/help/licensing",
+      "license_checked": true,
+      "commercial_use": true,
+      "what_it_is": "Every question and answer from the Sustainable Living Stack Exchange, offline.",
+      "source_ids": [
+        "kiwix_sustainability_stackexchange"
+      ]
+    },
+    {
+      "id": "pack:ready_gov_es",
+      "kind": "knowledge_pack",
+      "label": "Ready.gov emergency prep (Spanish)",
+      "domain": "survival",
+      "source": "library.kiwix.org",
+      "tags": [
+        "spanish",
+        "emergencias",
+        "desastres",
+        "preparedness"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 2460,
+      "license": "PublicDomain-USGov",
+      "license_url": "https://www.ready.gov/website-policies",
+      "license_checked": false,
+      "commercial_use": false,
+      "what_it_is": "The Spanish edition of the US government's disaster preparedness site.",
+      "source_ids": [
+        "kiwix_ready_gov_es"
+      ]
+    },
+    {
+      "id": "pack:urban_prepper",
+      "kind": "knowledge_pack",
+      "label": "Urban Prepper videos",
+      "domain": "survival",
+      "source": "library.kiwix.org",
+      "tags": [
+        "prepping",
+        "preparedness",
+        "emergency kit",
+        "go bag",
+        "bug out"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 2141,
+      "license": "Unverified: videos from a YouTube channel",
+      "license_url": "https://library.kiwix.org/",
+      "license_checked": false,
+      "commercial_use": false,
+      "what_it_is": "Videos from the Urban Prepper channel on emergency preparedness in cities.",
+      "source_ids": [
+        "kiwix_urban_prepper"
+      ]
+    },
+    {
+      "id": "pack:canadian_prepper_winter",
+      "kind": "knowledge_pack",
+      "label": "Canadian Prepper: winter prepping videos",
+      "domain": "survival",
+      "source": "library.kiwix.org",
+      "tags": [
+        "winter prepping",
+        "winter",
+        "cold weather",
+        "snow storm",
+        "power outage"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 1279,
+      "license": "Unverified: videos from a YouTube channel",
+      "license_url": "https://library.kiwix.org/",
+      "license_checked": false,
+      "commercial_use": false,
+      "what_it_is": "Videos from the Canadian Prepper channel on preparing for winter storms and cold weather emergencies.",
+      "source_ids": [
+        "kiwix_canadian_prepper_winter"
+      ]
+    },
+    {
+      "id": "pack:military_medicine",
+      "kind": "knowledge_pack",
+      "label": "Military medicine manuals",
+      "domain": "medical",
+      "source": "library.kiwix.org",
+      "tags": [
+        "field medicine",
+        "combat medicine",
+        "battlefield"
+      ],
+      "surfaces": [
+        "knowledge.medical"
+      ],
+      "available": true,
+      "size_mb": 72,
+      "license": "PublicDomain-USGov",
+      "license_url": "https://irp.fas.org/",
+      "license_checked": false,
+      "commercial_use": false,
+      "what_it_is": "US military medical doctrine and instruction manuals, as collected by the Federation of American Scientists. Reference, not advice.",
+      "source_ids": [
+        "kiwix_military_medicine"
+      ]
+    },
+    {
+      "id": "pack:food_preparation",
+      "kind": "knowledge_pack",
+      "label": "Food for Preppers",
+      "domain": "survival",
+      "source": "library.kiwix.org",
+      "tags": [
+        "food storage",
+        "canning",
+        "preserving",
+        "dehydrating",
+        "food preparation"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 93,
+      "license": "Mixed: documents by various authors",
+      "license_url": "https://library.kiwix.org/",
+      "license_checked": false,
+      "commercial_use": false,
+      "what_it_is": "A collection of recipes and techniques for preparing and storing food.",
+      "source_ids": [
+        "kiwix_zimgit_food"
+      ]
+    },
+    {
+      "id": "pack:field_medicine",
+      "kind": "knowledge_pack",
+      "label": "Field and emergency medicine library",
+      "domain": "medical",
+      "source": "library.kiwix.org",
+      "tags": [
+        "field medicine",
+        "wilderness medicine",
+        "emergency medicine",
+        "first aid"
+      ],
+      "surfaces": [
+        "knowledge.medical"
+      ],
+      "available": true,
+      "size_mb": 67,
+      "license": "Mixed: documents by various authors",
+      "license_url": "https://library.kiwix.org/",
+      "license_checked": false,
+      "commercial_use": false,
+      "what_it_is": "A collection of books on field and emergency medicine. Reference, not advice.",
+      "source_ids": [
+        "kiwix_zimgit_medicine"
+      ]
+    },
+    {
+      "id": "pack:post_disaster",
+      "kind": "knowledge_pack",
+      "label": "Post-disaster resource library",
+      "domain": "survival",
+      "source": "library.kiwix.org",
+      "tags": [
+        "post disaster",
+        "disaster recovery",
+        "rebuilding",
+        "shelter",
+        "sanitation"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 615,
+      "license": "Mixed: documents by various authors",
+      "license_url": "https://library.kiwix.org/",
+      "license_checked": false,
+      "commercial_use": false,
+      "what_it_is": "A collection of guides for the weeks after a disaster: shelter, sanitation, repair and recovery.",
+      "source_ids": [
+        "kiwix_zimgit_post_disaster"
+      ]
+    },
+    {
+      "id": "pack:ted_coronavirus",
+      "kind": "knowledge_pack",
+      "label": "TED talks: coronavirus",
+      "domain": "talks",
+      "source": "library.kiwix.org",
+      "tags": [
+        "coronavirus",
+        "covid",
+        "pandemic",
+        "ted talks"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 1295,
+      "license": "CC-BY-NC-ND-4.0",
+      "license_url": "https://www.ted.com/about/our-organization/our-policies-terms/ted-talks-usage-policy",
+      "license_checked": true,
+      "commercial_use": false,
+      "what_it_is": "TED talk videos about the coronavirus pandemic, with subtitles in many languages. Non-commercial use only, no edited versions.",
+      "source_ids": [
+        "kiwix_ted_coronavirus"
+      ]
+    },
+    {
+      "id": "pack:ted_democracy",
+      "kind": "knowledge_pack",
+      "label": "TED talks: democracy",
+      "domain": "talks",
+      "source": "library.kiwix.org",
+      "tags": [
+        "democracy",
+        "elections",
+        "voting",
+        "ted talks"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 2225,
+      "license": "CC-BY-NC-ND-4.0",
+      "license_url": "https://www.ted.com/about/our-organization/our-policies-terms/ted-talks-usage-policy",
+      "license_checked": true,
+      "commercial_use": false,
+      "what_it_is": "TED talk videos about democracy, with subtitles in many languages. Non-commercial use only, no edited versions.",
+      "source_ids": [
+        "kiwix_ted_democracy"
+      ]
+    },
+    {
+      "id": "pack:ted_human_rights",
+      "kind": "knowledge_pack",
+      "label": "TED talks: human rights",
+      "domain": "talks",
+      "source": "library.kiwix.org",
+      "tags": [
+        "human rights",
+        "ted talks"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 558,
+      "license": "CC-BY-NC-ND-4.0",
+      "license_url": "https://www.ted.com/about/our-organization/our-policies-terms/ted-talks-usage-policy",
+      "license_checked": true,
+      "commercial_use": false,
+      "what_it_is": "TED talk videos about human rights, with subtitles in many languages. Non-commercial use only, no edited versions.",
+      "source_ids": [
+        "kiwix_ted_human_rights"
+      ]
+    },
+    {
+      "id": "pack:ted_justice_system",
+      "kind": "knowledge_pack",
+      "label": "TED talks: justice system",
+      "domain": "talks",
+      "source": "library.kiwix.org",
+      "tags": [
+        "justice system",
+        "criminal justice",
+        "prison",
+        "ted talks"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 966,
+      "license": "CC-BY-NC-ND-4.0",
+      "license_url": "https://www.ted.com/about/our-organization/our-policies-terms/ted-talks-usage-policy",
+      "license_checked": true,
+      "commercial_use": false,
+      "what_it_is": "TED talk videos about the justice system, with subtitles in many languages. Non-commercial use only, no edited versions.",
+      "source_ids": [
+        "kiwix_ted_justice_system"
+      ]
+    },
+    {
+      "id": "pack:ted_law",
+      "kind": "knowledge_pack",
+      "label": "TED talks: law",
+      "domain": "talks",
+      "source": "library.kiwix.org",
+      "tags": [
+        "law",
+        "legal",
+        "ted talks"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 1777,
+      "license": "CC-BY-NC-ND-4.0",
+      "license_url": "https://www.ted.com/about/our-organization/our-policies-terms/ted-talks-usage-policy",
+      "license_checked": true,
+      "commercial_use": false,
+      "what_it_is": "TED talk videos about law, with subtitles in many languages. Non-commercial use only, no edited versions.",
+      "source_ids": [
+        "kiwix_ted_law"
+      ]
+    },
+    {
+      "id": "pack:ted_maps",
+      "kind": "knowledge_pack",
+      "label": "TED talks: maps",
+      "domain": "talks",
+      "source": "library.kiwix.org",
+      "tags": [
+        "cartography",
+        "mapping",
+        "ted talks"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 293,
+      "license": "CC-BY-NC-ND-4.0",
+      "license_url": "https://www.ted.com/about/our-organization/our-policies-terms/ted-talks-usage-policy",
+      "license_checked": true,
+      "commercial_use": false,
+      "what_it_is": "TED talk videos about maps and mapping, with subtitles in many languages. Non-commercial use only, no edited versions.",
+      "source_ids": [
+        "kiwix_ted_maps"
+      ]
+    },
+    {
+      "id": "pack:ted_military",
+      "kind": "knowledge_pack",
+      "label": "TED talks: military",
+      "domain": "talks",
+      "source": "library.kiwix.org",
+      "tags": [
+        "military",
+        "war",
+        "ted talks"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 617,
+      "license": "CC-BY-NC-ND-4.0",
+      "license_url": "https://www.ted.com/about/our-organization/our-policies-terms/ted-talks-usage-policy",
+      "license_checked": true,
+      "commercial_use": false,
+      "what_it_is": "TED talk videos about the military, with subtitles in many languages. Non-commercial use only, no edited versions.",
+      "source_ids": [
+        "kiwix_ted_military"
+      ]
+    },
+    {
+      "id": "pack:ted_plants",
+      "kind": "knowledge_pack",
+      "label": "TED talks: plants",
+      "domain": "talks",
+      "source": "library.kiwix.org",
+      "tags": [
+        "botany",
+        "plant science",
+        "ted talks"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 633,
+      "license": "CC-BY-NC-ND-4.0",
+      "license_url": "https://www.ted.com/about/our-organization/our-policies-terms/ted-talks-usage-policy",
+      "license_checked": true,
+      "commercial_use": false,
+      "what_it_is": "TED talk videos about plants, with subtitles in many languages. Non-commercial use only, no edited versions.",
+      "source_ids": [
+        "kiwix_ted_plants"
+      ]
+    },
+    {
+      "id": "pack:ted_solar_energy",
+      "kind": "knowledge_pack",
+      "label": "TED talks: solar energy",
+      "domain": "talks",
+      "source": "library.kiwix.org",
+      "tags": [
+        "solar energy",
+        "solar power",
+        "renewable energy",
+        "ted talks"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 515,
+      "license": "CC-BY-NC-ND-4.0",
+      "license_url": "https://www.ted.com/about/our-organization/our-policies-terms/ted-talks-usage-policy",
+      "license_checked": true,
+      "commercial_use": false,
+      "what_it_is": "TED talk videos about solar energy, with subtitles in many languages. Non-commercial use only, no edited versions.",
+      "source_ids": [
+        "kiwix_ted_solar_energy"
+      ]
+    },
+    {
+      "id": "pack:ted_surveillance",
+      "kind": "knowledge_pack",
+      "label": "TED talks: surveillance",
+      "domain": "talks",
+      "source": "library.kiwix.org",
+      "tags": [
+        "surveillance",
+        "ted talks"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 384,
+      "license": "CC-BY-NC-ND-4.0",
+      "license_url": "https://www.ted.com/about/our-organization/our-policies-terms/ted-talks-usage-policy",
+      "license_checked": true,
+      "commercial_use": false,
+      "what_it_is": "TED talk videos about surveillance, with subtitles in many languages. Non-commercial use only, no edited versions.",
+      "source_ids": [
+        "kiwix_ted_surveillance"
+      ]
+    },
+    {
+      "id": "pack:ted_water",
+      "kind": "knowledge_pack",
+      "label": "TED talks: water",
+      "domain": "talks",
+      "source": "library.kiwix.org",
+      "tags": [
+        "clean water",
+        "water crisis",
+        "ted talks"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 832,
+      "license": "CC-BY-NC-ND-4.0",
+      "license_url": "https://www.ted.com/about/our-organization/our-policies-terms/ted-talks-usage-policy",
+      "license_checked": true,
+      "commercial_use": false,
+      "what_it_is": "TED talk videos about water, with subtitles in many languages. Non-commercial use only, no edited versions.",
+      "source_ids": [
+        "kiwix_ted_water"
+      ]
+    },
+    {
+      "id": "pack:prunelle_books",
+      "kind": "knowledge_pack",
+      "label": "Prunelle interactive books",
+      "domain": "books",
+      "source": "library.kiwix.org",
+      "tags": [
+        "children's books",
+        "picture books",
+        "stories",
+        "bedtime stories"
+      ],
+      "surfaces": [
+        "knowledge.library"
+      ],
+      "available": true,
+      "size_mb": 359,
+      "license": "Unverified",
+      "license_url": "https://library.kiwix.org/",
+      "license_checked": false,
+      "commercial_use": false,
+      "what_it_is": "Illustrated interactive books for young readers, from the publisher Book Prunelle.",
+      "source_ids": [
+        "kiwix_prunelle_books"
+      ]
+    },
+    {
+      "id": "app:freshtable",
+      "kind": "app",
+      "label": "FreshTable, pantry and meals",
+      "domain": "home",
+      "tags": [
+        "food",
+        "meals",
+        "recipes",
+        "cooking",
+        "pantry",
+        "groceries",
+        "kitchen",
+        "shopping",
+        "harvest",
+        "produce",
+        "preserving"
+      ],
+      "surfaces": [
+        "daily.kitchen"
+      ]
+    },
+    {
+      "id": "app:calendar",
+      "kind": "app",
+      "label": "Calendar, events and tasks",
+      "domain": "home",
+      "tags": [
+        "calendar",
+        "schedule",
+        "events",
+        "reminders",
+        "tasks",
+        "bills",
+        "meds",
+        "appointments"
+      ],
+      "surfaces": [
+        "comms.calendar"
+      ]
+    },
+    {
+      "id": "app:fitfam",
+      "kind": "app",
+      "label": "FitFam, fitness tracking",
+      "domain": "health",
+      "tags": [
+        "fitness",
+        "exercise",
+        "workout",
+        "health",
+        "gym",
+        "training",
+        "steps"
+      ],
+      "surfaces": [
+        "daily.fitness"
+      ]
+    },
+    {
+      "id": "app:alarmflow",
+      "kind": "app",
+      "label": "AlarmFlow, timers and alarms",
+      "domain": "home",
+      "tags": [
+        "timer",
+        "alarm",
+        "clock",
+        "reminder",
+        "countdown",
+        "wake up",
+        "remind",
+        "reminders",
+        "alarms",
+        "timers",
+        "watering"
+      ],
+      "surfaces": [
+        "comms.timers"
+      ]
+    },
+    {
+      "id": "app:trivia",
+      "kind": "app",
+      "label": "Trivia",
+      "domain": "fun",
+      "tags": [
+        "trivia",
+        "quiz",
+        "games",
+        "fun",
+        "learning"
+      ],
+      "surfaces": [
+        "daily.games"
+      ]
+    },
+    {
+      "id": "integration:home_assistant",
+      "kind": "integration",
+      "label": "Home Assistant, smart home",
+      "domain": "home",
+      "tags": [
+        "smart home",
+        "home automation",
+        "lights",
+        "thermostat",
+        "devices",
+        "home assistant",
+        "iot",
+        "sensors",
+        "cameras",
+        "greenhouse",
+        "humidity",
+        "soil moisture",
+        "moisture",
+        "irrigation"
+      ],
+      "surfaces": [
+        "house.lights",
+        "house.climate",
+        "house.sensors",
+        "house.cameras"
+      ]
+    },
+    {
+      "id": "integration:media",
+      "kind": "integration",
+      "label": "Media server (Jellyfin / Calibre)",
+      "domain": "media",
+      "tags": [
+        "media",
+        "movies",
+        "tv",
+        "music",
+        "books",
+        "library",
+        "jellyfin",
+        "calibre",
+        "reading"
+      ],
+      "surfaces": [
+        "media.video",
+        "media.audio",
+        "media.books"
+      ]
+    }
+  ]
+}

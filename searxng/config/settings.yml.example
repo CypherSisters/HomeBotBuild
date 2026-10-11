@@ -1,0 +1,15 @@
+# PuffPAI self-hosted SearXNG — backend for toolsmith.web_search.
+# Loopback-only (see docker-compose.searxng.yml); limiter off because the only
+# caller is the PuffPAI backend on this host. JSON format is required by
+# toolsmith._web_search.
+#
+# Copy to settings.yml and replace the secret_key (openssl rand -hex 32).
+use_default_settings: true
+server:
+  secret_key: "REPLACE-WITH-openssl-rand-hex-32"
+  limiter: false
+  image_proxy: true
+search:
+  formats:
+    - html
+    - json

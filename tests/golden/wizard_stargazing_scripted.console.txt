@@ -1,0 +1,263 @@
+============================================================
+  Welcome to HomeBot v<version>
+  Privacy-first, local-first household AI setup wizard
+============================================================
+
+--- card ---
+What this build may reach   [secure:posture]
+=========================
+  No internet during the build, but your home network is fair game afterwards - Home Assistant, a media server, local devices.
+  status: ready
+  Can this machine reach the internet WHILE YOU BUILD?: offline
+    This decides what the rest of the wizard may offer you. An offline build is never shown a download it cannot make.
+    - Online while building -- This machine can reach the internet while you build, so the wizard may download models, knowled
+    - Offline while building -- This machine has no internet while you build, so the wizard offers only what is already on the
+  What may the FINISHED BOT reach when it runs?: island
+    This is a build-time list: which doors exist at all. Whether your bot asks you before using a door it already has is a separate question you answer at the Bridge step ('Moat' asks every time).
+    - Sealed -- No outbound anything, ever. Your bot says plainly what it cannot do instead of failing quietly.
+    - Island (home network only) -- Your home network is allowed, the wider internet is not. Local devices and servers work; n
+    - Only the doors you pick (weather, music, web search) -- You pick, from a fixed list, which outside services your bot can
+  Doors
+    Individual doors belong to the enumerated tier. Pick it here and this card comes back with the list.
+--- end card ---
+--- card ---
+What this machine is   [discover]
+====================
+  this machine - 32 GB - 200 GB free on /golden - Ollama at http://localhost:11434
+  status: ready
+  What was found
+    Memory: 32.0 GB - Processor: Golden Reference CPU, 8 logical cores - Accelerator: none, CPU only - Disk: 200.0 GB free of 500.0 GB - Room for a local model: about 28.0 GB after headroom
+  Memory
+    32 GB (measured on this machine)
+  Where Ollama answers: http://localhost:11434
+    Pick one of these, or type the address if Ollama runs somewhere else -- a container, WSL, another machine.
+    - http://localhost:11434 -- nothing answered
+    - or type your own
+--- end card ---
+--- card ---
+What it is and what it is for   [purpose:identity]
+=============================
+  HomeBot - no goal given yet
+  status: needs you
+  What you call it: HomeBot
+    The name it answers to and the name on the dashboard (the shipped default until you change it). You can change it later on the Profile page.
+  What it is for, in your words: not set
+    What it is for, who uses it, what you want it to know. This picks the starter catalog, the surfaces and the sourcing. The next card offers it a place of its own, named from what you type here.
+--- end card ---
+--- card ---
+A place of its own   [purpose:place]
+==================
+  Stargazer - a bot that helps a beginner learn the night sky and space with a small telescope - its own place, as 'stargazer'
+  status: ready
+  Want a place to keep lists for this?
+    What matched your goal is knowledge and integrations, not somewhere to write things down. This is that place.
+  A place of its own to keep lists: yes
+    A folder, a page and the lists below. `puffpai persona new` does the same thing any time.
+  The id it lives under: stargazer
+    Lowercase, no spaces; it names a folder and a page. Taken from the name you gave it, then from your own words.
+  Lists it should keep: beginner, night, space
+    Comma separated, blank for none. Nothing is invented: these are suggested from the nouns in your goal.
+--- end card ---
+--- card ---
+What does the thinking   [brain]
+======================
+  gpt-oss:20b is the fit for this machine and is not on this box.
+  status: needs you
+  Ollama
+    Ollama is running at http://localhost:11434, with no models installed yet.
+  Nothing to pick
+    You chose an offline build and nothing is installed here yet. Carry a brain over with `puffpai build import`, or re-run setup where downloads are allowed.
+  What it can do
+    Routing tier: guided (conservative default). We have not tested this brain, so it is set up to be told one step at a time. Reports welcome if it does better than that. What that costs you: this brain does single steps well and will not try to chain them. That is a real limit, not a bug.
+--- end card ---
+--- card ---
+Who does what   [crew]
+=============
+  7 master agents, plus room for up to 5 specialists.
+  status: ready
+  Specialists on top of the master team: 5
+    On a machine this size, the crew can take up to 5 specialists on top of the master team. That number is grounded in running the master team live on our reference board.
+  Sized from
+    a workstation machine (reference)
+  Concierge - Front desk and routing
+    Works the front desk. Everything you ask goes through it first.
+  Steward - Home and tools
+    Minds the house: the lights and the tools that move things.
+  Drawbridge - Privacy and security
+    Keeps watch. Nothing changes in this house without its review.
+  Archivist - Archive and knowledge
+    Keeps the archive: what we know, and what stays locked in the Vault.
+  Majordomo - Orchestration and scheduling
+    Runs the schedule: plans, routines, and the long game.
+  Caretaker - System health and repairs
+    Looks after the box itself: health checks and quiet repairs.
+  Toolsmith - Web and workspace tools
+    Runs the outside errands. Useful, and never handed the keys.
+--- end card ---
+--- card ---
+Where you meet it   [surfaces]
+=================
+  3 surfaces: instruments.telescope, knowledge.library, persona.stargazer
+  status: ready
+  What your bot will be allowed to touch: instruments.telescope, knowledge.library
+    Anything not on this list is not loaded -- not hidden, not loaded. An empty list is a valid build.
+    - Calendar and events
+    - Timers and alarms
+    - Fitness tracking (sensitive)
+    - Games and trivia
+    - Pantry and meals
+    - Notes and lists
+    - Security cameras (sensitive)
+    - Thermostat and climate
+    - Lights and switches
+    - Household sensors
+    - Telescope and sky feeds
+    - Offline reference library
+    - and 5 more
+  Always included
+    persona.stargazer - your own bot's page. It is on the list because your bot is, and it comes off when the persona does.
+  Why
+    Your bot will load these surfaces:
+    - Telescope and sky feeds, because you asked about 'night sky' and that comes with Science and astronomy Q&A (Stack Exchange).
+    - Offline reference library, because you asked about 'night sky' and that comes with Science and astronomy Q&A (Stack Exchange).
+    - stargazer, a persona you made, because Stargazer is your own app and that is where it keeps its lists.
+    Surfaces outside this list are not loaded at all - not hidden, not loaded. This is a proposal: add or remove anything before you accept it.
+--- end card ---
+
+Step 7 of 18 - Who lives here. HomeBot is a household bot, so it asks.
+Your name (the owner of this box) [Owner]: --- card ---
+Zone 1, the Vault   [secure:vault]
+=================
+  Set a PIN and this build seals an encrypted vault and shows you one recovery code, once.
+  status: needs you
+  worth reading: the vault PIN is not set
+  What this is
+    Your vault holds the things you would not hand to a stranger. You set the PIN. It is not sent anywhere, and it is never stored as text. Even your bot has to ask before it can read what is inside.
+  Your vault PIN: not set
+    Not shown as you type, and never written down by this build. Digits-only PINs need at least ten digits; common sequences are refused.
+  Type it once more: not set
+    Both entries have to match, or nothing is created.
+  Where it lives
+    <data>/vault_data
+--- end card ---
+
+Step 11 of 18 - Storage. Where this build keeps its files.
+  Where this build keeps its own files (logs, indexes, state) [<data>]: --- card ---
+What it learns from   [sources]
+===================
+  Knowledge setup was skipped, so there is no plan to make.
+  status: ready
+  No plan
+    Knowledge setup was skipped, so there is no plan to make. This is a plan, nothing is downloaded yet.
+--- end card ---
+--- card ---
+Getting it in   [integrate]
+=============
+  Knowledge setup was skipped. Point the config at a pack folder when you have one.
+  status: ready
+  Skipped
+    Nothing was fetched and no folder was read.
+--- end card ---
+--- card ---
+Zone 3, the Bridge   [secure:bridge]
+==================
+  moat, reconciled with an island build.
+  status: ready
+  Do you run Home Assistant?: no
+  Do you run your own firewall (OPNsense, pfSense, similar)?: no
+  Is your home network a managed one (VLANs, per-device rules)?: no
+  How far may your bot reach?: moat
+    There is no firewall and no managed network in front of this box, so your bot's own rules are the only rules. Moat asks you before every reach, which costs you some clicks and gives you the clearest view of what it is doing.
+    - Open Yard -- Everything you already said yes to happens without asking you again.
+    - Fenced -- Your bot can talk to things in your house, and anything that reaches past it is gated.
+    - Moat -- Every outbound call and every action asks you first, every session.
+    - Drawbridge Up -- Sealed. Nothing outbound, ever, and the bot says so plainly instead of failing quietly.
+    - or type your own
+  Reconciled with your posture
+    Moat fits an island build, so nothing was changed.
+--- end card ---
+
+Step 13 of 18 - Home Assistant. Optional. Plenty of households have none.
+  Recorded: no Home Assistant. Everything else works the same.
+--- card ---
+What it can reach for   [tools]
+=====================
+  Nothing was declared, so nothing is claimed.
+  status: ready
+  Home Assistant
+    not being asked for on this run; re-run `puffpai setup` to add it
+  What this build was asked to reach for
+    nothing yet: the goal named no tools
+--- end card ---
+
+Step 17 of 18 - The build manifest. The record of this build.
+Build manifest:
+  Build: Stargazer (homebot, on BuildBot)
+  Hardware: 32.0 GB, class workstation
+  Brain: gpt-oss:20b
+  Crew budget: master team + up to 5 specialists
+  Posture: built offline, runs island, no doors open
+  Surfaces loaded: instruments.telescope, knowledge.library, persona.stargazer
+--- card ---
+What it was told about itself   [context]
+=============================
+  Stargazer was told: a bot that helps a beginner learn the night sky and space with a small telescope
+  status: ready
+  The name it answers to
+    Stargazer
+  What the owner said it is for
+    a bot that helps a beginner learn the night sky and space with a small telescope
+  Its own page
+    stargazer
+  What it may reach
+    island
+  Specialists on top of the master team
+    5
+  Fingerprint of what it was told
+    38138fd83cff4d2a
+  How long that is
+    1858 characters
+--- end card ---
+--- card ---
+How to start it   [handoff]
+===============
+  Start it with puffpai serve; 8 things are still missing.
+  status: has a gap
+  Where this build got to
+    Setup finished - NOT READY: the brain is missing. This build is set to use 'gpt-oss:20b', which is not installed on the Ollama at http://localhost:11434 (0 model(s) are). Do this first, because nothing else can answer until it is done: ollama pull gpt-oss:20b
+  Start your bot
+    puffpai serve
+  Then run
+    cd dashboard; npm install; npm run build; npm run start
+  Then open
+    the address the dashboard prints
+  Let your first device in
+    the code is shown on this terminal once; print a fresh one with puffpai setup-code
+  Proof it works
+    5 checks ran and none failed. Once it is running, ask it to prove itself: `puffpai prove`
+  gap: A door is open that this build did not record. the runtime config has web_fetch, web_search open and the posture does not
+    fix: puffpai setup
+  gap: The disk this build recorded is not on this machine. /golden does not exist now, though the census found it.
+    fix: puffpai setup
+  gap: The brain this build needs is not installed. 'gpt-oss:20b' is not on the Ollama at http://localhost:11434
+    fix: puffpai setup
+  gap: The brain this build needs is not on this box. This build is set to use 'gpt-oss:20b', which is not installed on the Ollama at http://localhost:11434 (0 model(s) are).
+    fix: puffpai setup
+  gap: The wizard step stopped early. OSError: pytest: reading from stdin while output is captured! Consider using `-s`.
+    fix: puffpai setup
+  gap: The wizard step stopped early. OSError: pytest: reading from stdin while output is captured! Consider using `-s`.
+    fix: puffpai setup
+  gap: A door is open that this build did not record. the runtime config has web_fetch, web_search open and the posture does not
+    fix: puffpai setup
+  gap: Knowledge setup was skipped. No source was offered and none was chosen, so this build has only its base model and whatever is already in its knowledge folder.
+    fix: puffpai setup
+--- end card ---
+--- card ---
+
+Setup from a browser on another device needs this machine's setup code.
+Print it on this machine when you need it:
+
+    puffpai setup-code
+
+After setup, changing this build needs an unlocked vault rather than a code.
+--- end card ---

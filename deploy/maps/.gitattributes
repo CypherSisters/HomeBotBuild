@@ -1,0 +1,2 @@
+# Shell scripts and compose files run on the Linux box: keep LF on every checkout.
+* text eol=lf

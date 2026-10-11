@@ -1,0 +1,132 @@
+# PuffPAI offline maps: Valhalla (routes) + Photon (places) for one region
+# (the Texas example region by default; RUNBOOK "Map region").
+#
+# Same pattern as docker-compose.media.yml: pinned images, puffpai-<svc>
+# container names, data bind-mounted from $MAPS_ROOT, restart
+# unless-stopped, own network. Differences on purpose:
+#   * Loopback only. Both publish on 127.0.0.1; the API on :8000 on the same
+#     host is the only caller. Nothing listens on 0.0.0.0 or the LAN address.
+#   * Hard memory caps, so Puff stays fast next to the resident models. mem_limit == memswap_limit, so a runaway engine is
+#     killed and restarted instead of pushing the machine into swap.
+#   * No outbound needs at serve time. Downloads happen only in the separate
+#     Bridge-gated refresh job, never from these containers.
+#   * Log size capped: Docker has no daemon-wide log rotation by default and
+#     the root disk (where Docker keeps logs) can be small.
+#
+# Data: $MAPS_ROOT/current is a relative symlink to the active
+# release (releases/<YYYYMMDD-HHMM>), swapped by activate_release.sh. Both
+# containers mount the whole maps folder at /maps and open /maps/current/...
+# INSIDE the container when they start, so the symlink is followed at process
+# start, never baked into a bind-mount source. (With current/valhalla as the
+# mount source, a recreated container can keep serving the OLD release.) Activation recreates both containers.
+# Never point these at a release by hand without activate_release.sh; see
+# RUNBOOK.md.
+#
+# Run (normally only via activate_release.sh):
+#   docker compose -f deploy/maps/docker-compose.maps.yml up -d
+# MAPS_ROOT and MAPS_UID_GID must be set (maps_common.sh sets them and
+# activate_release.sh exports them). VALHALLA_PORT / PHOTON_PORT /
+# *_MEM_LIMIT / PHOTON_XMX can be overridden from the environment.
+name: puffpai-maps
+
+services:
+  valhalla:
+    # Valhalla 3.9.1, official image, pinned to its multi-arch index (arm64
+    # and amd64). VALHALLA_IMAGE (set in maps_common.sh, exported by
+    # activate_release.sh, per-arch digests listed there) overrides it.
+    image: ${VALHALLA_IMAGE:-ghcr.io/valhalla/valhalla:3.9.1@sha256:4fd114eb1d26b8fc2f43bcb3df234c1b63a0bf13c277405e5943d5361dc575de}
+    container_name: puffpai-valhalla
+    user: "${MAPS_UID_GID:?set by maps_common.sh}"
+    # valhalla_service ignores SIGTERM as PID 1; a tiny init forwards it so
+    # a recreate during activation stops it at once instead of after 10 s.
+    init: true
+    # valhalla.json is written by build_release.sh into the release. It
+    # serves from tiles.tar (memory-mapped) with a 256 MB tile cache.
+    # 2 worker threads: a household asks one route at a time.
+    # Start from inside the active release: valhalla.json uses relative
+    # file names (tiles.tar, admins.sqlite), so they resolve to that release.
+    command: ["bash", "-c", "cd /maps/current/valhalla && exec valhalla_service valhalla.json 2"]
+    networks:
+      - puffpai-maps
+    ports:
+      - "127.0.0.1:${VALHALLA_PORT:-8002}:8002"
+    volumes:
+      - "${MAPS_ROOT:?set by maps_common.sh}:/maps:ro"
+    # 2 GB: Texas serving is ~1-2 GB. The tile tar is memory-mapped, so most
+    # of it is reclaimable page cache rather than locked memory; the rest is
+    # 2 workers x 256 MB tile cache plus the process itself.
+    mem_limit: ${VALHALLA_MEM_LIMIT:-2g}
+    memswap_limit: ${VALHALLA_MEM_LIMIT:-2g}
+    cpus: 2
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8002/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  photon:
+    # Photon has no official image: the pinned release jar (sha256 checked by
+    # build_release.sh; RUNBOOK step 3) runs from a read-only mount on a pinned multi-arch
+    # JRE, pinned to its multi-arch index (arm64 and amd64). JRE_IMAGE
+    # overrides it (per-arch digests in maps_common.sh).
+    image: ${JRE_IMAGE:-eclipse-temurin:21.0.12.1_1-jre-noble@sha256:000fd431958bc81a24abe1e8e5f0f0fd3ae365a594bd50aadb20696805f9408c}
+    container_name: puffpai-photon
+    user: "${MAPS_UID_GID:?set by maps_common.sh}"
+    command:
+      - java
+      - "-Xmx${PHOTON_XMX:-2g}"
+      - "-XX:MaxDirectMemorySize=256m"
+      - "-XX:+ExitOnOutOfMemoryError"
+      - "-Djava.io.tmpdir=/maps/current/photon/tmp"
+      - "-jar"
+      - "/maps/bin/photon-1.3.0.jar"
+      - "serve"
+      - "-data-dir"
+      - "/maps/current/photon"
+      - "-listen-ip"
+      - "0.0.0.0"
+      - "-listen-port"
+      - "2322"
+    networks:
+      - puffpai-maps
+    ports:
+      - "127.0.0.1:${PHOTON_PORT:-2322}:2322"
+    volumes:
+      # The maps folder read-only (jar in bin/, the current symlink) ...
+      - "${MAPS_ROOT:?set by maps_common.sh}:/maps:ro"
+      # ... with releases/ writable on top: Photon's embedded OpenSearch takes
+      # a node lock and keeps its translog inside the index folder, so it
+      # cannot start read-only. It only writes in the active release.
+      - "${MAPS_ROOT:?set by maps_common.sh}/releases:/maps/releases"
+    # 3 GB cap around a 2 GB heap. Texas is a few million places (index
+    # ~1-3 GB on disk). The index is read through memory-mapped files
+    # (reclaimable page cache), so the heap does not need to hold it; the
+    # last GB covers metaspace, threads, 256 MB direct buffers and hot pages.
+    # Inside a <= 4 GB aim.
+    mem_limit: ${PHOTON_MEM_LIMIT:-3g}
+    memswap_limit: ${PHOTON_MEM_LIMIT:-3g}
+    cpus: 2
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:2322/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # The embedded OpenSearch takes a while to open the index on a small machine.
+      start_period: 180s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+networks:
+  puffpai-maps:
+    name: puffpai-maps

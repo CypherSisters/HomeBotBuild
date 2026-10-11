@@ -1,0 +1,226 @@
+{
+  "brain": {
+    "brain_status": "model_missing",
+    "chosen_by": "recommendation",
+    "disk_gb": null,
+    "model": "gpt-oss:20b",
+    "profile_basis": "conservative-default",
+    "ready": false,
+    "recommended": "qwen2.5:7b-instruct",
+    "routing_tier": "guided",
+    "supports_planning": false
+  },
+  "bridge": {
+    "allows": {
+      "actions": "Every action asks, every session. Nothing is remembered as pre-approved.",
+      "consent": "Asked every time. Approval never carries over to the next session.",
+      "egress": "Every outbound call asks, even through a door you opened before.",
+      "lan_devices": "Allowed, but each reach asks you first."
+    },
+    "chosen_by": "default",
+    "costs": "You will answer a lot of prompts. Good when the box is shared, when you are still learning what it does, or when you simply want to watch it work for a while.",
+    "edge": {
+      "contacted": false,
+      "declared": true,
+      "external_kind": "",
+      "external_url": "",
+      "external_url_note": "",
+      "kind": "none",
+      "label": "Nothing in front of it",
+      "summary": "You said there is nothing at the edge of your network. The Bridge posture you picked is the whole fence, and it is configured.",
+      "zone3": {
+        "applied": false,
+        "commands": [],
+        "doc": "",
+        "doc_sections": [],
+        "mode": "",
+        "reasons": [],
+        "requested": false,
+        "supported": false
+      }
+    },
+    "enforced_by": "Drawbridge",
+    "environment": {
+      "external_firewall": false,
+      "home_assistant": false,
+      "managed_lan": false
+    },
+    "label": "Moat",
+    "note": "Moat fits an island build, so nothing was changed.",
+    "posture": "moat",
+    "reconciled": false,
+    "requested_posture": "moat",
+    "run_egress": "island",
+    "strictness": 2,
+    "summary": "Every outbound call and every action asks you first, every session."
+  },
+  "build": {
+    "based_on": "homebotbuild",
+    "identity": "homebot",
+    "name": "HomeBot"
+  },
+  "contracts": {
+    "_note": "These are contracts, not configuration. No manifest field disables them; the wizard and the loader never read this block as switches.",
+    "action_gates": "On at the action boundary. Reach-into-the-world actions are gated.",
+    "consent_gate": "Human-only. No agent can grant consent on a person's behalf.",
+    "telemetry": "None. No phone-home; every egress is owner-invoked and enumerated.",
+    "vault": "Encrypted, PIN/MFA-gated. Even the AI must ask to read it."
+  },
+  "crew": {
+    "basis": "reference",
+    "hardware_class": "workstation",
+    "master_core": 7,
+    "max_specialists": 5,
+    "note": "On a machine this size, the crew can take up to 5 specialists on top of the master team. That number is grounded in running the master team live on our reference board."
+  },
+  "egress": {
+    "enabled": [],
+    "posture": "all-offline"
+  },
+  "hardware": {
+    "accelerator": {
+      "kind": "none",
+      "name": "",
+      "source": "detected",
+      "unified_memory": false,
+      "vram_gb": 0.0
+    },
+    "cpu": {
+      "arch": "x86_64",
+      "logical_cores": 8,
+      "model": "Golden Reference CPU",
+      "source": "detected"
+    },
+    "disk": {
+      "free_gb": 200.0,
+      "path": "/golden",
+      "source": "detected",
+      "total_gb": 500.0
+    },
+    "hardware_class": "workstation",
+    "memory": {
+      "available_gb": 24.0,
+      "source": "detected",
+      "total_gb": 32.0
+    },
+    "model_budget_gb": 28.0,
+    "notes": [],
+    "os": {
+      "machine": "x86_64",
+      "python": "3.11.9",
+      "release": "6.8.0",
+      "source": "detected",
+      "system": "Linux"
+    },
+    "schema": "hardware_census/v1",
+    "soc": {
+      "is_jetson": false,
+      "model": null,
+      "source": "detected"
+    }
+  },
+  "household": {
+    "owner_set": true,
+    "profiles": 1
+  },
+  "integrations": {
+    "home_assistant": {
+      "connectivity_checked": false,
+      "present": false,
+      "reachable": null,
+      "token_configured": false,
+      "url": ""
+    },
+    "media_library": {
+      "present": false
+    }
+  },
+  "interview": {
+    "goal": "a bot that helps a beginner learn the night sky and space with a small telescope",
+    "matched": []
+  },
+  "knowledge": {
+    "auto_index": false,
+    "packs": [],
+    "sources": {
+      "fetched": [],
+      "not_fetched": [],
+      "offered": [],
+      "skipped": "skipped"
+    },
+    "zim_dir": "<data>/knowledge_packs"
+  },
+  "persona": {
+    "goal": "a bot that helps a beginner learn the night sky and space with a small telescope",
+    "id": "homebot",
+    "name": "HomeBot",
+    "note": "No place of its own was made; this records what the owner said it is for. `puffpai setup --scaffold` makes one.",
+    "pack": "homebot",
+    "scaffolded": false
+  },
+  "posture": {
+    "build_network": "offline",
+    "build_network_source": "stated",
+    "combination": "No internet during the build, but your home network is fair game afterwards - Home Assistant, a media server, local devices.",
+    "egress_switches": {
+      "air_quality": false,
+      "connectivity_probe": false,
+      "embedding_model_download": false,
+      "geocode": false,
+      "geoip": false,
+      "knowledge_pack_downloads": false,
+      "map_data_updates": false,
+      "model_pull": false,
+      "news_rss": false,
+      "page_reader": false,
+      "radio_browser": false,
+      "spotify": false,
+      "tunein": false,
+      "tv_free_channels": false,
+      "weather": false,
+      "web_fetch": false,
+      "web_search": false
+    },
+    "enabled_switches": [],
+    "run_egress": "island",
+    "run_egress_source": "defaulted"
+  },
+  "provenance": {
+    "bundle": null,
+    "source": "local"
+  },
+  "schema": "build_manifest/v2",
+  "storage": {
+    "knowledge_dir": "<data>/knowledge_packs",
+    "media_library": "",
+    "media_library_present": false,
+    "state_dir": "<data>",
+    "vault_dir": "<data>/vault_data"
+  },
+  "surfaces": {
+    "allowlist": [
+      "instruments.telescope",
+      "knowledge.library"
+    ],
+    "derived_from_goal": true,
+    "note": "Surfaces outside this list are not loaded at all - not hidden, not loaded. This is a proposal: add or remove anything before you accept it.",
+    "owner_edited": false,
+    "reasons": {
+      "instruments.telescope": "Telescope and sky feeds, because you asked about 'night sky' and that comes with Science and astronomy Q&A (Stack Exchange).",
+      "knowledge.library": "Offline reference library, because you asked about 'night sky' and that comes with Science and astronomy Q&A (Stack Exchange)."
+    },
+    "sensitive": []
+  },
+  "vault": {
+    "cipher": "aes-256-gcm",
+    "configured": false,
+    "key_derivation": "scrypt",
+    "method": "pin",
+    "ready": true,
+    "recovery_confirmed": false,
+    "recovery_escrow": "wrapped-key",
+    "recovery_issued": false,
+    "rejected": false,
+    "sealed": false
+  }
+}

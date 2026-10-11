@@ -1,0 +1,24 @@
+# PuffPAI SearXNG — self-hosted metasearch for toolsmith.web_search.
+# Loopback-only publish: the backend reaches it at 127.0.0.1:8888 (the
+# _DEFAULT_SEARXNG_URL pinhole); nothing on the LAN can. network_mode: bridge
+# (default docker0).
+#
+# Deploy home on the appliance: /data/puffpai/searxng/ with config/settings.yml
+# built from config/settings.yml.example (generate secret_key on the box:
+#   openssl rand -hex 32
+# ).
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: puffpai-searxng
+    network_mode: bridge
+    ports:
+      - "127.0.0.1:8888:8080"
+    volumes:
+      - /data/puffpai/searxng/config:/etc/searxng
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"

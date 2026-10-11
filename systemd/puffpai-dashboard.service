@@ -1,0 +1,58 @@
+[Unit]
+# PuffPAI dashboard — Next.js 16 / React 19, served by `next start` on :3003.
+# The dashboard does not use `output: "standalone"`, so this is a plain
+# build-then-start deployment, not a standalone bundle.
+Description=PuffPAI Dashboard (Next.js)
+Documentation=file:///opt/puffpai/systemd/README.md
+After=network-online.target puffpai-api.service
+Wants=network-online.target
+# The dashboard renders (degraded) without the backend, so this is Wants,
+# not Requires.
+Wants=puffpai-api.service
+
+[Service]
+Type=simple
+User=puffpai
+Group=puffpai
+WorkingDirectory=/opt/puffpai-dashboard
+
+# `npm run build` is a DEPLOY step, not a boot step — see systemd/README.md.
+# `npm start` runs the package's prestart hook first
+# (scripts/ensure-fresh-build.js, a spawnSync guard that refuses to serve a
+# .next build older than the source), then `next start -p 3003`. The port is
+# already in the start script; do not pass -p again here.
+ExecStart=/usr/bin/npm start
+
+Environment=NODE_ENV=production
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# systemd would set HOME=/opt/puffpai (the service user's home), which is
+# read-only under ProtectSystem=strict — npm then fails trying to create
+# $HOME/.npm. Point both HOME and the npm cache somewhere writable.
+Environment=HOME=/data/puffpai/home
+Environment=npm_config_cache=/data/puffpai/home/.npm
+# Server-side config for the /api/pai proxy, the HA/camera/knowledge proxies
+# and the instrumentation.ts loopback media proxy:
+#   PUFFPAI_API_URL, PUFFPAI_API_KEY, HA_URL, HA_TOKEN,
+#   JELLYFIN_LAN_IP / JELLYFIN_LAN_HOST / JELLYFIN_LAN_PORT
+EnvironmentFile=-/etc/puffpai/dashboard.env
+
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=120
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=puffpai-dashboard
+
+# ── Sandbox ────────────────────────────────────────────────────────────────
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+# next start writes into .next/ (cache, trace) at runtime; HOME/npm cache
+# live on the data volume.
+ReadWritePaths=/opt/puffpai-dashboard/.next
+ReadWritePaths=/data/puffpai/home
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,89 @@
+{
+  "ollama": {
+    "url": "http://localhost:11434",
+    "model": "gpt-oss:20b",
+    "temperature": 0.6,
+    "num_ctx": 8192,
+    "num_predict": 512,
+    "vision_model": "qwen2.5vl:7b",
+    "vision_mode": "auto",
+    "_model_note": "Default chat model. Any model you have pulled with Ollama works; change \"model\" and restart the API.",
+    "_vision_note": "vision_mode: off|auto|primary. auto = tesseract-first, VLM escalates on weak OCR. Model must be pulled on the host (ollama pull qwen2.5vl:7b)."
+  },
+  "nodered": {
+    "url": "http://localhost:1880",
+    "timeout": 10,
+    "retries": 2,
+    "health_path": "/",
+    "webhooks": {
+      "block_device": "/webhook/block-device",
+      "network_scan": "/webhook/network-scan",
+      "weather_alerts": "/webhook/weather-alerts",
+      "puffpai_voice": "/webhook/puffpai_voice",
+      "daily_news": "/webhook/daily-news",
+      "calendar_sync": "/webhook/calendar-sync",
+      "meal_planner": "/webhook/meal-planner",
+      "grocery_list": "/webhook/grocery-list",
+      "daily_briefing": "/webhook/daily-briefing",
+      "daily_weather": "/webhook/daily-weather",
+      "media_now_playing": "/webhook/media-now-playing",
+      "health_check": "/webhook/health-check",
+      "good_morning": "/webhook/good-morning",
+      "leaving_home": "/webhook/leaving-home",
+      "security_check": "/webhook/security-check"
+    }
+  },
+  "chromadb": {
+    "path": "./kiwix_rag_db"
+  },
+  "api_server": {
+    "host": "127.0.0.1",
+    "port": 8000
+  },
+  "nabu": {
+    "enabled": true,
+    "ha_voice_pipeline": "puffpai_voice",
+    "wake_word": "hey puffpai",
+    "voice_max_length": 500
+  },
+  "identity": {
+    "name": "PuffPAI",
+    "avatar_style": "notionists",
+    "avatar_seed": "PuffPAI"
+  },
+  "models": {
+    "llm_gguf_path": "",
+    "vosk_model_dir": "models/vosk-model-en-us-0.22-lgraph",
+    "_vosk_note": "vosk-model-en-us-0.22-lgraph (128MB) is much more accurate than vosk-model-small-en-us (40MB). Whisper replaces Vosk on the appliance.",
+    "piper_model_path": "models/en_US-hfc_female-medium.onnx",
+    "_piper_note": "Natural FEMALE voice, AMERICAN accent (en_US-hfc_female-medium). Alternatives: models/en_GB-cori-high.onnx (English accent), models/en_US-lessac-medium.onnx. If the .onnx is missing, PiperTTS reports unavailable and the dashboard falls back to the browser voice (no lipsync).",
+    "wake_word_model_path": "models/hey_puffpai.tflite",
+    "embedding_backend": "chroma_default",
+    "embedding_model": "all-MiniLM-L6-v2",
+    "ollama_embedding_model": "nomic-embed-text",
+    "_embedding_note": "chroma_default = chromadb's own ONNX all-MiniLM-L6-v2. It needs no extra package (onnxruntime ships with chromadb) and no model pulled, which is why it is the shipped default; the model files themselves are a one-time ~80 MB fetch behind the 'embedding_model_download' Bridge switch, or copy ~/.cache/chroma over by hand. 'sentence_transformers' is the same vectors via PyTorch and needs pip install -e \".[embeddings-legacy]\". 'ollama' (nomic-embed-text) is a DIFFERENT vector space: flipping to it means re-indexing everything once. See src/puffpai/embeddings.py.",
+    "llm_n_ctx": 2048,
+    "llm_n_gpu_layers": 0
+  },
+  "paths": {
+    "zim_dirs": [],
+    "zim_files": [],
+    "chromadb_path": "./kiwix_rag_db",
+    "vault_data_dir": "vault_data",
+    "chat_history_dir": "chat_history",
+    "feedback_data_path": "feedback_data.jsonl"
+  },
+  "web_search_consent": false,
+  "location": "",
+  "latitude": null,
+  "longitude": null,
+  "zone3": {
+    "enabled": false,
+    "pihole_url": "http://localhost:8080",
+    "pihole_password": "",
+    "pihole_timeout": 10,
+    "auto_discover": true,
+    "default_mode": "balanced",
+    "_note": "Zone 3 Network Edge \u2014 set enabled=true after running: docker compose -f docker-compose.zone3.yml up -d"
+  }
+}

@@ -1,0 +1,184 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <defs>
+    <linearGradient id="cloudGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="keyGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#fbbf24;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#f59e0b;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="circuitGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#34d399;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#10b981;stop-opacity:1" />
+    </linearGradient>
+    <radialGradient id="glowGrad">
+      <stop offset="0%" style="stop-color:#fbbf24;stop-opacity:0.4" />
+      <stop offset="100%" style="stop-color:#667eea;stop-opacity:0" />
+    </radialGradient>
+  </defs>
+  
+  <!-- Cloud shape (simple) -->
+  <g id="cloud">
+    <ellipse cx="200" cy="165" rx="95" ry="55" fill="url(#cloudGradient)" opacity="0.9"/>
+    <circle cx="130" cy="155" r="40" fill="url(#cloudGradient)" opacity="0.8"/>
+    <circle cx="200" cy="135" r="42" fill="url(#cloudGradient)" opacity="0.85"/>
+    <circle cx="270" cy="155" r="40" fill="url(#cloudGradient)" opacity="0.8"/>
+  </g>
+  
+  <!-- Central glow around key -->
+  <circle cx="200" cy="165" r="65" fill="url(#glowGrad)" opacity="0.5"/>
+  
+  <!-- AI Circuit Brain Pattern (behind key) -->
+  <g id="circuitBrain">
+    <!-- Neural pathways radiating out from center -->
+    <g stroke="url(#circuitGradient)" stroke-width="2.5" fill="none" opacity="0.75">
+      <!-- Top pathways -->
+      <path d="M 200 145 L 200 130 L 185 125" stroke-linecap="round"/>
+      <path d="M 200 130 L 215 125" stroke-linecap="round"/>
+      
+      <!-- Top-right pathways -->
+      <path d="M 210 155 L 225 150 L 235 145" stroke-linecap="round"/>
+      <path d="M 225 150 L 232 155" stroke-linecap="round"/>
+      
+      <!-- Right pathways -->
+      <path d="M 215 170 L 235 170 L 240 165" stroke-linecap="round"/>
+      <path d="M 235 170 L 240 175" stroke-linecap="round"/>
+      
+      <!-- Bottom-right pathways -->
+      <path d="M 210 185 L 225 190 L 230 200" stroke-linecap="round"/>
+      <path d="M 225 190 L 235 195" stroke-linecap="round"/>
+      
+      <!-- Bottom pathways -->
+      <path d="M 200 195 L 200 210 L 215 215" stroke-linecap="round"/>
+      <path d="M 200 210 L 185 215" stroke-linecap="round"/>
+      
+      <!-- Bottom-left pathways -->
+      <path d="M 190 185 L 175 190 L 170 200" stroke-linecap="round"/>
+      <path d="M 175 190 L 165 195" stroke-linecap="round"/>
+      
+      <!-- Left pathways -->
+      <path d="M 185 170 L 165 170 L 160 175" stroke-linecap="round"/>
+      <path d="M 165 170 L 160 165" stroke-linecap="round"/>
+      
+      <!-- Top-left pathways -->
+      <path d="M 190 155 L 175 150 L 165 145" stroke-linecap="round"/>
+      <path d="M 175 150 L 168 155" stroke-linecap="round"/>
+    </g>
+    
+    <!-- Connection nodes (circuit endpoints) -->
+    <g fill="#10b981">
+      <circle cx="185" cy="125" r="4"/>
+      <circle cx="215" cy="125" r="4"/>
+      <circle cx="235" cy="145" r="4"/>
+      <circle cx="232" cy="155" r="4"/>
+      <circle cx="240" cy="165" r="4"/>
+      <circle cx="240" cy="175" r="4"/>
+      <circle cx="230" cy="200" r="4"/>
+      <circle cx="235" cy="195" r="4"/>
+      <circle cx="215" cy="215" r="4"/>
+      <circle cx="185" cy="215" r="4"/>
+      <circle cx="170" cy="200" r="4"/>
+      <circle cx="165" cy="195" r="4"/>
+      <circle cx="160" cy="175" r="4"/>
+      <circle cx="160" cy="165" r="4"/>
+      <circle cx="165" cy="145" r="4"/>
+      <circle cx="168" cy="155" r="4"/>
+    </g>
+    
+    <!-- Microchip details on nodes -->
+    <g fill="#ffffff" opacity="0.7">
+      <rect x="183" y="123" width="4" height="4"/>
+      <rect x="213" y="123" width="4" height="4"/>
+      <rect x="233" y="143" width="4" height="4"/>
+      <rect x="238" y="163" width="4" height="4"/>
+      <rect x="228" y="198" width="4" height="4"/>
+      <rect x="213" y="213" width="4" height="4"/>
+      <rect x="183" y="213" width="4" height="4"/>
+      <rect x="168" y="198" width="4" height="4"/>
+      <rect x="158" y="173" width="4" height="4"/>
+      <rect x="158" y="163" width="4" height="4"/>
+      <rect x="163" y="143" width="4" height="4"/>
+    </g>
+  </g>
+  
+  <!-- Golden Key (prominent central element) -->
+  <g id="key" transform="translate(200, 165)">
+    <!-- Key head (circular with hole) - larger -->
+    <circle cx="0" cy="-18" r="20" fill="url(#keyGradient)" stroke="#ffffff" stroke-width="2.5"/>
+    <circle cx="0" cy="-18" r="8" fill="#ffffff"/>
+    
+    <!-- Inner detail on key head -->
+    <circle cx="0" cy="-18" r="12" fill="none" stroke="#ffffff" stroke-width="1" opacity="0.5"/>
+    
+    <!-- Key shaft -->
+    <rect x="-5" y="2" width="10" height="38" rx="2.5" fill="url(#keyGradient)" stroke="#ffffff" stroke-width="1.5"/>
+    
+    <!-- Key teeth (more detailed) -->
+    <rect x="5" y="26" width="7" height="5" fill="url(#keyGradient)" stroke="#ffffff" stroke-width="1"/>
+    <rect x="5" y="33" width="7" height="7" fill="url(#keyGradient)" stroke="#ffffff" stroke-width="1"/>
+    
+    <!-- Shadow/depth on key -->
+    <ellipse cx="1" cy="-17" rx="6" ry="3.5" fill="#000000" opacity="0.25"/>
+    
+    <!-- Highlight gleam on key head -->
+    <circle cx="-4" cy="-22" r="3" fill="#ffffff" opacity="0.6"/>
+  </g>
+  
+  <!-- Data flow particles around the system -->
+  <g id="dataFlow" opacity="0.5">
+    <circle cx="170" cy="145" r="2" fill="#34d399">
+      <animate attributeName="opacity" values="0.3;1;0.3" dur="2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="230" cy="145" r="2" fill="#34d399">
+      <animate attributeName="opacity" values="1;0.3;1" dur="2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="170" cy="185" r="2" fill="#34d399">
+      <animate attributeName="opacity" values="0.5;1;0.5" dur="2.5s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="230" cy="185" r="2" fill="#34d399">
+      <animate attributeName="opacity" values="1;0.5;1" dur="2.5s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="155" cy="165" r="2" fill="#fbbf24">
+      <animate attributeName="opacity" values="0.4;1;0.4" dur="1.8s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="245" cy="165" r="2" fill="#fbbf24">
+      <animate attributeName="opacity" values="1;0.4;1" dur="1.8s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+  
+  <!-- Text: PuffPAI -->
+  <text x="200" y="290" 
+        font-family="Arial, sans-serif" 
+        font-size="48" 
+        font-weight="bold" 
+        fill="#2d3748" 
+        text-anchor="middle">
+    Puff<tspan fill="#667eea">PAI</tspan>
+  </text>
+  
+  <!-- Tagline -->
+  <text x="200" y="315" 
+        font-family="Arial, sans-serif" 
+        font-size="14" 
+        fill="#718096" 
+        text-anchor="middle"
+        font-style="italic">
+    Privacy-Forward Personal AI
+  </text>
+  
+  <!-- Tech accents on sides -->
+  <g id="techAccents" opacity="0.5">
+    <!-- Left side -->
+    <circle cx="90" cy="250" r="2" fill="#10b981"/>
+    <line x1="90" y1="250" x2="110" y2="250" stroke="#10b981" stroke-width="1.5"/>
+    <line x1="110" y1="250" x2="110" y2="260" stroke="#10b981" stroke-width="1.5"/>
+    <rect x="108" y="258" width="4" height="4" fill="#10b981"/>
+    
+    <!-- Right side -->
+    <circle cx="310" cy="250" r="2" fill="#10b981"/>
+    <line x1="310" y1="250" x2="290" y2="250" stroke="#10b981" stroke-width="1.5"/>
+    <line x1="290" y1="250" x2="290" y2="260" stroke="#10b981" stroke-width="1.5"/>
+    <rect x="288" y="258" width="4" height="4" fill="#10b981"/>
+  </g>
+</svg>

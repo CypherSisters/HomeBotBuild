@@ -1,0 +1,3356 @@
+[
+  {
+    "id": "4345b215f36b1081",
+    "type": "tab",
+    "label": "calendar_sync",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "cdbd0ee1dc90d7bb",
+    "type": "http in",
+    "z": "4345b215f36b1081",
+    "name": "",
+    "url": "/webhook/calendar-sync",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 130,
+    "y": 200,
+    "wires": [
+      [
+        "79159c6b4972a819"
+      ]
+    ]
+  },
+  {
+    "id": "79159c6b4972a819",
+    "type": "function",
+    "z": "4345b215f36b1081",
+    "name": "prep calendar request",
+    "func": "const base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\nmsg.req_body = (typeof msg.payload === \"object\" && msg.payload) || {};\nconst apiKey = msg.req_body.api_key || env.get(\"PUFFPAI_API_KEY\") || \"\";\n// SECURITY: this request carries the env PUFFPAI_API_KEY -- a caller-chosen method would let an unauthenticated\n// webhook caller borrow that key for a write. This is a read flow, so the\n// method is allow-listed and anything else fails closed to GET.\nconst wanted = String(msg.req_body.method || \"GET\").toUpperCase();\nmsg.method = (wanted === \"HEAD\") ? \"HEAD\" : \"GET\";\n// SECURITY: the URL is config-domain only (env PUFFPAI_API_URL / localhost).\n// Never take the backend base from the request body -- that would send the env\n// API key to a caller-chosen host.\nmsg.url = base + \"/apps/calendar/data\";\nmsg.headers = { \"Accept\": \"application/json\" };\nif (apiKey) { msg.headers[\"X-API-Key\"] = apiKey; }\ndelete msg.payload;\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 330,
+    "y": 200,
+    "wires": [
+      [
+        "9098e5fcb1203ac2"
+      ]
+    ]
+  },
+  {
+    "id": "9098e5fcb1203ac2",
+    "type": "http request",
+    "z": "4345b215f36b1081",
+    "name": "GET /apps/calendar/data",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 570,
+    "y": 200,
+    "wires": [
+      [
+        "794f9add5ed05b2a"
+      ]
+    ]
+  },
+  {
+    "id": "794f9add5ed05b2a",
+    "type": "function",
+    "z": "4345b215f36b1081",
+    "name": "process calendar data",
+    "func": "const calData = msg.payload || {};\nconst body = msg.req_body || {};\nconst action = body.action || 'list';\n\nconst now = new Date();\nconst events = calData.events || [];\nconst tasks = calData.tasks || [];\nconst meds = calData.meds || [];\nconst bills = calData.bills || [];\n\n// Filter upcoming events (next 7 days)\nconst weekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);\nconst upcoming = events.filter(e => {\n  const d = new Date(e.date || e.start);\n  return d >= now && d <= weekFromNow;\n}).sort((a, b) => new Date(a.date || a.start) - new Date(b.date || b.start));\n\n// Overdue tasks\nconst overdue = tasks.filter(t => {\n  if (t.status === 'done') return false;\n  const due = new Date(t.due);\n  return due < now;\n});\n\n// Meds due today\nconst medsToday = meds.filter(m => {\n  if (!m.nextDose) return true;\n  const next = new Date(m.nextDose);\n  return next.toDateString() === now.toDateString();\n});\n\n// Bills due within 7 days\nconst billsDue = bills.filter(b => {\n  if (b.status === 'paid') return false;\n  const due = new Date(b.due);\n  return due >= now && due <= weekFromNow;\n});\n\nmsg.payload = {\n  action: action,\n  date: now.toISOString(),\n  upcoming_events: upcoming,\n  overdue_tasks: overdue,\n  meds_today: medsToday,\n  bills_due: billsDue,\n  summary: {\n    events_this_week: upcoming.length,\n    overdue_tasks: overdue.length,\n    meds_due: medsToday.length,\n    bills_due: billsDue.length\n  },\n  family: calData.family || []\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 810,
+    "y": 200,
+    "wires": [
+      [
+        "b74b5e2d27fb055e"
+      ]
+    ]
+  },
+  {
+    "id": "b74b5e2d27fb055e",
+    "type": "http response",
+    "z": "4345b215f36b1081",
+    "name": "respond",
+    "statusCode": "",
+    "headers": {},
+    "x": 1050,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "19f66dd75ea7b1d7",
+    "type": "catch",
+    "z": "4345b215f36b1081",
+    "name": "on request error",
+    "scope": [
+      "9098e5fcb1203ac2"
+    ],
+    "uncaught": false,
+    "x": 330,
+    "y": 320,
+    "wires": [
+      [
+        "c62962e8fd2f8a45"
+      ]
+    ]
+  },
+  {
+    "id": "c62962e8fd2f8a45",
+    "type": "function",
+    "z": "4345b215f36b1081",
+    "name": "request failed",
+    "func": "// Error handler for this tab's HTTP Request nodes. Answers the webhook\n// explicitly with a 502 so the HTTP client never hangs.\nnode.warn(\"request failed: \" + (msg.error && msg.error.message));\nmsg.statusCode = 502;\nmsg.payload = {\n    error: \"upstream_request_failed\",\n    detail: (msg.error && msg.error.message) || \"unknown error\",\n    node: (msg.error && msg.error.source && msg.error.source.name) || \"\"\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 570,
+    "y": 320,
+    "wires": [
+      [
+        "b74b5e2d27fb055e"
+      ]
+    ]
+  },
+  {
+    "id": "95cf7606fe0b9e33",
+    "type": "tab",
+    "label": "daily_briefing",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "b9cb23a438c7cec5",
+    "type": "http in",
+    "z": "95cf7606fe0b9e33",
+    "name": "",
+    "url": "/webhook/daily-briefing",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 130,
+    "y": 260,
+    "wires": [
+      [
+        "9e7d610ef057c0f5",
+        "3d8207f3fd7388e4",
+        "0394af3f452f57ef"
+      ]
+    ]
+  },
+  {
+    "id": "9e7d610ef057c0f5",
+    "type": "function",
+    "z": "95cf7606fe0b9e33",
+    "name": "prep NWS points",
+    "func": "const ua = env.get(\"PUFFPAI_USER_AGENT\") || \"PuffPAI/1.0 (node-red)\";\nmsg.req_body = (typeof msg.payload === \"object\" && msg.payload) || {};\nconst lat = msg.req_body.lat || env.get(\"WEATHER_DEFAULT_LAT\") || \"\";\nconst lon = msg.req_body.lon || env.get(\"WEATHER_DEFAULT_LON\") || \"\";\nmsg.topic = \"weather\";\nmsg.headers = { \"User-Agent\": ua, \"Accept\": \"application/geo+json\" };\nmsg.requestTimeout = 10000;\ndelete msg.payload;\nif (!lat || !lon) {\n    // No coordinates: skip the weather call. With no msg.url the request node\n    // raises \"no url\" to this tab's catch node, which emits the weather branch\n    // as an error so the join completes at once and the briefing says\n    // \"Unavailable\".\n    node.log(\"no coordinates set (lat/lon or WEATHER_DEFAULT_LAT/LON), skipping the weather call\");\n    delete msg.url;\n    return msg;\n}\nmsg.url = \"https://api.weather.gov/points/\" + lat + \",\" + lon;\n// Bridge switch: this node is about to reach api.weather.gov, which the backend's\n// `weather` switch covers. Ask the backend first and go out only on a clear yes.\n// A closed switch, a missing key, an unreachable backend or an unclear answer\n// all skip the call. The key comes from env only and goes only to\n// PUFFPAI_API_URL (see README, credential/host pairing).\nconst bridge = await (function askBridge(doorId) {\n    return new Promise(function (resolve) {\n        const base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\n        const apiKey = env.get(\"PUFFPAI_API_KEY\") || \"\";\n        const lib = /^https:\\/\\//i.test(base) ? bridgeHttps\n            : (/^http:\\/\\//i.test(base) ? bridgeHttp : null);\n        let settled = false;\n        const finish = function (open, why) {\n            if (!settled) { settled = true; resolve({ open: open, why: why }); }\n        };\n        if (!lib) { finish(false, \"PUFFPAI_API_URL is not an http(s) address\"); return; }\n        const headers = { \"Accept\": \"application/json\" };\n        if (apiKey) { headers[\"X-API-Key\"] = apiKey; }\n        try {\n            const req = lib.request(base + \"/system/egress/door/\" + doorId,\n                { method: \"GET\", headers: headers, timeout: 5000 }, function (res) {\n                    let body = \"\";\n                    res.setEncoding(\"utf8\");\n                    res.on(\"data\", function (chunk) {\n                        if (body.length < 16384) { body += chunk; }\n                    });\n                    res.on(\"error\", function () { finish(false, \"the backend's answer broke off\"); });\n                    res.on(\"end\", function () {\n                        let answer = null;\n                        try { answer = JSON.parse(body); } catch (e) { answer = null; }\n                        if (res.statusCode === 200 && answer && answer.success === true &&\n                                answer.id === doorId && answer.open === true) {\n                            finish(true, \"\");\n                        } else if (res.statusCode === 200 && answer && answer.open === false) {\n                            finish(false, \"the switch is off\");\n                        } else {\n                            finish(false, \"the backend answered HTTP \" + res.statusCode +\n                                \" without a clear yes\");\n                        }\n                    });\n                });\n            req.on(\"timeout\", function () {\n                req.destroy();\n                finish(false, \"the backend did not answer in time\");\n            });\n            req.on(\"error\", function () { finish(false, \"the backend could not be reached\"); });\n            req.end();\n        } catch (e) {\n            finish(false, \"the backend could not be asked\");\n        }\n    });\n})(\"weather\");\nif (!bridge.open) {\n    const reason = \"Bridge switch 'weather' is not open (\" + bridge.why +\n        \"), so nothing was sent to api.weather.gov.\";\n    delete msg.url;\n    delete msg.headers;\n    delete msg.statusCode;\n    // A webhook run is answered through this tab's catch handler; a scheduled\n    // run has no one to answer and only logs.\n    if (msg.res) { node.error(reason, msg); } else { node.warn(reason); }\n    return null;\n}\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [
+      {
+        "var": "bridgeHttp",
+        "module": "http"
+      },
+      {
+        "var": "bridgeHttps",
+        "module": "https"
+      }
+    ],
+    "x": 350,
+    "y": 140,
+    "wires": [
+      [
+        "5a6eb1b1eb9c12ec"
+      ]
+    ]
+  },
+  {
+    "id": "5a6eb1b1eb9c12ec",
+    "type": "http request",
+    "z": "95cf7606fe0b9e33",
+    "name": "GET NWS points",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 590,
+    "y": 140,
+    "wires": [
+      [
+        "56350936f883a697"
+      ]
+    ]
+  },
+  {
+    "id": "56350936f883a697",
+    "type": "function",
+    "z": "95cf7606fe0b9e33",
+    "name": "prep forecast",
+    "func": "const ua = env.get(\"PUFFPAI_USER_AGENT\") || \"PuffPAI/1.0 (node-red)\";\nconst props = (msg.payload && msg.payload.properties) || {};\nmsg.topic = \"weather\";\nmsg.url = props.forecast || \"\";\nmsg.headers = { \"User-Agent\": ua, \"Accept\": \"application/geo+json\" };\nmsg.requestTimeout = 10000;\ndelete msg.payload;\nif (!msg.url) {\n    // No forecast URL in the points response: drop the branch and let the join\n    // node time out and emit with whatever branches did arrive.\n    node.warn(\"NWS points response had no forecast URL\");\n    return [null];\n}\nif (msg.url.indexOf(\"https://api.weather.gov/\") !== 0) {\n    // The forecast address comes from the points answer; follow it only while\n    // it stays on the host the `weather` switch names.\n    node.warn(\"NWS points response named a forecast outside api.weather.gov; not fetched\");\n    return [null];\n}\n// Bridge switch: this node is about to reach api.weather.gov, which the backend's\n// `weather` switch covers. Ask the backend first and go out only on a clear yes.\n// A closed switch, a missing key, an unreachable backend or an unclear answer\n// all skip the call. The key comes from env only and goes only to\n// PUFFPAI_API_URL (see README, credential/host pairing).\nconst bridge = await (function askBridge(doorId) {\n    return new Promise(function (resolve) {\n        const base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\n        const apiKey = env.get(\"PUFFPAI_API_KEY\") || \"\";\n        const lib = /^https:\\/\\//i.test(base) ? bridgeHttps\n            : (/^http:\\/\\//i.test(base) ? bridgeHttp : null);\n        let settled = false;\n        const finish = function (open, why) {\n            if (!settled) { settled = true; resolve({ open: open, why: why }); }\n        };\n        if (!lib) { finish(false, \"PUFFPAI_API_URL is not an http(s) address\"); return; }\n        const headers = { \"Accept\": \"application/json\" };\n        if (apiKey) { headers[\"X-API-Key\"] = apiKey; }\n        try {\n            const req = lib.request(base + \"/system/egress/door/\" + doorId,\n                { method: \"GET\", headers: headers, timeout: 5000 }, function (res) {\n                    let body = \"\";\n                    res.setEncoding(\"utf8\");\n                    res.on(\"data\", function (chunk) {\n                        if (body.length < 16384) { body += chunk; }\n                    });\n                    res.on(\"error\", function () { finish(false, \"the backend's answer broke off\"); });\n                    res.on(\"end\", function () {\n                        let answer = null;\n                        try { answer = JSON.parse(body); } catch (e) { answer = null; }\n                        if (res.statusCode === 200 && answer && answer.success === true &&\n                                answer.id === doorId && answer.open === true) {\n                            finish(true, \"\");\n                        } else if (res.statusCode === 200 && answer && answer.open === false) {\n                            finish(false, \"the switch is off\");\n                        } else {\n                            finish(false, \"the backend answered HTTP \" + res.statusCode +\n                                \" without a clear yes\");\n                        }\n                    });\n                });\n            req.on(\"timeout\", function () {\n                req.destroy();\n                finish(false, \"the backend did not answer in time\");\n            });\n            req.on(\"error\", function () { finish(false, \"the backend could not be reached\"); });\n            req.end();\n        } catch (e) {\n            finish(false, \"the backend could not be asked\");\n        }\n    });\n})(\"weather\");\nif (!bridge.open) {\n    const reason = \"Bridge switch 'weather' is not open (\" + bridge.why +\n        \"), so nothing was sent to api.weather.gov.\";\n    delete msg.url;\n    delete msg.headers;\n    delete msg.statusCode;\n    // A webhook run is answered through this tab's catch handler; a scheduled\n    // run has no one to answer and only logs.\n    if (msg.res) { node.error(reason, msg); } else { node.warn(reason); }\n    return null;\n}\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [
+      {
+        "var": "bridgeHttp",
+        "module": "http"
+      },
+      {
+        "var": "bridgeHttps",
+        "module": "https"
+      }
+    ],
+    "x": 830,
+    "y": 140,
+    "wires": [
+      [
+        "66795effe74e502d"
+      ]
+    ]
+  },
+  {
+    "id": "66795effe74e502d",
+    "type": "http request",
+    "z": "95cf7606fe0b9e33",
+    "name": "GET forecast",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 1070,
+    "y": 140,
+    "wires": [
+      [
+        "f6456f77a6dd4de2"
+      ]
+    ]
+  },
+  {
+    "id": "3d8207f3fd7388e4",
+    "type": "function",
+    "z": "95cf7606fe0b9e33",
+    "name": "prep calendar",
+    "func": "const base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\nmsg.req_body = (typeof msg.payload === \"object\" && msg.payload) || {};\nconst apiKey = msg.req_body.api_key || env.get(\"PUFFPAI_API_KEY\") || \"\";\nmsg.topic = \"calendar\";\nmsg.url = base + \"/apps/calendar/data\";\nmsg.headers = { \"Accept\": \"application/json\" };\nif (apiKey) { msg.headers[\"X-API-Key\"] = apiKey; }\nmsg.requestTimeout = 10000;\ndelete msg.payload;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 350,
+    "y": 300,
+    "wires": [
+      [
+        "65cedaa822d1767f"
+      ]
+    ]
+  },
+  {
+    "id": "65cedaa822d1767f",
+    "type": "http request",
+    "z": "95cf7606fe0b9e33",
+    "name": "GET /apps/calendar/data",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 590,
+    "y": 300,
+    "wires": [
+      [
+        "f6456f77a6dd4de2"
+      ]
+    ]
+  },
+  {
+    "id": "0394af3f452f57ef",
+    "type": "function",
+    "z": "95cf7606fe0b9e33",
+    "name": "prep news feed",
+    "func": "const ua = env.get(\"PUFFPAI_USER_AGENT\") || \"PuffPAI/1.0 (node-red)\";\n// No feed ships enabled: with NEWS_RSS_URL empty this flow stops here, before\n// the Bridge switch is asked or anything leaves the appliance.\nconst feed = (env.get(\"NEWS_RSS_URL\") || \"\").trim();\nif (!feed) { return null; }\nmsg.topic = \"news\";\nmsg.url = feed;\nmsg.headers = { \"User-Agent\": ua, \"Accept\": \"application/rss+xml, text/xml\" };\nmsg.requestTimeout = 10000;\ndelete msg.payload;\n// Bridge switch: this node is about to reach the feed in NEWS_RSS_URL, which the backend's\n// `news_rss` switch covers. Ask the backend first and go out only on a clear yes.\n// A closed switch, a missing key, an unreachable backend or an unclear answer\n// all skip the call. The key comes from env only and goes only to\n// PUFFPAI_API_URL (see README, credential/host pairing).\nconst bridge = await (function askBridge(doorId) {\n    return new Promise(function (resolve) {\n        const base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\n        const apiKey = env.get(\"PUFFPAI_API_KEY\") || \"\";\n        const lib = /^https:\\/\\//i.test(base) ? bridgeHttps\n            : (/^http:\\/\\//i.test(base) ? bridgeHttp : null);\n        let settled = false;\n        const finish = function (open, why) {\n            if (!settled) { settled = true; resolve({ open: open, why: why }); }\n        };\n        if (!lib) { finish(false, \"PUFFPAI_API_URL is not an http(s) address\"); return; }\n        const headers = { \"Accept\": \"application/json\" };\n        if (apiKey) { headers[\"X-API-Key\"] = apiKey; }\n        try {\n            const req = lib.request(base + \"/system/egress/door/\" + doorId,\n                { method: \"GET\", headers: headers, timeout: 5000 }, function (res) {\n                    let body = \"\";\n                    res.setEncoding(\"utf8\");\n                    res.on(\"data\", function (chunk) {\n                        if (body.length < 16384) { body += chunk; }\n                    });\n                    res.on(\"error\", function () { finish(false, \"the backend's answer broke off\"); });\n                    res.on(\"end\", function () {\n                        let answer = null;\n                        try { answer = JSON.parse(body); } catch (e) { answer = null; }\n                        if (res.statusCode === 200 && answer && answer.success === true &&\n                                answer.id === doorId && answer.open === true) {\n                            finish(true, \"\");\n                        } else if (res.statusCode === 200 && answer && answer.open === false) {\n                            finish(false, \"the switch is off\");\n                        } else {\n                            finish(false, \"the backend answered HTTP \" + res.statusCode +\n                                \" without a clear yes\");\n                        }\n                    });\n                });\n            req.on(\"timeout\", function () {\n                req.destroy();\n                finish(false, \"the backend did not answer in time\");\n            });\n            req.on(\"error\", function () { finish(false, \"the backend could not be reached\"); });\n            req.end();\n        } catch (e) {\n            finish(false, \"the backend could not be asked\");\n        }\n    });\n})(\"news_rss\");\nif (!bridge.open) {\n    const reason = \"Bridge switch 'news_rss' is not open (\" + bridge.why +\n        \"), so nothing was sent to the feed in NEWS_RSS_URL.\";\n    delete msg.url;\n    delete msg.headers;\n    delete msg.statusCode;\n    // A webhook run is answered through this tab's catch handler; a scheduled\n    // run has no one to answer and only logs.\n    if (msg.res) { node.error(reason, msg); } else { node.warn(reason); }\n    return null;\n}\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [
+      {
+        "var": "bridgeHttp",
+        "module": "http"
+      },
+      {
+        "var": "bridgeHttps",
+        "module": "https"
+      }
+    ],
+    "x": 350,
+    "y": 440,
+    "wires": [
+      [
+        "112cacfff7bd2a04"
+      ]
+    ]
+  },
+  {
+    "id": "112cacfff7bd2a04",
+    "type": "http request",
+    "z": "95cf7606fe0b9e33",
+    "name": "GET news RSS",
+    "method": "GET",
+    "ret": "txt",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 590,
+    "y": 440,
+    "wires": [
+      [
+        "f6456f77a6dd4de2"
+      ]
+    ]
+  },
+  {
+    "id": "f6456f77a6dd4de2",
+    "type": "join",
+    "z": "95cf7606fe0b9e33",
+    "name": "join branches",
+    "mode": "custom",
+    "build": "object",
+    "property": "payload",
+    "propertyType": "msg",
+    "key": "topic",
+    "joiner": "\\n",
+    "joinerType": "str",
+    "accumulate": false,
+    "timeout": "20",
+    "count": "3",
+    "reduceRight": false,
+    "reduceExp": "",
+    "reduceInit": "",
+    "reduceInitType": "",
+    "reduceFixup": "",
+    "x": 1310,
+    "y": 300,
+    "wires": [
+      [
+        "1e3f20f31fd17935"
+      ]
+    ]
+  },
+  {
+    "id": "1e3f20f31fd17935",
+    "type": "function",
+    "z": "95cf7606fe0b9e33",
+    "name": "compile briefing",
+    "func": "// The three branches (weather, calendar, news) arrive here as msg.payload\n// keyed by msg.topic from the join node.\nconst parts = msg.payload || {};\nconst wx = parts.weather || {};\nconst forecast = (wx.properties && wx.properties.periods) || [];\nconst calData = parts.calendar || {};\nconst newsRaw = parts.news || '';\n\n// Weather\nconst today = forecast[0] || {};\nconst tonight = forecast[1] || {};\n\n// Calendar\nconst now = new Date();\nconst todayStr = now.toDateString();\nconst events = (calData.events || []).filter(e => {\n  const d = new Date(e.date || e.start);\n  return d.toDateString() === todayStr;\n});\nconst tasks = (calData.tasks || []).filter(t => t.status !== 'done');\nconst meds = calData.meds || [];\n\n// News (basic RSS parsing)\nconst newsText = typeof newsRaw === 'string' ? newsRaw : JSON.stringify(newsRaw);\nconst titles = (newsText.match(/<title>([^<]+)<\\/title>/g) || [])\n  .slice(1, 6).map(t => t.replace(/<\\/?title>/g, ''));\n\n// Time greeting\nconst hour = now.getHours();\nlet greeting = 'Good morning';\nif (hour >= 12 && hour < 17) greeting = 'Good afternoon';\nelse if (hour >= 17) greeting = 'Good evening';\n\nconst dateStr = now.toLocaleDateString('en-US',\n  { weekday: 'long', month: 'long', day: 'numeric' });\n\nconst briefing = [\n  `${greeting}! Here's your briefing for ${dateStr}:`,\n  '',\n  `WEATHER: ${today.shortForecast || 'Unavailable'}, ${today.temperature || '?'}°${today.temperatureUnit || 'F'}. Tonight: ${tonight.shortForecast || '?'}, ${tonight.temperature || '?'}°.`,\n  '',\n  `TODAY'S EVENTS (${events.length}):`,\n  events.length ? events.map(e => `  - ${e.time || ''} ${e.title || e.name}`).join('\\n') : '  No events today.',\n  '',\n  `PENDING TASKS (${tasks.length}):`,\n  tasks.length ? tasks.slice(0, 5).map(t => `  - ${t.title || t.name} (due: ${t.due || 'no date'})`).join('\\n') : '  All caught up!',\n  '',\n  `MEDICATIONS:`,\n  meds.length ? meds.map(m => `  - ${m.name}: ${m.dose} (${m.frequency})`).join('\\n') : '  None tracked.',\n  '',\n  `TOP HEADLINES:`,\n  titles.length ? titles.map((t, i) => `  ${i+1}. ${t}`).join('\\n') : '  No news available.'\n].join('\\n');\n\nmsg.payload = {\n  greeting: greeting,\n  date: dateStr,\n  briefing_text: briefing,\n  weather: {\n    forecast: today.shortForecast,\n    temperature: today.temperature,\n    unit: today.temperatureUnit,\n    tonight: tonight.shortForecast\n  },\n  calendar: {\n    events_today: events.length,\n    pending_tasks: tasks.length,\n    events: events,\n    tasks: tasks.slice(0, 5)\n  },\n  meds: meds,\n  news: titles,\n  generated_at: now.toISOString()\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1510,
+    "y": 300,
+    "wires": [
+      [
+        "cee41c153fe21548"
+      ]
+    ]
+  },
+  {
+    "id": "cee41c153fe21548",
+    "type": "http response",
+    "z": "95cf7606fe0b9e33",
+    "name": "respond",
+    "statusCode": "",
+    "headers": {},
+    "x": 1730,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "4b52fc421a8a7b3b",
+    "type": "catch",
+    "z": "95cf7606fe0b9e33",
+    "name": "on request error",
+    "scope": [
+      "5a6eb1b1eb9c12ec",
+      "66795effe74e502d",
+      "65cedaa822d1767f",
+      "112cacfff7bd2a04",
+      "9e7d610ef057c0f5",
+      "56350936f883a697",
+      "0394af3f452f57ef"
+    ],
+    "uncaught": false,
+    "x": 830,
+    "y": 560,
+    "wires": [
+      [
+        "0fa27900de4de652"
+      ]
+    ]
+  },
+  {
+    "id": "0fa27900de4de652",
+    "type": "function",
+    "z": "95cf7606fe0b9e33",
+    "name": "branch failed",
+    "func": "// Error handler for this tab's HTTP Request nodes. The branch still emits\n// (keeping msg.topic) so the join node can complete and the compile step\n// sees an error object.\nnode.warn(\"branch '\" + msg.topic + \"' failed: \" +\n    (msg.error && msg.error.message));\nmsg.payload = {\n    __error: (msg.error && msg.error.message) || \"request failed\"\n};\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1070,
+    "y": 560,
+    "wires": [
+      [
+        "f6456f77a6dd4de2"
+      ]
+    ]
+  },
+  {
+    "id": "dc00697c161d622c",
+    "type": "tab",
+    "label": "daily_news",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "1c27c47c149d6bb6",
+    "type": "http in",
+    "z": "dc00697c161d622c",
+    "name": "",
+    "url": "/webhook/daily-news",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 130,
+    "y": 200,
+    "wires": [
+      [
+        "47ece2902994315a"
+      ]
+    ]
+  },
+  {
+    "id": "47ece2902994315a",
+    "type": "function",
+    "z": "dc00697c161d622c",
+    "name": "prep RSS fallback request",
+    "func": "const ua = env.get(\"PUFFPAI_USER_AGENT\") || \"PuffPAI/1.0 (node-red)\";\n// No feed ships enabled: with NEWS_RSS_URL empty this flow stops here, before\n// the Bridge switch is asked or anything leaves the appliance.\nconst feed = (env.get(\"NEWS_RSS_URL\") || \"\").trim();\nif (!feed) { return null; }\nmsg.req_body = (typeof msg.payload === \"object\" && msg.payload) || {};\nmsg.url = feed;\nmsg.headers = { \"User-Agent\": ua, \"Accept\": \"application/rss+xml, text/xml\" };\nmsg.requestTimeout = 10000;\ndelete msg.payload;\n// Bridge switch: this node is about to reach the feed in NEWS_RSS_URL, which the backend's\n// `news_rss` switch covers. Ask the backend first and go out only on a clear yes.\n// A closed switch, a missing key, an unreachable backend or an unclear answer\n// all skip the call. The key comes from env only and goes only to\n// PUFFPAI_API_URL (see README, credential/host pairing).\nconst bridge = await (function askBridge(doorId) {\n    return new Promise(function (resolve) {\n        const base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\n        const apiKey = env.get(\"PUFFPAI_API_KEY\") || \"\";\n        const lib = /^https:\\/\\//i.test(base) ? bridgeHttps\n            : (/^http:\\/\\//i.test(base) ? bridgeHttp : null);\n        let settled = false;\n        const finish = function (open, why) {\n            if (!settled) { settled = true; resolve({ open: open, why: why }); }\n        };\n        if (!lib) { finish(false, \"PUFFPAI_API_URL is not an http(s) address\"); return; }\n        const headers = { \"Accept\": \"application/json\" };\n        if (apiKey) { headers[\"X-API-Key\"] = apiKey; }\n        try {\n            const req = lib.request(base + \"/system/egress/door/\" + doorId,\n                { method: \"GET\", headers: headers, timeout: 5000 }, function (res) {\n                    let body = \"\";\n                    res.setEncoding(\"utf8\");\n                    res.on(\"data\", function (chunk) {\n                        if (body.length < 16384) { body += chunk; }\n                    });\n                    res.on(\"error\", function () { finish(false, \"the backend's answer broke off\"); });\n                    res.on(\"end\", function () {\n                        let answer = null;\n                        try { answer = JSON.parse(body); } catch (e) { answer = null; }\n                        if (res.statusCode === 200 && answer && answer.success === true &&\n                                answer.id === doorId && answer.open === true) {\n                            finish(true, \"\");\n                        } else if (res.statusCode === 200 && answer && answer.open === false) {\n                            finish(false, \"the switch is off\");\n                        } else {\n                            finish(false, \"the backend answered HTTP \" + res.statusCode +\n                                \" without a clear yes\");\n                        }\n                    });\n                });\n            req.on(\"timeout\", function () {\n                req.destroy();\n                finish(false, \"the backend did not answer in time\");\n            });\n            req.on(\"error\", function () { finish(false, \"the backend could not be reached\"); });\n            req.end();\n        } catch (e) {\n            finish(false, \"the backend could not be asked\");\n        }\n    });\n})(\"news_rss\");\nif (!bridge.open) {\n    const reason = \"Bridge switch 'news_rss' is not open (\" + bridge.why +\n        \"), so nothing was sent to the feed in NEWS_RSS_URL.\";\n    delete msg.url;\n    delete msg.headers;\n    delete msg.statusCode;\n    // A webhook run is answered through this tab's catch handler; a scheduled\n    // run has no one to answer and only logs.\n    if (msg.res) { node.error(reason, msg); } else { node.warn(reason); }\n    return null;\n}\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [
+      {
+        "var": "bridgeHttp",
+        "module": "http"
+      },
+      {
+        "var": "bridgeHttps",
+        "module": "https"
+      }
+    ],
+    "x": 350,
+    "y": 200,
+    "wires": [
+      [
+        "af1e3de9c6b726bb"
+      ]
+    ]
+  },
+  {
+    "id": "af1e3de9c6b726bb",
+    "type": "http request",
+    "z": "dc00697c161d622c",
+    "name": "GET NYT RSS",
+    "method": "GET",
+    "ret": "txt",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 590,
+    "y": 200,
+    "wires": [
+      [
+        "a2ed5002ada8ad4a"
+      ]
+    ]
+  },
+  {
+    "id": "a2ed5002ada8ad4a",
+    "type": "function",
+    "z": "dc00697c161d622c",
+    "name": "format news summary",
+    "func": "// NYT RSS -> headlines\nconst rssData = msg.payload;\nconst rssText = typeof rssData === 'string' ? rssData\n  : (rssData && typeof rssData.data === 'string' ? rssData.data\n     : JSON.stringify(rssData));\nconst titleMatches = rssText.match(/<title>([^<]+)<\\/title>/g) || [];\nconst articles = titleMatches.slice(1)\n  .filter(m => !m.includes(\"Top Stories\")).slice(0, 10).map(m => ({\n    title: m.replace(/<\\/?title>/g, ''),\n    description: '',\n    source: 'NYT',\n    url: '',\n    publishedAt: new Date().toISOString(),\n  }));\nconst newsText = articles.slice(0, 5)\n  .map((a, i) => (i + 1) + '. ' + a.title + ' (' + a.source + ')')\n  .join('\\n');\nconst now = new Date();\nconst dateStr = now.toLocaleDateString('en-US',\n  { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });\nmsg.payload = {\n  news: newsText || 'No headlines available right now.',\n  date: dateStr,\n  articleCount: articles.length,\n  articles: articles,\n  summary: newsText,\n  categories: ['NYT'],\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 830,
+    "y": 200,
+    "wires": [
+      [
+        "988d2c73b07f14e7"
+      ]
+    ]
+  },
+  {
+    "id": "988d2c73b07f14e7",
+    "type": "http response",
+    "z": "dc00697c161d622c",
+    "name": "respond",
+    "statusCode": "",
+    "headers": {},
+    "x": 1070,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "92eb893f3b9dba5d",
+    "type": "catch",
+    "z": "dc00697c161d622c",
+    "name": "on request error",
+    "scope": [
+      "af1e3de9c6b726bb",
+      "47ece2902994315a"
+    ],
+    "uncaught": false,
+    "x": 350,
+    "y": 320,
+    "wires": [
+      [
+        "2b84e89f78085bb7"
+      ]
+    ]
+  },
+  {
+    "id": "2b84e89f78085bb7",
+    "type": "function",
+    "z": "dc00697c161d622c",
+    "name": "request failed",
+    "func": "// Error handler for this tab's HTTP Request nodes. Answers the webhook\n// explicitly with a 502 so the HTTP client never hangs.\nnode.warn(\"request failed: \" + (msg.error && msg.error.message));\nmsg.statusCode = 502;\nmsg.payload = {\n    error: \"upstream_request_failed\",\n    detail: (msg.error && msg.error.message) || \"unknown error\",\n    node: (msg.error && msg.error.source && msg.error.source.name) || \"\"\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 590,
+    "y": 320,
+    "wires": [
+      [
+        "988d2c73b07f14e7"
+      ]
+    ]
+  },
+  {
+    "id": "a3e8caa3a2338b89",
+    "type": "tab",
+    "label": "daily_weather",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "4f6400cc2128e090",
+    "type": "http in",
+    "z": "a3e8caa3a2338b89",
+    "name": "",
+    "url": "/webhook/daily-weather",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 130,
+    "y": 260,
+    "wires": [
+      [
+        "44fa3c7c50affd34"
+      ]
+    ]
+  },
+  {
+    "id": "44fa3c7c50affd34",
+    "type": "function",
+    "z": "a3e8caa3a2338b89",
+    "name": "prep NWS points",
+    "func": "const ua = env.get(\"PUFFPAI_USER_AGENT\") || \"PuffPAI/1.0 (node-red)\";\nmsg.req_body = (typeof msg.payload === \"object\" && msg.payload) || {};\n// Body lat/lon, falling back to the env defaults so a bare POST still returns\n// a forecast when the defaults are set.\nmsg.req_body.lat = msg.req_body.lat || env.get(\"WEATHER_DEFAULT_LAT\") || \"\";\nmsg.req_body.lon = msg.req_body.lon || env.get(\"WEATHER_DEFAULT_LON\") || \"\";\nmsg.headers = { \"User-Agent\": ua, \"Accept\": \"application/geo+json\" };\nmsg.requestTimeout = 10000;\ndelete msg.payload;\nif (!msg.req_body.lat || !msg.req_body.lon) {\n    // No coordinates: skip the weather call. With no msg.url the request node\n    // raises \"no url\" to this tab's catch node, and \"branch failed\" answers\n    // the webhook with location_unset.\n    node.log(\"no coordinates set (lat/lon or WEATHER_DEFAULT_LAT/LON), skipping the weather call\");\n    msg.location_unset = true;\n    delete msg.url;\n    return msg;\n}\nmsg.url = \"https://api.weather.gov/points/\" +\n    msg.req_body.lat + \",\" + msg.req_body.lon;\n// Bridge switch: this node is about to reach api.weather.gov, which the backend's\n// `weather` switch covers. Ask the backend first and go out only on a clear yes.\n// A closed switch, a missing key, an unreachable backend or an unclear answer\n// all skip the call. The key comes from env only and goes only to\n// PUFFPAI_API_URL (see README, credential/host pairing).\nconst bridge = await (function askBridge(doorId) {\n    return new Promise(function (resolve) {\n        const base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\n        const apiKey = env.get(\"PUFFPAI_API_KEY\") || \"\";\n        const lib = /^https:\\/\\//i.test(base) ? bridgeHttps\n            : (/^http:\\/\\//i.test(base) ? bridgeHttp : null);\n        let settled = false;\n        const finish = function (open, why) {\n            if (!settled) { settled = true; resolve({ open: open, why: why }); }\n        };\n        if (!lib) { finish(false, \"PUFFPAI_API_URL is not an http(s) address\"); return; }\n        const headers = { \"Accept\": \"application/json\" };\n        if (apiKey) { headers[\"X-API-Key\"] = apiKey; }\n        try {\n            const req = lib.request(base + \"/system/egress/door/\" + doorId,\n                { method: \"GET\", headers: headers, timeout: 5000 }, function (res) {\n                    let body = \"\";\n                    res.setEncoding(\"utf8\");\n                    res.on(\"data\", function (chunk) {\n                        if (body.length < 16384) { body += chunk; }\n                    });\n                    res.on(\"error\", function () { finish(false, \"the backend's answer broke off\"); });\n                    res.on(\"end\", function () {\n                        let answer = null;\n                        try { answer = JSON.parse(body); } catch (e) { answer = null; }\n                        if (res.statusCode === 200 && answer && answer.success === true &&\n                                answer.id === doorId && answer.open === true) {\n                            finish(true, \"\");\n                        } else if (res.statusCode === 200 && answer && answer.open === false) {\n                            finish(false, \"the switch is off\");\n                        } else {\n                            finish(false, \"the backend answered HTTP \" + res.statusCode +\n                                \" without a clear yes\");\n                        }\n                    });\n                });\n            req.on(\"timeout\", function () {\n                req.destroy();\n                finish(false, \"the backend did not answer in time\");\n            });\n            req.on(\"error\", function () { finish(false, \"the backend could not be reached\"); });\n            req.end();\n        } catch (e) {\n            finish(false, \"the backend could not be asked\");\n        }\n    });\n})(\"weather\");\nif (!bridge.open) {\n    const reason = \"Bridge switch 'weather' is not open (\" + bridge.why +\n        \"), so nothing was sent to api.weather.gov.\";\n    delete msg.url;\n    delete msg.headers;\n    delete msg.statusCode;\n    // A webhook run is answered through this tab's catch handler; a scheduled\n    // run has no one to answer and only logs.\n    if (msg.res) { node.error(reason, msg); } else { node.warn(reason); }\n    return null;\n}\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [
+      {
+        "var": "bridgeHttp",
+        "module": "http"
+      },
+      {
+        "var": "bridgeHttps",
+        "module": "https"
+      }
+    ],
+    "x": 350,
+    "y": 260,
+    "wires": [
+      [
+        "99f71ce6b6855559"
+      ]
+    ]
+  },
+  {
+    "id": "99f71ce6b6855559",
+    "type": "http request",
+    "z": "a3e8caa3a2338b89",
+    "name": "GET NWS points",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 590,
+    "y": 260,
+    "wires": [
+      [
+        "be74868c5dbe3da7",
+        "9e14669ee0905f05"
+      ]
+    ]
+  },
+  {
+    "id": "be74868c5dbe3da7",
+    "type": "function",
+    "z": "a3e8caa3a2338b89",
+    "name": "prep forecast",
+    "func": "const ua = env.get(\"PUFFPAI_USER_AGENT\") || \"PuffPAI/1.0 (node-red)\";\nconst props = (msg.payload && msg.payload.properties) || {};\nmsg.topic = \"forecast\";\nmsg.url = props.forecast || \"\";\nmsg.headers = { \"User-Agent\": ua, \"Accept\": \"application/geo+json\" };\nmsg.requestTimeout = 10000;\ndelete msg.payload;\nif (!msg.url) {\n    // No forecast URL: drop the branch and let join time out.\n    node.warn(\"NWS points response had no forecast URL\");\n    return [null];\n}\nif (msg.url.indexOf(\"https://api.weather.gov/\") !== 0) {\n    // The forecast address comes from the points answer; follow it only while\n    // it stays on the host the `weather` switch names.\n    node.warn(\"NWS points response named a forecast outside api.weather.gov; not fetched\");\n    return [null];\n}\n// Bridge switch: this node is about to reach api.weather.gov, which the backend's\n// `weather` switch covers. Ask the backend first and go out only on a clear yes.\n// A closed switch, a missing key, an unreachable backend or an unclear answer\n// all skip the call. The key comes from env only and goes only to\n// PUFFPAI_API_URL (see README, credential/host pairing).\nconst bridge = await (function askBridge(doorId) {\n    return new Promise(function (resolve) {\n        const base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\n        const apiKey = env.get(\"PUFFPAI_API_KEY\") || \"\";\n        const lib = /^https:\\/\\//i.test(base) ? bridgeHttps\n            : (/^http:\\/\\//i.test(base) ? bridgeHttp : null);\n        let settled = false;\n        const finish = function (open, why) {\n            if (!settled) { settled = true; resolve({ open: open, why: why }); }\n        };\n        if (!lib) { finish(false, \"PUFFPAI_API_URL is not an http(s) address\"); return; }\n        const headers = { \"Accept\": \"application/json\" };\n        if (apiKey) { headers[\"X-API-Key\"] = apiKey; }\n        try {\n            const req = lib.request(base + \"/system/egress/door/\" + doorId,\n                { method: \"GET\", headers: headers, timeout: 5000 }, function (res) {\n                    let body = \"\";\n                    res.setEncoding(\"utf8\");\n                    res.on(\"data\", function (chunk) {\n                        if (body.length < 16384) { body += chunk; }\n                    });\n                    res.on(\"error\", function () { finish(false, \"the backend's answer broke off\"); });\n                    res.on(\"end\", function () {\n                        let answer = null;\n                        try { answer = JSON.parse(body); } catch (e) { answer = null; }\n                        if (res.statusCode === 200 && answer && answer.success === true &&\n                                answer.id === doorId && answer.open === true) {\n                            finish(true, \"\");\n                        } else if (res.statusCode === 200 && answer && answer.open === false) {\n                            finish(false, \"the switch is off\");\n                        } else {\n                            finish(false, \"the backend answered HTTP \" + res.statusCode +\n                                \" without a clear yes\");\n                        }\n                    });\n                });\n            req.on(\"timeout\", function () {\n                req.destroy();\n                finish(false, \"the backend did not answer in time\");\n            });\n            req.on(\"error\", function () { finish(false, \"the backend could not be reached\"); });\n            req.end();\n        } catch (e) {\n            finish(false, \"the backend could not be asked\");\n        }\n    });\n})(\"weather\");\nif (!bridge.open) {\n    const reason = \"Bridge switch 'weather' is not open (\" + bridge.why +\n        \"), so nothing was sent to api.weather.gov.\";\n    delete msg.url;\n    delete msg.headers;\n    delete msg.statusCode;\n    // A webhook run is answered through this tab's catch handler; a scheduled\n    // run has no one to answer and only logs.\n    if (msg.res) { node.error(reason, msg); } else { node.warn(reason); }\n    return null;\n}\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [
+      {
+        "var": "bridgeHttp",
+        "module": "http"
+      },
+      {
+        "var": "bridgeHttps",
+        "module": "https"
+      }
+    ],
+    "x": 830,
+    "y": 180,
+    "wires": [
+      [
+        "9428807a9cdb0745"
+      ]
+    ]
+  },
+  {
+    "id": "9428807a9cdb0745",
+    "type": "http request",
+    "z": "a3e8caa3a2338b89",
+    "name": "GET forecast",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 1070,
+    "y": 180,
+    "wires": [
+      [
+        "ada508d553a488c5"
+      ]
+    ]
+  },
+  {
+    "id": "9e14669ee0905f05",
+    "type": "function",
+    "z": "a3e8caa3a2338b89",
+    "name": "prep active alerts",
+    "func": "const ua = env.get(\"PUFFPAI_USER_AGENT\") || \"PuffPAI/1.0 (node-red)\";\nconst b = msg.req_body || {};\nmsg.topic = \"alerts\";\nmsg.url = \"https://api.weather.gov/alerts/active?point=\" +\n    (b.lat || \"\") + \",\" + (b.lon || \"\");\nmsg.headers = { \"User-Agent\": ua, \"Accept\": \"application/geo+json\" };\nmsg.requestTimeout = 10000;\ndelete msg.payload;\n// Bridge switch: this node is about to reach api.weather.gov, which the backend's\n// `weather` switch covers. Ask the backend first and go out only on a clear yes.\n// A closed switch, a missing key, an unreachable backend or an unclear answer\n// all skip the call. The key comes from env only and goes only to\n// PUFFPAI_API_URL (see README, credential/host pairing).\nconst bridge = await (function askBridge(doorId) {\n    return new Promise(function (resolve) {\n        const base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\n        const apiKey = env.get(\"PUFFPAI_API_KEY\") || \"\";\n        const lib = /^https:\\/\\//i.test(base) ? bridgeHttps\n            : (/^http:\\/\\//i.test(base) ? bridgeHttp : null);\n        let settled = false;\n        const finish = function (open, why) {\n            if (!settled) { settled = true; resolve({ open: open, why: why }); }\n        };\n        if (!lib) { finish(false, \"PUFFPAI_API_URL is not an http(s) address\"); return; }\n        const headers = { \"Accept\": \"application/json\" };\n        if (apiKey) { headers[\"X-API-Key\"] = apiKey; }\n        try {\n            const req = lib.request(base + \"/system/egress/door/\" + doorId,\n                { method: \"GET\", headers: headers, timeout: 5000 }, function (res) {\n                    let body = \"\";\n                    res.setEncoding(\"utf8\");\n                    res.on(\"data\", function (chunk) {\n                        if (body.length < 16384) { body += chunk; }\n                    });\n                    res.on(\"error\", function () { finish(false, \"the backend's answer broke off\"); });\n                    res.on(\"end\", function () {\n                        let answer = null;\n                        try { answer = JSON.parse(body); } catch (e) { answer = null; }\n                        if (res.statusCode === 200 && answer && answer.success === true &&\n                                answer.id === doorId && answer.open === true) {\n                            finish(true, \"\");\n                        } else if (res.statusCode === 200 && answer && answer.open === false) {\n                            finish(false, \"the switch is off\");\n                        } else {\n                            finish(false, \"the backend answered HTTP \" + res.statusCode +\n                                \" without a clear yes\");\n                        }\n                    });\n                });\n            req.on(\"timeout\", function () {\n                req.destroy();\n                finish(false, \"the backend did not answer in time\");\n            });\n            req.on(\"error\", function () { finish(false, \"the backend could not be reached\"); });\n            req.end();\n        } catch (e) {\n            finish(false, \"the backend could not be asked\");\n        }\n    });\n})(\"weather\");\nif (!bridge.open) {\n    const reason = \"Bridge switch 'weather' is not open (\" + bridge.why +\n        \"), so nothing was sent to api.weather.gov.\";\n    delete msg.url;\n    delete msg.headers;\n    delete msg.statusCode;\n    // A webhook run is answered through this tab's catch handler; a scheduled\n    // run has no one to answer and only logs.\n    if (msg.res) { node.error(reason, msg); } else { node.warn(reason); }\n    return null;\n}\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [
+      {
+        "var": "bridgeHttp",
+        "module": "http"
+      },
+      {
+        "var": "bridgeHttps",
+        "module": "https"
+      }
+    ],
+    "x": 830,
+    "y": 340,
+    "wires": [
+      [
+        "eb814775b2dae812"
+      ]
+    ]
+  },
+  {
+    "id": "eb814775b2dae812",
+    "type": "http request",
+    "z": "a3e8caa3a2338b89",
+    "name": "GET active alerts",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 1070,
+    "y": 340,
+    "wires": [
+      [
+        "ada508d553a488c5"
+      ]
+    ]
+  },
+  {
+    "id": "ada508d553a488c5",
+    "type": "join",
+    "z": "a3e8caa3a2338b89",
+    "name": "join branches",
+    "mode": "custom",
+    "build": "object",
+    "property": "payload",
+    "propertyType": "msg",
+    "key": "topic",
+    "joiner": "\\n",
+    "joinerType": "str",
+    "accumulate": false,
+    "timeout": "20",
+    "count": "2",
+    "reduceRight": false,
+    "reduceExp": "",
+    "reduceInit": "",
+    "reduceInitType": "",
+    "reduceFixup": "",
+    "x": 1290,
+    "y": 260,
+    "wires": [
+      [
+        "4907e03951968dd4"
+      ]
+    ]
+  },
+  {
+    "id": "4907e03951968dd4",
+    "type": "function",
+    "z": "a3e8caa3a2338b89",
+    "name": "format weather data",
+    "func": "const parts = msg.payload || {};\nconst forecast = ((parts.forecast || {}).properties || {}).periods || [];\nconst alerts = (parts.alerts || {}).features || [];\n\nconst today = forecast[0] || {};\nconst tonight = forecast[1] || {};\n\nconst activeAlerts = alerts.map(a => ({\n  event: a.properties.event,\n  severity: a.properties.severity,\n  headline: a.properties.headline\n}));\n\nmsg.payload = {\n  summary: today.detailedForecast || 'No forecast available',\n  temperature: today.temperature,\n  unit: today.temperatureUnit,\n  wind: today.windSpeed,\n  shortForecast: today.shortForecast,\n  tonight: {\n    temperature: tonight.temperature,\n    shortForecast: tonight.shortForecast\n  },\n  alerts: activeAlerts,\n  alertCount: activeAlerts.length,\n  periods: forecast.slice(0, 6).map(p => ({\n    name: p.name,\n    temp: p.temperature,\n    forecast: p.shortForecast\n  }))\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1490,
+    "y": 260,
+    "wires": [
+      [
+        "180fe6998c513a02"
+      ]
+    ]
+  },
+  {
+    "id": "180fe6998c513a02",
+    "type": "http response",
+    "z": "a3e8caa3a2338b89",
+    "name": "respond",
+    "statusCode": "",
+    "headers": {},
+    "x": 1710,
+    "y": 260,
+    "wires": []
+  },
+  {
+    "id": "bf9eda3e5fc5c90b",
+    "type": "catch",
+    "z": "a3e8caa3a2338b89",
+    "name": "on request error",
+    "scope": [
+      "99f71ce6b6855559",
+      "9428807a9cdb0745",
+      "eb814775b2dae812",
+      "44fa3c7c50affd34",
+      "be74868c5dbe3da7",
+      "9e14669ee0905f05"
+    ],
+    "uncaught": false,
+    "x": 830,
+    "y": 480,
+    "wires": [
+      [
+        "5dfe4f4f89809da5"
+      ]
+    ]
+  },
+  {
+    "id": "5dfe4f4f89809da5",
+    "type": "function",
+    "z": "a3e8caa3a2338b89",
+    "name": "branch failed",
+    "func": "// Error handler for this tab's HTTP Request nodes.\n// If the points lookup itself failed there is no msg.topic yet and no\n// branch fan-out happened, so answer the webhook directly instead of\n// feeding the join node.\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\nif (msg.location_unset) {\n    // \"prep NWS points\" skipped the call: no coordinates are set.\n    msg.statusCode = 422;\n    msg.payload = {\n        error: \"location_unset\",\n        detail: \"No coordinates: post lat/lon or set WEATHER_DEFAULT_LAT and WEATHER_DEFAULT_LON.\"\n    };\n    return [msg];\n}\nnode.warn(\"weather request failed: \" + (msg.error && msg.error.message));\nif (!msg.topic) {\n    msg.statusCode = 502;\n    msg.payload = {\n        error: \"upstream_request_failed\",\n        detail: (msg.error && msg.error.message) || \"unknown error\"\n    };\n    return [msg];\n}\nmsg.payload = { __error: (msg.error && msg.error.message) || \"request failed\" };\nreturn [msg];\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1070,
+    "y": 480,
+    "wires": [
+      [
+        "6cc9e085123f41dc"
+      ]
+    ]
+  },
+  {
+    "id": "6cc9e085123f41dc",
+    "type": "switch",
+    "z": "a3e8caa3a2338b89",
+    "name": "points error?",
+    "property": "statusCode",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "nnull"
+      },
+      {
+        "t": "null"
+      }
+    ],
+    "checkall": "false",
+    "repair": false,
+    "outputs": 2,
+    "x": 1290,
+    "y": 480,
+    "wires": [
+      [
+        "180fe6998c513a02"
+      ],
+      [
+        "ada508d553a488c5"
+      ]
+    ]
+  },
+  {
+    "id": "09bd047bff953cd2",
+    "type": "tab",
+    "label": "grocery_list",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "5dc9309102a9eb24",
+    "type": "http in",
+    "z": "09bd047bff953cd2",
+    "name": "",
+    "url": "/webhook/grocery-list",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 130,
+    "y": 200,
+    "wires": [
+      [
+        "4bfb288b82b02349"
+      ]
+    ]
+  },
+  {
+    "id": "4bfb288b82b02349",
+    "type": "function",
+    "z": "09bd047bff953cd2",
+    "name": "prep freshtable request",
+    "func": "const base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\nmsg.req_body = (typeof msg.payload === \"object\" && msg.payload) || {};\nconst apiKey = msg.req_body.api_key || env.get(\"PUFFPAI_API_KEY\") || \"\";\nmsg.url = base + \"/apps/freshtable/data\";\nmsg.headers = { \"Accept\": \"application/json\" };\nif (apiKey) { msg.headers[\"X-API-Key\"] = apiKey; }\ndelete msg.payload;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 350,
+    "y": 200,
+    "wires": [
+      [
+        "51292a5f6ccb3a48"
+      ]
+    ]
+  },
+  {
+    "id": "51292a5f6ccb3a48",
+    "type": "http request",
+    "z": "09bd047bff953cd2",
+    "name": "GET /apps/freshtable/data",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 590,
+    "y": 200,
+    "wires": [
+      [
+        "e2320ff8a54df14f"
+      ]
+    ]
+  },
+  {
+    "id": "e2320ff8a54df14f",
+    "type": "function",
+    "z": "09bd047bff953cd2",
+    "name": "build grocery list",
+    "func": "const body = msg.req_body || {};\nconst data = msg.payload || {};\nconst pantry = data.pantry || [];\nconst shoppingList = data.shopping || [];\nconst action = body.action || 'generate';\nconst family_size = body.family_size || 4;\nconst budget = body.budget || 'moderate';\n\n// Department mapping (generic supermarket layout)\nconst DEPARTMENTS = {\n  produce: ['apple', 'banana', 'orange', 'lettuce', 'tomato', 'onion', 'potato', 'carrot', 'avocado', 'lime', 'cilantro', 'pepper', 'garlic', 'broccoli', 'spinach', 'cucumber'],\n  meat: ['chicken', 'beef', 'pork', 'salmon', 'shrimp', 'turkey', 'sausage', 'bacon', 'fish'],\n  dairy: ['milk', 'cheese', 'yogurt', 'butter', 'cream', 'eggs', 'sour cream'],\n  bakery: ['bread', 'tortilla', 'buns', 'rolls', 'cake'],\n  pantry: ['rice', 'pasta', 'beans', 'flour', 'sugar', 'oil', 'sauce', 'cereal', 'oats', 'quinoa'],\n  frozen: ['ice cream', 'frozen', 'pizza'],\n  beverages: ['water', 'juice', 'soda', 'coffee', 'tea'],\n  snacks: ['chips', 'crackers', 'cookies', 'nuts', 'granola'],\n  household: ['soap', 'detergent', 'paper', 'bags', 'wrap', 'foil']\n};\n\nfunction categorizeItem(name) {\n  const lower = name.toLowerCase();\n  for (const [dept, keywords] of Object.entries(DEPARTMENTS)) {\n    if (keywords.some(k => lower.includes(k))) return dept;\n  }\n  return 'other';\n}\n\n// Identify low-stock and out-of-stock items\nconst lowStock = pantry.filter(i => (i.quantity || 0) <= 1);\nconst essentials = ['milk', 'eggs', 'bread', 'butter', 'rice', 'chicken', 'onion', 'garlic', 'oil', 'salt'];\nconst pantryNames = pantry.map(i => i.name?.toLowerCase() || '');\nconst missingEssentials = essentials.filter(e => !pantryNames.some(p => p.includes(e)));\n\n// Combine all items to buy\nconst toBuy = new Map();\n\n// Add existing shopping list items\nshoppingList.forEach(item => {\n  const name = item.name || item;\n  toBuy.set(name.toLowerCase(), {\n    name: name,\n    quantity: item.quantity || 1,\n    department: categorizeItem(name),\n    source: 'shopping_list',\n    priority: 'normal'\n  });\n});\n\n// Add low-stock restocks\nlowStock.forEach(item => {\n  const key = (item.name || '').toLowerCase();\n  if (!toBuy.has(key)) {\n    toBuy.set(key, {\n      name: item.name,\n      quantity: 1,\n      department: categorizeItem(item.name || ''),\n      source: 'low_stock',\n      priority: 'high'\n    });\n  }\n});\n\n// Add missing essentials\nmissingEssentials.forEach(name => {\n  if (!toBuy.has(name)) {\n    toBuy.set(name, {\n      name: name.charAt(0).toUpperCase() + name.slice(1),\n      quantity: 1,\n      department: categorizeItem(name),\n      source: 'essential',\n      priority: 'high'\n    });\n  }\n});\n\n// Add any items from the request body\nif (body.add_items && Array.isArray(body.add_items)) {\n  body.add_items.forEach(item => {\n    const name = typeof item === 'string' ? item : item.name;\n    toBuy.set(name.toLowerCase(), {\n      name: name,\n      quantity: item.quantity || 1,\n      department: categorizeItem(name),\n      source: 'manual',\n      priority: item.priority || 'normal'\n    });\n  });\n}\n\nconst items = Array.from(toBuy.values());\n\n// Group by department for efficient shopping\nconst byDepartment = {};\nitems.forEach(item => {\n  if (!byDepartment[item.department]) byDepartment[item.department] = [];\n  byDepartment[item.department].push(item);\n});\n\n// Estimate cost (rough supermarket pricing)\nconst priceEstimates = {\n  produce: 2.50, meat: 7.00, dairy: 3.50, bakery: 3.00,\n  pantry: 3.00, frozen: 5.00, beverages: 3.00, snacks: 4.00,\n  household: 5.00, other: 4.00\n};\nconst estimatedTotal = items.reduce((sum, i) => sum + (priceEstimates[i.department] || 4.00) * (i.quantity || 1), 0);\n\nmsg.payload = {\n  store: body.store || '',\n  total_items: items.length,\n  estimated_cost: '$' + estimatedTotal.toFixed(2),\n  family_size: family_size,\n  by_department: byDepartment,\n  all_items: items.sort((a, b) => a.department.localeCompare(b.department)),\n  high_priority: items.filter(i => i.priority === 'high'),\n  shopping_route: Object.keys(byDepartment).sort(),\n  notes: [\n    'Organized by department for efficient shopping',\n    `${items.filter(i => i.priority === 'high').length} high-priority items`,\n    `Estimated total: $${estimatedTotal.toFixed(2)}`\n  ]\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 830,
+    "y": 200,
+    "wires": [
+      [
+        "5ced50a025221f97"
+      ]
+    ]
+  },
+  {
+    "id": "5ced50a025221f97",
+    "type": "http response",
+    "z": "09bd047bff953cd2",
+    "name": "respond",
+    "statusCode": "",
+    "headers": {},
+    "x": 1090,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "651485bdfc04329f",
+    "type": "catch",
+    "z": "09bd047bff953cd2",
+    "name": "on request error",
+    "scope": [
+      "51292a5f6ccb3a48"
+    ],
+    "uncaught": false,
+    "x": 350,
+    "y": 320,
+    "wires": [
+      [
+        "e85c6953d0d01e7c"
+      ]
+    ]
+  },
+  {
+    "id": "e85c6953d0d01e7c",
+    "type": "function",
+    "z": "09bd047bff953cd2",
+    "name": "request failed",
+    "func": "// Error handler for this tab's HTTP Request nodes. Answers the webhook\n// explicitly with a 502 so the HTTP client never hangs.\nnode.warn(\"request failed: \" + (msg.error && msg.error.message));\nmsg.statusCode = 502;\nmsg.payload = {\n    error: \"upstream_request_failed\",\n    detail: (msg.error && msg.error.message) || \"unknown error\",\n    node: (msg.error && msg.error.source && msg.error.source.name) || \"\"\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 590,
+    "y": 320,
+    "wires": [
+      [
+        "5ced50a025221f97"
+      ]
+    ]
+  },
+  {
+    "id": "598639b02b37a8d9",
+    "type": "tab",
+    "label": "health_check",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "f6c8addba7e3b53d",
+    "type": "http in",
+    "z": "598639b02b37a8d9",
+    "name": "",
+    "url": "/webhook/health-check",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 130,
+    "y": 260,
+    "wires": [
+      [
+        "4a11ce0000000001"
+      ]
+    ]
+  },
+  {
+    "id": "d979d384cb553dfb",
+    "type": "function",
+    "z": "598639b02b37a8d9",
+    "name": "prep PuffPAI check",
+    "func": "const base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\nmsg.req_body = (typeof msg.payload === \"object\" && msg.payload) || {};\nmsg.topic = \"puffpai\";\nmsg.url = base + \"/health\";\nmsg.headers = { \"Accept\": \"application/json\" };\nmsg.requestTimeout = 5000;\ndelete msg.payload;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 350,
+    "y": 140,
+    "wires": [
+      [
+        "656d847bbb96c2dd"
+      ]
+    ]
+  },
+  {
+    "id": "656d847bbb96c2dd",
+    "type": "http request",
+    "z": "598639b02b37a8d9",
+    "name": "GET /health",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 610,
+    "y": 140,
+    "wires": [
+      [
+        "4a11ce0000000002"
+      ]
+    ]
+  },
+  {
+    "id": "11f01323e07b5235",
+    "type": "function",
+    "z": "598639b02b37a8d9",
+    "name": "prep Ollama check",
+    "func": "msg.req_body = (typeof msg.payload === \"object\" && msg.payload) || {};\nmsg.topic = \"ollama\";\nmsg.url = (env.get(\"OLLAMA_URL\") || \"http://localhost:11435\")\n    .replace(/\\/$/, \"\") + \"/api/tags\";\nmsg.headers = { \"Accept\": \"application/json\" };\nmsg.requestTimeout = 5000;\ndelete msg.payload;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 350,
+    "y": 260,
+    "wires": [
+      [
+        "8436b98507d05cc5"
+      ]
+    ]
+  },
+  {
+    "id": "8436b98507d05cc5",
+    "type": "http request",
+    "z": "598639b02b37a8d9",
+    "name": "GET /api/tags",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 610,
+    "y": 260,
+    "wires": [
+      [
+        "4a11ce0000000002"
+      ]
+    ]
+  },
+  {
+    "id": "53239effea81cd2b",
+    "type": "function",
+    "z": "598639b02b37a8d9",
+    "name": "prep Home Assistant check",
+    "func": "// SECURITY -- trust-domain pairing: the host and the credential MUST come from\n// the same source. A caller-supplied ha_url is only ever paired with a\n// caller-supplied ha_token; the env HA_TOKEN is only ever sent to the\n// env/default HA_URL. Without this, POSTing {\"ha_url\":\"http://attacker\"} to\n// /webhook/health-check would forward the long-lived HA token to that host.\nconst b = (typeof msg.payload === \"object\" && msg.payload) || {};\nmsg.req_body = b;\nmsg.topic = \"homeassistant\";\n\n// Body-supplied values are untrusted: strings only, and no control characters\n// (a CR/LF in a token would otherwise be an outbound header-injection attempt).\nconst clean = function (v) {\n    if (typeof v !== \"string\") { return \"\"; }\n    const s = v.trim();\n    return /[\\u0000-\\u001f\\u007f]/.test(s) ? \"\" : s;\n};\n\nconst bodyHost = clean(b.ha_url);\nconst bodyToken = clean(b.ha_token);\n\nlet host;\nlet token;\nif (bodyHost) {\n    // Caller-chosen trust domain -> caller-supplied credential only.\n    // If the caller sent no token, no Authorization header is sent at all.\n    host = bodyHost;\n    token = bodyToken;\n} else {\n    // Config trust domain -> the env credential is allowed here, and only here.\n    host = clean(env.get(\"HA_URL\")) || \"homeassistant.local:8123\";\n    token = clean(env.get(\"HA_TOKEN\"));\n}\n\nif (!/^https?:\\/\\//.test(host)) { host = \"http://\" + host; }\nmsg.url = host.replace(/\\/$/, \"\") + \"/api/\";\nmsg.headers = { \"Accept\": \"application/json\" };\nif (token) { msg.headers[\"Authorization\"] = \"Bearer \" + token; }\nmsg.requestTimeout = 5000;\ndelete msg.payload;\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 350,
+    "y": 380,
+    "wires": [
+      [
+        "18fd862da02d4432"
+      ]
+    ]
+  },
+  {
+    "id": "18fd862da02d4432",
+    "type": "http request",
+    "z": "598639b02b37a8d9",
+    "name": "GET HA /api/",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 610,
+    "y": 380,
+    "wires": [
+      [
+        "4a11ce0000000002"
+      ]
+    ]
+  },
+  {
+    "id": "a778b19a256b6922",
+    "type": "function",
+    "z": "598639b02b37a8d9",
+    "name": "compile health report",
+    "func": "// The three branches arrive keyed by msg.topic. A branch that could not be\n// reached at all carries __error.\nconst parts = msg.payload || {};\n// Backstop: with the per-run guard upstream, every branch emits exactly\n// once within the join window; an absent topic is a plumbing fault, not\n// a slow service. Mark it so the event says what actually happened.\nfor (const t of [\"puffpai\", \"ollama\", \"homeassistant\"]) {\n    if (!(t in parts)) { parts[t] = { __error: \"no probe result (plumbing fault)\" }; }\n}\nconst puffpai = parts.puffpai || {};\nconst ollama = parts.ollama || {};\nconst ha = parts.homeassistant || {};\n\nconst NO_PROBE = \"no probe result (plumbing fault)\";\nconst probeStatus = function (part, upWhen) {\n    if (part && part.__error === NO_PROBE) { return 'unknown'; }\n    return upWhen ? 'up' : 'down';\n};\nconst services = [\n  { name: 'PuffPAI API', status: probeStatus(puffpai, ['healthy', 'ok'].includes(puffpai?.status)), details: puffpai },\n  { name: 'Ollama LLM', status: probeStatus(ollama, !!ollama?.models), models: ollama?.models?.map(m => m.name) || [] },\n  { name: 'Home Assistant', status: probeStatus(ha, !!ha?.message), details: ha }\n];\n\nconst unknown = services.filter(s => s.status === 'unknown');\nif (unknown.length) {\n    // Plumbing noise is a flow bug to log, never an outage to report.\n    node.warn('health probes missing (plumbing): ' + unknown.map(s => s.name).join(', '));\n}\nconst allUp = services.every(s => s.status === 'up');\nconst downServices = services.filter(s => s.status === 'down');\n\nmsg.statusCode = 200;\nmsg.payload = {\n  overall: allUp ? 'healthy' : 'degraded',\n  services: services,\n  down_count: downServices.length,\n  down_services: downServices.map(s => s.name),\n  checked_at: new Date().toISOString(),\n  summary: allUp\n    ? 'All systems operational.'\n    : `${downServices.length} service(s) down: ${downServices.map(s => s.name).join(', ')}`\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1050,
+    "y": 260,
+    "wires": [
+      [
+        "d52b81a6ea5c3f19"
+      ]
+    ]
+  },
+  {
+    "id": "bca41996f93fbbe1",
+    "type": "http response",
+    "z": "598639b02b37a8d9",
+    "name": "respond",
+    "statusCode": "",
+    "headers": {},
+    "x": 1530,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "b2ace24fba04731f",
+    "type": "catch",
+    "z": "598639b02b37a8d9",
+    "name": "on request error",
+    "scope": [
+      "656d847bbb96c2dd",
+      "8436b98507d05cc5",
+      "18fd862da02d4432"
+    ],
+    "uncaught": false,
+    "x": 350,
+    "y": 500,
+    "wires": [
+      [
+        "b6ed0e58785f93f4"
+      ]
+    ]
+  },
+  {
+    "id": "b6ed0e58785f93f4",
+    "type": "function",
+    "z": "598639b02b37a8d9",
+    "name": "branch failed",
+    "func": "// Error handler for this tab's HTTP Request nodes. The branch still emits\n// (keeping msg.topic) so the join node can complete and the compile step\n// sees an error object.\nnode.warn(\"branch '\" + msg.topic + \"' failed: \" +\n    (msg.error && msg.error.message));\nmsg.payload = {\n    __error: (msg.error && msg.error.message) || \"request failed\"\n};\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 610,
+    "y": 500,
+    "wires": [
+      [
+        "4a11ce0000000002"
+      ]
+    ]
+  },
+  {
+    "id": "c31a70f5d94b2e08",
+    "type": "inject",
+    "z": "598639b02b37a8d9",
+    "name": "every 5 minutes",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "crontab": "*/5 * * * *",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "scheduled",
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 130,
+    "y": 140,
+    "wires": [
+      [
+        "4a11ce0000000001"
+      ]
+    ]
+  },
+  {
+    "id": "d52b81a6ea5c3f19",
+    "type": "switch",
+    "z": "598639b02b37a8d9",
+    "name": "respond or log",
+    "property": "res",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "nnull"
+      },
+      {
+        "t": "null"
+      }
+    ],
+    "checkall": "false",
+    "repair": false,
+    "outputs": 2,
+    "x": 1290,
+    "y": 260,
+    "wires": [
+      [
+        "bca41996f93fbbe1"
+      ],
+      [
+        "e63c92b7fb6d4a2b"
+      ]
+    ]
+  },
+  {
+    "id": "e63c92b7fb6d4a2b",
+    "type": "function",
+    "z": "598639b02b37a8d9",
+    "name": "scheduled health check -> agent event",
+    "func": "// Terminus for the cron-injected run (no msg.res -> must not reach the\n// `http response` node). When the\n// appliance is degraded, hand the fault to the PuffPAI agent team instead of\n// only logging it. A HEALTHY tick is silent -- no log line, no event -- so a\n// 5-minute cron cannot turn into 288 identical entries a day.\nconst p = msg.payload || {};\nconst downCount = Number(p.down_count) || 0;\nconst down = Array.isArray(p.down_services) ? p.down_services.map(String) : [];\n\nif (downCount <= 0 || down.length === 0) {\n    // Recovered (or never broken): forget the last fault so the next\n    // degradation after a recovery is reported immediately, not suppressed.\n    flow.set(\"health_last_down\", null);\n    return null;\n}\n\n// DEDUP (layer 1 of 2). The Concierge dedups authoritatively for every event\n// producer; this one exists so an unchanged fault does not even become an HTTP\n// call -- that is what keeps agent_events.jsonl and the audit ledger from\n// filling with one identical entry every 5 minutes. Keyed on the exact set of\n// down services, so an ESCALATION (a second service failing) always gets\n// through. Flow context is in-memory: a Node-RED restart re-reports once, which\n// is the safe direction to fail.\nconst WINDOW_MS = 30 * 60 * 1000;\nconst key = down.slice().sort().join(\"|\");\nconst last = flow.get(\"health_last_down\") || null;\nconst now = Date.now();\nif (last && last.key === key && (now - last.at) < WINDOW_MS) {\n    return null;\n}\nflow.set(\"health_last_down\", { key: key, at: now });\n\nnode.warn(\"health check degraded: \" + downCount + \" service(s) down: \" + key);\n\n// SECURITY: the backend base URL is config-domain only (env PUFFPAI_API_URL /\n// localhost). It is never taken from the request body -- that would send the env\n// PUFFPAI_API_KEY to a caller-chosen host.\nconst base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\nconst apiKey = env.get(\"PUFFPAI_API_KEY\") || \"\";\n\n// SECURITY: services[].details holds the raw upstream response bodies (the HA\n// /api/ payload, the PuffPAI /health body, an error string that can quote the\n// outbound request). The event is persisted to the event log and surfaced in\n// the UI, so only the two fields the team reasons about travel.\nconst services = (Array.isArray(p.services) ? p.services : []).slice(0, 12)\n    .map(function (s) {\n        const src = (typeof s === \"object\" && s) || {};\n        return {\n            name: String(src.name || \"\").replace(/[\\u0000-\\u001f\\u007f]/g, \" \").slice(0, 64),\n            status: String(src.status || \"unknown\").slice(0, 16)\n        };\n    });\n\nmsg.method = \"POST\";\nmsg.url = base + \"/agents/event\";\n// The backend accepts either `Authorization: Bearer` or `X-API-Key`; the rest\n// of these flows use X-API-Key, so this one does too.\nmsg.headers = { \"Content-Type\": \"application/json\", \"Accept\": \"application/json\" };\nif (apiKey) { msg.headers[\"X-API-Key\"] = apiKey; }\nmsg.requestTimeout = 15000;\nmsg.payload = {\n    source: \"nodered\",\n    event_type: \"service_degraded\",\n    data: {\n        overall: String(p.overall || \"degraded\").slice(0, 32),\n        down_count: downCount,\n        down_services: down.slice(0, 12).map(function (d) {\n            return d.replace(/[\\u0000-\\u001f\\u007f]/g, \" \").slice(0, 64);\n        }),\n        services: services,\n        checked_at: String(p.checked_at || new Date().toISOString()).slice(0, 40)\n    }\n};\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1530,
+    "y": 360,
+    "wires": [
+      [
+        "f74da3c80c7e5b3c"
+      ]
+    ]
+  },
+  {
+    "id": "f74da3c80c7e5b3c",
+    "type": "http request",
+    "z": "598639b02b37a8d9",
+    "name": "POST /agents/event",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": true,
+    "headers": [],
+    "x": 1810,
+    "y": 360,
+    "wires": [
+      [
+        "085eb4d91d8f6c4d"
+      ]
+    ]
+  },
+  {
+    "id": "085eb4d91d8f6c4d",
+    "type": "function",
+    "z": "598639b02b37a8d9",
+    "name": "agent event submitted",
+    "func": "// Terminus: the agent team classified the degradation. Nothing here responds to\n// an HTTP caller (this branch only ever runs from cron, where msg.res is\n// absent), so the message stops here. The team only ever SUGGESTS a repair --\n// no restart is issued from this flow.\nconst status = msg.statusCode;\nif (status && Number(status) >= 400) {\n    node.warn(\"agent event POST failed: HTTP \" + status);\n} else {\n    const d = (msg.payload && msg.payload.decision) || {};\n    node.log(\"service_degraded event submitted: severity=\" + (d.severity || \"unknown\") +\n             \" suggested=\" + (d.suggested_action || \"unknown\"));\n}\nreturn null;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 2070,
+    "y": 360,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "e84b80da03ebdcf3",
+    "type": "tab",
+    "label": "meal_planner",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "e08d15bb23574d41",
+    "type": "http in",
+    "z": "e84b80da03ebdcf3",
+    "name": "",
+    "url": "/webhook/meal-planner",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 130,
+    "y": 200,
+    "wires": [
+      [
+        "4b15f94d0f2f18c3"
+      ]
+    ]
+  },
+  {
+    "id": "4b15f94d0f2f18c3",
+    "type": "function",
+    "z": "e84b80da03ebdcf3",
+    "name": "prep freshtable request",
+    "func": "const base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\nmsg.req_body = (typeof msg.payload === \"object\" && msg.payload) || {};\nconst apiKey = msg.req_body.api_key || env.get(\"PUFFPAI_API_KEY\") || \"\";\nmsg.url = base + \"/apps/freshtable/data\";\nmsg.headers = { \"Accept\": \"application/json\" };\nif (apiKey) { msg.headers[\"X-API-Key\"] = apiKey; }\ndelete msg.payload;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 350,
+    "y": 200,
+    "wires": [
+      [
+        "35d2ee31dc7e03d3"
+      ]
+    ]
+  },
+  {
+    "id": "35d2ee31dc7e03d3",
+    "type": "http request",
+    "z": "e84b80da03ebdcf3",
+    "name": "GET /apps/freshtable/data",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 590,
+    "y": 200,
+    "wires": [
+      [
+        "6b01f2ee605dab88"
+      ]
+    ]
+  },
+  {
+    "id": "6b01f2ee605dab88",
+    "type": "function",
+    "z": "e84b80da03ebdcf3",
+    "name": "generate meal plan",
+    "func": "const body = msg.req_body || {};\nconst pantryData = msg.payload || {};\nconst pantry = pantryData.pantry || [];\nconst family_size = body.family_size || 4;\nconst days = body.days || 7;\nconst dietary = body.dietary || 'none';\n\n// Categorize pantry items\nconst proteins = pantry.filter(i => ['chicken', 'beef', 'pork', 'fish', 'salmon', 'shrimp', 'tofu', 'eggs', 'beans'].some(p => i.name?.toLowerCase().includes(p)));\nconst grains = pantry.filter(i => ['rice', 'pasta', 'bread', 'flour', 'oats', 'tortilla', 'quinoa'].some(g => i.name?.toLowerCase().includes(g)));\nconst produce = pantry.filter(i => ['tomato', 'onion', 'pepper', 'lettuce', 'carrot', 'potato', 'garlic', 'avocado', 'lime', 'cilantro'].some(p => i.name?.toLowerCase().includes(p)));\n\n// Generate meal suggestions based on available ingredients\nconst mealTemplates = [\n  { name: 'Chicken Stir Fry', needs: ['chicken', 'rice'], category: 'dinner', time: 30 },\n  { name: 'Pasta Bolognese', needs: ['beef', 'pasta'], category: 'dinner', time: 45 },\n  { name: 'Fish Tacos', needs: ['fish', 'tortilla'], category: 'dinner', time: 25 },\n  { name: 'Scrambled Eggs & Toast', needs: ['eggs', 'bread'], category: 'breakfast', time: 10 },\n  { name: 'Bean & Rice Bowl', needs: ['beans', 'rice'], category: 'lunch', time: 20 },\n  { name: 'Grilled Chicken Salad', needs: ['chicken', 'lettuce'], category: 'lunch', time: 20 },\n  { name: 'Shrimp Fried Rice', needs: ['shrimp', 'rice'], category: 'dinner', time: 25 },\n  { name: 'Breakfast Tacos', needs: ['eggs', 'tortilla'], category: 'breakfast', time: 15 },\n  { name: 'Chicken Soup', needs: ['chicken', 'carrot'], category: 'dinner', time: 40 },\n  { name: 'Oatmeal with Fruit', needs: ['oats'], category: 'breakfast', time: 10 },\n  { name: 'Avocado Toast', needs: ['avocado', 'bread'], category: 'breakfast', time: 5 },\n  { name: 'Ground Beef Tacos', needs: ['beef', 'tortilla'], category: 'dinner', time: 25 },\n  { name: 'Quinoa Salad', needs: ['quinoa', 'tomato'], category: 'lunch', time: 30 },\n  { name: 'Baked Salmon', needs: ['salmon'], category: 'dinner', time: 35 }\n];\n\nconst pantryNames = pantry.map(i => i.name?.toLowerCase() || '');\nconst possible = mealTemplates.filter(m =>\n  m.needs.every(need => pantryNames.some(p => p.includes(need)))\n);\n\n// Build weekly plan\nconst weekPlan = [];\nconst dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];\nfor (let d = 0; d < days; d++) {\n  const dayMeals = {\n    day: dayNames[d % 7],\n    breakfast: possible.filter(m => m.category === 'breakfast')[d % Math.max(1, possible.filter(m => m.category === 'breakfast').length)]?.name || 'Cereal & Milk',\n    lunch: possible.filter(m => m.category === 'lunch')[d % Math.max(1, possible.filter(m => m.category === 'lunch').length)]?.name || 'Sandwich',\n    dinner: possible.filter(m => m.category === 'dinner')[d % Math.max(1, possible.filter(m => m.category === 'dinner').length)]?.name || 'Leftovers'\n  };\n  weekPlan.push(dayMeals);\n}\n\n// Generate shopping needs\nconst allNeeded = new Set();\npossible.forEach(m => m.needs.forEach(n => allNeeded.add(n)));\nconst lowStock = pantry.filter(i => (i.quantity || 1) <= 1).map(i => i.name);\n\nmsg.payload = {\n  family_size: family_size,\n  days_planned: days,\n  dietary: dietary,\n  pantry_items: pantry.length,\n  available_meals: possible.length,\n  meal_plan: weekPlan,\n  low_stock_items: lowStock,\n  suggested_recipes: possible.slice(0, 10).map(m => ({\n    name: m.name,\n    category: m.category,\n    prep_time: m.time + ' min',\n    ingredients_available: m.needs\n  }))\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 830,
+    "y": 200,
+    "wires": [
+      [
+        "1e0aa9187de46c91"
+      ]
+    ]
+  },
+  {
+    "id": "1e0aa9187de46c91",
+    "type": "http response",
+    "z": "e84b80da03ebdcf3",
+    "name": "respond",
+    "statusCode": "",
+    "headers": {},
+    "x": 1090,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "71a1d4c5259be52d",
+    "type": "catch",
+    "z": "e84b80da03ebdcf3",
+    "name": "on request error",
+    "scope": [
+      "35d2ee31dc7e03d3"
+    ],
+    "uncaught": false,
+    "x": 350,
+    "y": 320,
+    "wires": [
+      [
+        "f4ed2059288a18ec"
+      ]
+    ]
+  },
+  {
+    "id": "f4ed2059288a18ec",
+    "type": "function",
+    "z": "e84b80da03ebdcf3",
+    "name": "request failed",
+    "func": "// Error handler for this tab's HTTP Request nodes. Answers the webhook\n// explicitly with a 502 so the HTTP client never hangs.\nnode.warn(\"request failed: \" + (msg.error && msg.error.message));\nmsg.statusCode = 502;\nmsg.payload = {\n    error: \"upstream_request_failed\",\n    detail: (msg.error && msg.error.message) || \"unknown error\",\n    node: (msg.error && msg.error.source && msg.error.source.name) || \"\"\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 590,
+    "y": 320,
+    "wires": [
+      [
+        "1e0aa9187de46c91"
+      ]
+    ]
+  },
+  {
+    "id": "f4d7ee215eb3cbbb",
+    "type": "tab",
+    "label": "media_now_playing",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "40a4880b50bf4e32",
+    "type": "http in",
+    "z": "f4d7ee215eb3cbbb",
+    "name": "",
+    "url": "/webhook/media-now-playing",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 130,
+    "y": 220,
+    "wires": [
+      [
+        "523ba502506abc34",
+        "75046605e7225f74"
+      ]
+    ]
+  },
+  {
+    "id": "523ba502506abc34",
+    "type": "function",
+    "z": "f4d7ee215eb3cbbb",
+    "name": "prep sessions request",
+    "func": "const baseUrl = (env.get(\"JELLYFIN_URL\") || \"http://127.0.0.1:8096\")\n    .replace(/\\/$/, \"\");\nconst token = env.get(\"JELLYFIN_API_KEY\") || \"\";\nconst auth = 'MediaBrowser Client=\"PuffPAI\", Device=\"node-red\", ' +\n    'DeviceId=\"puffpai-nodered\", Version=\"1.0.0\", Token=\"' + token + '\"';\nmsg.req_body = (typeof msg.payload === \"object\" && msg.payload) || {};\nmsg.topic = \"sessions\";\nmsg.url = baseUrl + \"/Sessions\";\nmsg.headers = { \"X-Emby-Authorization\": auth, \"Accept\": \"application/json\" };\nmsg.requestTimeout = 10000;\ndelete msg.payload;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 370,
+    "y": 160,
+    "wires": [
+      [
+        "579516ae248c2f41"
+      ]
+    ]
+  },
+  {
+    "id": "579516ae248c2f41",
+    "type": "http request",
+    "z": "f4d7ee215eb3cbbb",
+    "name": "GET /Sessions",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 630,
+    "y": 160,
+    "wires": [
+      [
+        "e8944ef1648d1aac"
+      ]
+    ]
+  },
+  {
+    "id": "75046605e7225f74",
+    "type": "function",
+    "z": "f4d7ee215eb3cbbb",
+    "name": "prep library stats request",
+    "func": "const baseUrl = (env.get(\"JELLYFIN_URL\") || \"http://127.0.0.1:8096\")\n    .replace(/\\/$/, \"\");\nconst token = env.get(\"JELLYFIN_API_KEY\") || \"\";\nconst auth = 'MediaBrowser Client=\"PuffPAI\", Device=\"node-red\", ' +\n    'DeviceId=\"puffpai-nodered\", Version=\"1.0.0\", Token=\"' + token + '\"';\nmsg.req_body = (typeof msg.payload === \"object\" && msg.payload) || {};\nmsg.topic = \"stats\";\nmsg.url = baseUrl + \"/Items/Counts\";\nmsg.headers = { \"X-Emby-Authorization\": auth, \"Accept\": \"application/json\" };\nmsg.requestTimeout = 10000;\ndelete msg.payload;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 370,
+    "y": 280,
+    "wires": [
+      [
+        "c817969f133310ba"
+      ]
+    ]
+  },
+  {
+    "id": "c817969f133310ba",
+    "type": "http request",
+    "z": "f4d7ee215eb3cbbb",
+    "name": "GET /Items/Counts",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 630,
+    "y": 280,
+    "wires": [
+      [
+        "e8944ef1648d1aac"
+      ]
+    ]
+  },
+  {
+    "id": "e8944ef1648d1aac",
+    "type": "join",
+    "z": "f4d7ee215eb3cbbb",
+    "name": "join branches",
+    "mode": "custom",
+    "build": "object",
+    "property": "payload",
+    "propertyType": "msg",
+    "key": "topic",
+    "joiner": "\\n",
+    "joinerType": "str",
+    "accumulate": false,
+    "timeout": "20",
+    "count": "2",
+    "reduceRight": false,
+    "reduceExp": "",
+    "reduceInit": "",
+    "reduceInitType": "",
+    "reduceFixup": "",
+    "x": 870,
+    "y": 220,
+    "wires": [
+      [
+        "cf1139232a9abb4c"
+      ]
+    ]
+  },
+  {
+    "id": "cf1139232a9abb4c",
+    "type": "function",
+    "z": "f4d7ee215eb3cbbb",
+    "name": "compile media status",
+    "func": "const parts = msg.payload || {};\nconst sessions = parts.sessions;\nconst stats = parts.stats || {};\n\n// Parse active playback\nconst playing = [];\nif (Array.isArray(sessions)) {\n  for (const s of sessions) {\n    if (s.NowPlayingItem) {\n      const np = s.NowPlayingItem;\n      const ps = s.PlayState || {};\n      const pos = Math.floor((ps.PositionTicks || 0) / 10000000);\n      playing.push({\n        device: s.DeviceName,\n        title: np.Name,\n        artist: (np.Artists || []).join(', '),\n        album: np.Album || '',\n        type: np.Type === 'Audio' ? 'music' : 'movie',\n        paused: ps.IsPaused || false,\n        position: `${Math.floor(pos/60)}:${String(pos%60).padStart(2,'0')}`,\n      });\n    }\n  }\n}\n\nmsg.payload = {\n  now_playing: playing,\n  library: {\n    tracks: stats.SongCount || 0,\n    albums: stats.AlbumCount || 0,\n    artists: stats.ArtistCount || 0,\n    movies: stats.MovieCount || 0,\n  },\n  timestamp: new Date().toISOString(),\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1070,
+    "y": 220,
+    "wires": [
+      [
+        "30825f251dad8fc7"
+      ]
+    ]
+  },
+  {
+    "id": "30825f251dad8fc7",
+    "type": "http response",
+    "z": "f4d7ee215eb3cbbb",
+    "name": "respond",
+    "statusCode": "",
+    "headers": {},
+    "x": 1330,
+    "y": 220,
+    "wires": []
+  },
+  {
+    "id": "658e990e7d2d44a9",
+    "type": "catch",
+    "z": "f4d7ee215eb3cbbb",
+    "name": "on request error",
+    "scope": [
+      "579516ae248c2f41",
+      "c817969f133310ba"
+    ],
+    "uncaught": false,
+    "x": 370,
+    "y": 420,
+    "wires": [
+      [
+        "b7ed56ec74a65aa9"
+      ]
+    ]
+  },
+  {
+    "id": "b7ed56ec74a65aa9",
+    "type": "function",
+    "z": "f4d7ee215eb3cbbb",
+    "name": "branch failed",
+    "func": "// Error handler for this tab's HTTP Request nodes. The branch still emits\n// (keeping msg.topic) so the join node can complete and the compile step\n// sees an error object.\nnode.warn(\"branch '\" + msg.topic + \"' failed: \" +\n    (msg.error && msg.error.message));\nmsg.payload = {\n    __error: (msg.error && msg.error.message) || \"request failed\"\n};\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 630,
+    "y": 420,
+    "wires": [
+      [
+        "e8944ef1648d1aac"
+      ]
+    ]
+  },
+  {
+    "id": "1a299db872116e17",
+    "type": "tab",
+    "label": "network_scan",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "f9b1b2cc26eaf700",
+    "type": "http response",
+    "z": "1a299db872116e17",
+    "name": "respond",
+    "statusCode": "",
+    "headers": {},
+    "x": 1730,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "f8803b0723fc8bc9",
+    "type": "function",
+    "z": "1a299db872116e17",
+    "name": "scheduled scan complete",
+    "func": "// Terminus for the cron-injected run: a scheduled message has no msg.res, so it\n// must not reach the `http response` node (Node-RED would log \"no response\n// object\"). Nothing is sent anywhere -- the result is logged only. Do not add an outbound call here\n// without re-checking the credential/host pairing rule.\nconst p = msg.payload || {};\nnode.log(\"scheduled network scan: total=\" + p.total_devices +\n         \" trusted=\" + p.trusted_count + \" needs_review=\" + p.needs_review_count);\nreturn null;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1730,
+    "y": 320,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "d4cbaf96c0610ca5",
+    "type": "switch",
+    "z": "1a299db872116e17",
+    "name": "respond or log",
+    "property": "res",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "nnull"
+      },
+      {
+        "t": "null"
+      }
+    ],
+    "checkall": "false",
+    "repair": false,
+    "outputs": 2,
+    "x": 1510,
+    "y": 240,
+    "wires": [
+      [
+        "f9b1b2cc26eaf700"
+      ],
+      [
+        "f8803b0723fc8bc9"
+      ]
+    ]
+  },
+  {
+    "id": "db9cacee81affe1a",
+    "type": "function",
+    "z": "1a299db872116e17",
+    "name": "alert user for devices to review",
+    "func": "// The classification is still on msg.classification (the categorize node\n// leaves it in place instead of replacing it).\nconst classification = msg.classification || {};\nmsg.statusCode = 200;\nmsg.payload = {\n    alert_type: 'unknown_devices',\n    severity: 'high',\n    message: `${classification.needs_review_count} unknown device(s) detected`,\n    total_devices: classification.total_devices,\n    trusted_count: classification.trusted_count,\n    needs_review_count: classification.needs_review_count,\n    needs_review: classification.needs_review,\n    device_report: msg.device_report || []\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1290,
+    "y": 160,
+    "wires": [
+      [
+        "d4cbaf96c0610ca5"
+      ]
+    ]
+  },
+  {
+    "id": "0a63fcb3205e0a88",
+    "type": "function",
+    "z": "1a299db872116e17",
+    "name": "return clean scan to user",
+    "func": "const classification = msg.classification || {};\nmsg.statusCode = 200;\nmsg.payload = {\n    alert_type: 'all_clear',\n    severity: 'low',\n    message: 'Network scan complete. All devices are trusted.',\n    total_devices: classification.total_devices,\n    trusted_count: classification.trusted_count,\n    needs_review_count: classification.needs_review_count,\n    trusted_devices: classification.trusted_devices\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1290,
+    "y": 320,
+    "wires": [
+      [
+        "d4cbaf96c0610ca5"
+      ]
+    ]
+  },
+  {
+    "id": "87bd55ef9b722906",
+    "type": "switch",
+    "z": "1a299db872116e17",
+    "name": "unknown devices?",
+    "property": "needs_review_count",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "gt",
+        "v": "0",
+        "vt": "num"
+      },
+      {
+        "t": "else"
+      }
+    ],
+    "checkall": "false",
+    "repair": false,
+    "outputs": 2,
+    "x": 1070,
+    "y": 240,
+    "wires": [
+      [
+        "db9cacee81affe1a"
+      ],
+      [
+        "0a63fcb3205e0a88"
+      ]
+    ]
+  },
+  {
+    "id": "49a8d0bad20577ee",
+    "type": "function",
+    "z": "1a299db872116e17",
+    "name": "categorize details for device review",
+    "func": "// The report is carried alongside on msg.device_report and the classification\n// stays on msg.payload / msg.classification, so both downstream nodes still\n// see it and the switch on needs_review_count routes even when the review list\n// is empty (the webhook caller always gets an answer).\nconst classification = msg.payload || {};\nconst needsReview = classification.needs_review || [];\n\nmsg.device_report = needsReview.map(device => {\n    return {\n        IP: device.ip,\n        MAC: device.mac,\n        Type: device.type,\n        Notes: device.notes,\n        RawInfo: device.raw\n    };\n});\nmsg.needs_review_count = classification.needs_review_count || 0;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 850,
+    "y": 240,
+    "wires": [
+      [
+        "87bd55ef9b722906"
+      ]
+    ]
+  },
+  {
+    "id": "0b60c67f47f05904",
+    "type": "function",
+    "z": "1a299db872116e17",
+    "name": "identify all devices",
+    "func": "// Input is attacker-controlled (the http in node is unauthenticated), so every\n// device field is coerced to a string before use: a malformed entry is\n// classified rather than crashing the flow.\nconst body = (typeof msg.payload === \"object\" && msg.payload) || {};\nconst devices = Array.isArray(body.devices) ? body.devices : [];\n\nfunction classifyDevice(device) {\n  const src = (typeof device === \"object\" && device) || {};\n  const ip = String(src.ip || '');\n  const mac = String(src.mac || '').toLowerCase();\n  const raw = String(src.raw || '').toLowerCase();\n\n  let type = 'Unknown';\n  let trusted = true;\n  let notes = [];\n\n  if (ip === '255.255.255.255' || ip.endsWith('.255')) {\n    type = 'Broadcast Address';\n    notes.push('Network broadcast - normal');\n    return { ...src, type, trusted, notes: notes.join(', '), needs_review: false };\n  }\n\n  if (ip.startsWith('172.')) {\n    type = 'WSL/Docker Network';\n    notes.push('Virtual network interface');\n    return { ...src, type, trusted, notes: notes.join(', '), needs_review: false };\n  }\n\n  if (mac === 'ff-ff-ff-ff-ff-ff') {\n    type = 'Broadcast MAC';\n    notes.push('Network protocol - normal');\n    return { ...src, type, trusted, notes: notes.join(', '), needs_review: false };\n  }\n\n  if (mac.startsWith('00-15-5d')) {\n    type = 'Hyper-V/WSL';\n    notes.push('Microsoft virtual adapter');\n    return { ...src, type, trusted, notes: notes.join(', '), needs_review: false };\n  }\n\n  // Any RFC1918 address is \"on this network\", whatever the local subnet is.\n  if (/^10\\./.test(ip) ||\n      /^192\\.168\\./.test(ip) ||\n      /^172\\.(1[6-9]|2[0-9]|3[01])\\./.test(ip)) {\n    if (mac === 'unknown') {\n      type = 'Local Device (Unknown MAC)';\n      trusted = false;\n      notes.push('Cannot determine hardware - investigate');\n    } else {\n      type = 'Local Network Device';\n      notes.push('Home network device');\n    }\n  }\n\n  if (raw.includes('dynamic')) {\n    notes.push('DHCP assigned');\n  }\n\n  return {\n    ...src,\n    type: type,\n    trusted: trusted,\n    notes: notes.join(', '),\n    needs_review: !trusted\n  };\n}\n\nconst classified = devices.map(classifyDevice);\nconst needsReview = classified.filter(d => d.needs_review);\nconst trustedDevices = classified.filter(d => d.trusted);\n\nmsg.payload = {\n  total_devices: devices.length,\n  trusted_count: trustedDevices.length,\n  needs_review_count: needsReview.length,\n  needs_review: needsReview,\n  trusted_devices: trustedDevices,\n  all_classified: classified\n};\nmsg.classification = msg.payload;\n// The webhook body is not needed downstream; drop the outbound/inbound headers\n// so nothing from the request survives into the response path.\ndelete msg.headers;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 630,
+    "y": 240,
+    "wires": [
+      [
+        "49a8d0bad20577ee"
+      ]
+    ]
+  },
+  {
+    "id": "ee1823baa413479b",
+    "type": "function",
+    "z": "1a299db872116e17",
+    "name": "scheduled scan payload",
+    "func": "// Turns the GET /firewall/devices response into the same shape the\n// network_scanner.py CLI posts to this webhook: { devices: [...], count: n }.\nconst resp = (typeof msg.payload === \"object\" && msg.payload) || {};\nconst devices = Array.isArray(resp.devices) ? resp.devices : [];\nmsg.payload = { devices: devices, count: devices.length };\n// Drop the outbound X-API-Key header before it can travel any further.\ndelete msg.headers;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 630,
+    "y": 400,
+    "wires": [
+      [
+        "0b60c67f47f05904"
+      ]
+    ]
+  },
+  {
+    "id": "543e0c93d01d9c31",
+    "type": "http request",
+    "z": "1a299db872116e17",
+    "name": "GET /firewall/devices",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 410,
+    "y": 400,
+    "wires": [
+      [
+        "ee1823baa413479b"
+      ]
+    ]
+  },
+  {
+    "id": "b0aa49b3af0493d9",
+    "type": "function",
+    "z": "1a299db872116e17",
+    "name": "prep scheduled device fetch",
+    "func": "// SECURITY: the backend base URL is config-domain only (env PUFFPAI_API_URL /\n// localhost). It is never taken from the request body -- that would send the env\n// PUFFPAI_API_KEY to a caller-chosen host.\nconst base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\nconst apiKey = env.get(\"PUFFPAI_API_KEY\") || \"\";\n// The cron run has no request body, so it fetches the device list itself.\nmsg.method = \"GET\";\nmsg.url = base + \"/firewall/devices\";\nmsg.headers = { \"Accept\": \"application/json\" };\nif (apiKey) { msg.headers[\"X-API-Key\"] = apiKey; }\nmsg.requestTimeout = 15000;\nmsg.scheduled = true;\ndelete msg.payload;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 190,
+    "y": 400,
+    "wires": [
+      [
+        "543e0c93d01d9c31"
+      ]
+    ]
+  },
+  {
+    "id": "1e538e11d5b39d31",
+    "type": "inject",
+    "z": "1a299db872116e17",
+    "name": "every 15 minutes",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "crontab": "*/15 * * * *",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "scheduled",
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 190,
+    "y": 320,
+    "wires": [
+      [
+        "b0aa49b3af0493d9"
+      ]
+    ]
+  },
+  {
+    "id": "786e18df96f64a01",
+    "type": "http in",
+    "z": "1a299db872116e17",
+    "name": "",
+    "url": "/webhook/network-scan",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 240,
+    "wires": [
+      [
+        "0b60c67f47f05904"
+      ]
+    ]
+  },
+  {
+    "id": "a9c251dba75210de",
+    "type": "function",
+    "z": "1a299db872116e17",
+    "name": "request failed",
+    "func": "// Error handler for this tab's HTTP Request nodes. Answers the webhook\n// explicitly with a 502 so the HTTP client never hangs.\nnode.warn(\"request failed: \" + (msg.error && msg.error.message));\nmsg.statusCode = 502;\nmsg.payload = {\n    error: \"upstream_request_failed\",\n    detail: (msg.error && msg.error.message) || \"unknown error\",\n    node: (msg.error && msg.error.source && msg.error.source.name) || \"\"\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1290,
+    "y": 480,
+    "wires": [
+      [
+        "d4cbaf96c0610ca5"
+      ]
+    ]
+  },
+  {
+    "id": "a7bdec31616c26a9",
+    "type": "catch",
+    "z": "1a299db872116e17",
+    "name": "on request error",
+    "scope": [
+      "543e0c93d01d9c31"
+    ],
+    "uncaught": false,
+    "x": 1070,
+    "y": 480,
+    "wires": [
+      [
+        "a9c251dba75210de"
+      ]
+    ]
+  },
+  {
+    "id": "e7a0802da11e177b",
+    "type": "tab",
+    "label": "block_device",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "2c6d649f5e49dafe",
+    "type": "http response",
+    "z": "e7a0802da11e177b",
+    "name": "respond",
+    "statusCode": "",
+    "headers": {},
+    "x": 1510,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "0910097c57a8dd13",
+    "type": "function",
+    "z": "e7a0802da11e177b",
+    "name": "firewall result",
+    "func": "// Normalises the backend's /firewall/* JSON into the webhook response.\n// The caller must learn whether the rule was actually applied:\n// AutomationClient.call() treats any\n// non-200 as failure and falls back to the local firewall, so reporting the real\n// outcome here is what makes that fallback correct.\nconst r = (typeof msg.payload === \"object\" && msg.payload) || {};\nconst ok = r.success !== false;\nmsg.statusCode = ok ? 200 : 502;\nmsg.payload = {\n    success: ok,\n    action: msg.fw_action || \"\",\n    ip: msg.fw_ip || null,\n    message: r.message || (ok ? \"ok\" : \"firewall backend reported failure\"),\n    result: r\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1290,
+    "y": 300,
+    "wires": [
+      [
+        "2c6d649f5e49dafe"
+      ]
+    ]
+  },
+  {
+    "id": "d30061a0194455bf",
+    "type": "http request",
+    "z": "e7a0802da11e177b",
+    "name": "POST /firewall/block",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 1070,
+    "y": 200,
+    "wires": [
+      [
+        "0910097c57a8dd13"
+      ]
+    ]
+  },
+  {
+    "id": "33ab8aa1bea26a43",
+    "type": "http request",
+    "z": "e7a0802da11e177b",
+    "name": "POST /firewall/unblock",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 1070,
+    "y": 300,
+    "wires": [
+      [
+        "0910097c57a8dd13"
+      ]
+    ]
+  },
+  {
+    "id": "d6ae7bdf4bff7f6e",
+    "type": "http request",
+    "z": "e7a0802da11e177b",
+    "name": "POST /firewall/lockdown",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 1070,
+    "y": 400,
+    "wires": [
+      [
+        "0910097c57a8dd13"
+      ]
+    ]
+  },
+  {
+    "id": "73498d03ff21a325",
+    "type": "function",
+    "z": "e7a0802da11e177b",
+    "name": "prep block call",
+    "func": "// SECURITY: the backend base URL is config-domain only (env PUFFPAI_API_URL /\n// localhost). It is never taken from the request body -- that would send the env\n// PUFFPAI_API_KEY to a caller-chosen host.\nconst base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\nconst apiKey = env.get(\"PUFFPAI_API_KEY\") || \"\";\nmsg.method = \"POST\";\nmsg.url = base + \"/firewall/block\";\nmsg.headers = { \"Content-Type\": \"application/json\", \"Accept\": \"application/json\" };\nif (apiKey) { msg.headers[\"X-API-Key\"] = apiKey; }\nmsg.requestTimeout = 15000;\nmsg.payload = { ip: msg.fw_ip, reason: msg.fw_reason };\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 850,
+    "y": 200,
+    "wires": [
+      [
+        "d30061a0194455bf"
+      ]
+    ]
+  },
+  {
+    "id": "e3aa447921f64dcc",
+    "type": "function",
+    "z": "e7a0802da11e177b",
+    "name": "prep unblock call",
+    "func": "// SECURITY: the backend base URL is config-domain only (env PUFFPAI_API_URL /\n// localhost). It is never taken from the request body -- that would send the env\n// PUFFPAI_API_KEY to a caller-chosen host.\nconst base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\nconst apiKey = env.get(\"PUFFPAI_API_KEY\") || \"\";\nmsg.method = \"POST\";\nmsg.url = base + \"/firewall/unblock\";\nmsg.headers = { \"Content-Type\": \"application/json\", \"Accept\": \"application/json\" };\nif (apiKey) { msg.headers[\"X-API-Key\"] = apiKey; }\nmsg.requestTimeout = 15000;\nmsg.payload = { ip: msg.fw_ip };\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 850,
+    "y": 300,
+    "wires": [
+      [
+        "33ab8aa1bea26a43"
+      ]
+    ]
+  },
+  {
+    "id": "0681e57d99ce876b",
+    "type": "function",
+    "z": "e7a0802da11e177b",
+    "name": "prep lockdown call",
+    "func": "// SECURITY: the backend base URL is config-domain only (env PUFFPAI_API_URL /\n// localhost). It is never taken from the request body -- that would send the env\n// PUFFPAI_API_KEY to a caller-chosen host.\nconst base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\nconst apiKey = env.get(\"PUFFPAI_API_KEY\") || \"\";\nmsg.method = \"POST\";\nmsg.url = base + \"/firewall/lockdown\";\nmsg.headers = { \"Content-Type\": \"application/json\", \"Accept\": \"application/json\" };\nif (apiKey) { msg.headers[\"X-API-Key\"] = apiKey; }\nmsg.requestTimeout = 15000;\nmsg.payload = { enable: msg.fw_enable };\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 850,
+    "y": 400,
+    "wires": [
+      [
+        "d6ae7bdf4bff7f6e"
+      ]
+    ]
+  },
+  {
+    "id": "b1e275568ff68f3e",
+    "type": "function",
+    "z": "e7a0802da11e177b",
+    "name": "unsupported action",
+    "func": "// Fail-closed default branch. `parse and validate request` already rejects any\n// action outside the allow-list, so this is unreachable today -- it exists so a\n// future switch edit cannot silently drop a message and hang the caller.\nnode.warn(\"unsupported firewall action reached switch: \" + msg.fw_action);\nmsg.statusCode = 400;\nmsg.payload = { success: false, error: \"unsupported_action\", detail: \"unsupported action\" };\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 850,
+    "y": 500,
+    "wires": [
+      [
+        "2c6d649f5e49dafe"
+      ]
+    ]
+  },
+  {
+    "id": "5a3f08a7c308cea3",
+    "type": "switch",
+    "z": "e7a0802da11e177b",
+    "name": "action",
+    "property": "fw_action",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "eq",
+        "v": "block",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "unblock",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "lockdown",
+        "vt": "str"
+      },
+      {
+        "t": "else"
+      }
+    ],
+    "checkall": "false",
+    "repair": false,
+    "outputs": 4,
+    "x": 630,
+    "y": 300,
+    "wires": [
+      [
+        "73498d03ff21a325"
+      ],
+      [
+        "e3aa447921f64dcc"
+      ],
+      [
+        "0681e57d99ce876b"
+      ],
+      [
+        "b1e275568ff68f3e"
+      ]
+    ]
+  },
+  {
+    "id": "f38e5fbf9973c8c2",
+    "type": "function",
+    "z": "e7a0802da11e177b",
+    "name": "parse and validate request",
+    "func": "// Parses the request and validates the IP server-side.\n//\n// SECURITY: this flow mutates the host firewall and is reachable from an\n// unauthenticated POST to /webhook/block-device. Its first-party caller chain is\n// assistant_tools.py privacy_block_device / privacy_unblock_device, which pass an IP\n// scraped out of *LLM tool input*. The IP therefore has to be validated here,\n// before the backend call, not just at the backend. These checks mirror\n// src/puffpai/firewall_manager.py::_validate_ip (lines 56-74), and are strictly\n// tighter in one respect: IPv6 is rejected outright, because every caller and\n// every firewall rule in this project is IPv4.\n//\n// Invalid input answers 400 and makes NO backend call. That is also the safe\n// outcome for the LLM path: AutomationClient.call() only counts HTTP 200 as\n// success, so a rejection falls through to the local firewall backend, which\n// re-runs the same validation.\n\nconst DANGEROUS = \";&|`$(){}[]<>!#'\\\"\\\\%\\n\\r\\t \";\n\nfunction validateIPv4(raw) {\n    if (typeof raw !== \"string\") { return { ok: false, detail: \"IP address must be a string\" }; }\n    const ip = raw.trim();\n    if (!ip) { return { ok: false, detail: \"IP address cannot be empty\" }; }\n    for (let i = 0; i < ip.length; i++) {\n        if (DANGEROUS.indexOf(ip[i]) !== -1) {\n            return { ok: false, detail: \"IP address contains invalid characters\" };\n        }\n    }\n    const m = /^(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})$/.exec(ip);\n    if (!m) { return { ok: false, detail: \"Invalid IPv4 address\" }; }\n    const o = [];\n    for (let i = 1; i <= 4; i++) {\n        const part = m[i];\n        if (part.length > 1 && part[0] === \"0\") {\n            return { ok: false, detail: \"Invalid IPv4 address (leading-zero octet)\" };\n        }\n        const n = Number(part);\n        if (!Number.isInteger(n) || n < 0 || n > 255) {\n            return { ok: false, detail: \"Invalid IPv4 address (octet out of range)\" };\n        }\n        o.push(n);\n    }\n    if (o[0] === 127) { return { ok: false, detail: \"Cannot block loopback address\" }; }\n    if (o[0] >= 224 && o[0] <= 239) { return { ok: false, detail: \"Cannot block multicast address\" }; }\n    if (o[0] === 169 && o[1] === 254) { return { ok: false, detail: \"Cannot block link-local address\" }; }\n    if (o[0] === 0 && o[1] === 0 && o[2] === 0 && o[3] === 0) {\n        return { ok: false, detail: \"Cannot block unspecified address\" };\n    }\n    if (o[0] === 255 && o[1] === 255 && o[2] === 255 && o[3] === 255) {\n        return { ok: false, detail: \"Cannot block broadcast address 255.255.255.255\" };\n    }\n    if (o[0] >= 240) { return { ok: false, detail: \"Cannot block reserved address\" }; }\n    return { ok: true, ip: o.join(\".\") };\n}\n\nfunction reject(detail) {\n    msg.statusCode = 400;\n    msg.payload = { success: false, error: \"invalid_request\", detail: detail };\n    delete msg.headers;\n    return [null, msg];\n}\n\nconst body = (typeof msg.payload === \"object\" && msg.payload) || {};\nconst action = typeof body.action === \"string\" ? body.action.trim().toLowerCase() : \"\";\n\nif ([\"block\", \"unblock\", \"lockdown\"].indexOf(action) === -1) {\n    return reject(\"action must be one of block, unblock, lockdown\");\n}\n\nmsg.fw_action = action;\nmsg.fw_ip = null;\nmsg.fw_enable = true;\nmsg.fw_reason = \"User requested\";\n\nif (action === \"block\" || action === \"unblock\") {\n    const v = validateIPv4(body.ip);\n    if (!v.ok) { return reject(v.detail); }\n    msg.fw_ip = v.ip;\n    // The reason is stored and logged by the backend; strip control characters\n    // and cap the length so it cannot smuggle newlines into a log line.\n    let reason = typeof body.reason === \"string\" ? body.reason : \"\";\n    reason = reason.replace(/[\\u0000-\\u001f\\u007f]/g, \" \").trim().slice(0, 200);\n    msg.fw_reason = reason || \"User requested\";\n}\n\nif (action === \"lockdown\") {\n    // privacy_lockdown_mode(\"false\") must lift lockdown, not re-enable it. The\n    // caller sends a real boolean\n    // (assistant_tools.py), and the backend accepts one, so it is honoured here --\n    // failing closed to enable=true for anything that is not an explicit false.\n    msg.fw_enable = !(body.enable === false || body.enable === \"false\");\n}\n\n// Drop the inbound request headers: nothing downstream needs them, and the\n// prep nodes build a fresh msg.headers for the outbound call.\ndelete msg.headers;\nreturn [msg, null];\n",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 410,
+    "y": 300,
+    "wires": [
+      [
+        "5a3f08a7c308cea3"
+      ],
+      [
+        "2c6d649f5e49dafe"
+      ]
+    ]
+  },
+  {
+    "id": "d0898af4cb9cef33",
+    "type": "http in",
+    "z": "e7a0802da11e177b",
+    "name": "",
+    "url": "/webhook/block-device",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 300,
+    "wires": [
+      [
+        "f38e5fbf9973c8c2"
+      ]
+    ]
+  },
+  {
+    "id": "f8e65c411238634e",
+    "type": "function",
+    "z": "e7a0802da11e177b",
+    "name": "request failed",
+    "func": "// Error handler for this tab's HTTP Request nodes. Answers the webhook\n// explicitly with a 502 so the HTTP client never hangs.\nnode.warn(\"request failed: \" + (msg.error && msg.error.message));\nmsg.statusCode = 502;\nmsg.payload = {\n    error: \"upstream_request_failed\",\n    detail: (msg.error && msg.error.message) || \"unknown error\",\n    node: (msg.error && msg.error.source && msg.error.source.name) || \"\"\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1070,
+    "y": 600,
+    "wires": [
+      [
+        "2c6d649f5e49dafe"
+      ]
+    ]
+  },
+  {
+    "id": "6032d4b2573e8e7d",
+    "type": "catch",
+    "z": "e7a0802da11e177b",
+    "name": "on request error",
+    "scope": [
+      "d30061a0194455bf",
+      "33ab8aa1bea26a43",
+      "d6ae7bdf4bff7f6e"
+    ],
+    "uncaught": false,
+    "x": 850,
+    "y": 600,
+    "wires": [
+      [
+        "f8e65c411238634e"
+      ]
+    ]
+  },
+  {
+    "id": "290fe43da075e6ce",
+    "type": "tab",
+    "label": "weather_alerts",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "0c21cff061d2d4df",
+    "type": "http response",
+    "z": "290fe43da075e6ce",
+    "name": "respond",
+    "statusCode": "",
+    "headers": {},
+    "x": 1290,
+    "y": 240,
+    "wires": []
+  },
+  {
+    "id": "e47931cda2524238",
+    "type": "function",
+    "z": "290fe43da075e6ce",
+    "name": "scheduled alert check -> agent event",
+    "func": "// Terminus for the cron-injected run (no msg.res -> must not reach the\n// `http response` node). When NOAA has a\n// live alert, hand it to the PuffPAI agent team instead of only logging it.\nconst p = msg.payload || {};\nconst count = Number(p.alert_count) || 0;\nnode.log(\"scheduled NOAA alert check: alert_count=\" + count);\nif (count <= 0) { return null; }\n\n// SECURITY: the backend base URL is config-domain only (env PUFFPAI_API_URL /\n// localhost). It is never taken from the request body -- that would send the env\n// PUFFPAI_API_KEY to a caller-chosen host.\nconst base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\nconst apiKey = env.get(\"PUFFPAI_API_KEY\") || \"\";\n\nconst alerts = Array.isArray(p.alerts) ? p.alerts : [];\nconst headlines = alerts.slice(0, 5).map(function (a) {\n    const h = (a && (a.headline || a.event)) || \"\";\n    return String(h).replace(/[\\u0000-\\u001f\\u007f]/g, \" \").slice(0, 200);\n}).filter(function (h) { return h.length > 0; });\n\nmsg.method = \"POST\";\nmsg.url = base + \"/agents/event\";\n// The backend accepts either `Authorization: Bearer` or `X-API-Key`; the rest\n// of these flows use X-API-Key, so this one does too.\nmsg.headers = { \"Content-Type\": \"application/json\", \"Accept\": \"application/json\" };\nif (apiKey) { msg.headers[\"X-API-Key\"] = apiKey; }\nmsg.requestTimeout = 15000;\nmsg.payload = {\n    source: \"nodered\",\n    event_type: \"weather_alert\",\n    data: {\n        count: count,\n        headlines: headlines,\n        summary: String(p.message || (count + \" active weather alert(s)\")).slice(0, 500),\n        location: p.location || null\n    }\n};\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1290,
+    "y": 360,
+    "wires": [
+      [
+        "a1e7c40b5d2f9e31"
+      ]
+    ]
+  },
+  {
+    "id": "a1e7c40b5d2f9e31",
+    "type": "http request",
+    "z": "290fe43da075e6ce",
+    "name": "POST /agents/event",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": true,
+    "headers": [],
+    "x": 1550,
+    "y": 360,
+    "wires": [
+      [
+        "b2f8d51c6e3a0f42"
+      ]
+    ]
+  },
+  {
+    "id": "b2f8d51c6e3a0f42",
+    "type": "function",
+    "z": "290fe43da075e6ce",
+    "name": "agent event submitted",
+    "func": "// Terminus: the agent team classified the alert. Nothing here responds to\n// an HTTP caller (this branch only ever runs from cron, where msg.res is\n// absent), so the message stops here.\nconst status = msg.statusCode;\nif (status && Number(status) >= 400) {\n    node.warn(\"agent event POST failed: HTTP \" + status);\n} else {\n    const d = (msg.payload && msg.payload.decision) || {};\n    node.log(\"agent event submitted: severity=\" + (d.severity || \"unknown\"));\n}\nreturn null;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1790,
+    "y": 360,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "e1c2900419df56dd",
+    "type": "switch",
+    "z": "290fe43da075e6ce",
+    "name": "respond or log",
+    "property": "res",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "nnull"
+      },
+      {
+        "t": "null"
+      }
+    ],
+    "checkall": "false",
+    "repair": false,
+    "outputs": 2,
+    "x": 1070,
+    "y": 280,
+    "wires": [
+      [
+        "0c21cff061d2d4df"
+      ],
+      [
+        "e47931cda2524238"
+      ]
+    ]
+  },
+  {
+    "id": "781e9a3e08dc03ac",
+    "type": "function",
+    "z": "290fe43da075e6ce",
+    "name": "parse alerts",
+    "func": "// Parses the NOAA alerts response. The location comes from msg.alert_location,\n// set by the request prep node.\nconst response = (typeof msg.payload === \"object\" && msg.payload) || {};\nconst location = msg.alert_location;\n\nmsg.statusCode = 200;\n\nif (!response.features || response.features.length === 0) {\n    msg.payload = {\n        alert_count: 0,\n        message: \"No active weather alerts for your area\",\n        location: location\n    };\n    // SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n    // credentials on the error path, because a failed request never overwrites them\n    // with the upstream response headers). Node-RED's `http response` node sends\n    // msg.headers back to the caller, so it must be cleared before responding.\n    delete msg.headers;\n    return msg;\n}\n\nconst alerts = response.features.map(alert => {\n    const p = (alert && alert.properties) || {};\n    const description = typeof p.description === \"string\" ? p.description : \"\";\n    return {\n        event: p.event,\n        severity: p.severity,\n        certainty: p.certainty,\n        headline: p.headline,\n        // NWS sometimes omits description; it is guarded above so this never\n        // throws.\n        description: description.substring(0, 200) + \"...\",\n        instruction: p.instruction\n    };\n});\n\nmsg.payload = {\n    alert_count: alerts.length,\n    location: location,\n    alerts: alerts\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 850,
+    "y": 280,
+    "wires": [
+      [
+        "e1c2900419df56dd"
+      ]
+    ]
+  },
+  {
+    "id": "8504a658c2325bba",
+    "type": "http request",
+    "z": "290fe43da075e6ce",
+    "name": "GET api.weather.gov alerts",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 630,
+    "y": 280,
+    "wires": [
+      [
+        "781e9a3e08dc03ac"
+      ]
+    ]
+  },
+  {
+    "id": "52e7b3fb0849b21b",
+    "type": "function",
+    "z": "290fe43da075e6ce",
+    "name": "prep NOAA alerts request",
+    "func": "// SECURITY: api.weather.gov is a third-party host, so NO credential is attached\n// to this request -- not PUFFPAI_API_KEY, not HA_TOKEN. Only the lat/lon and the\n// User-Agent leave the appliance.\nconst b = (typeof msg.payload === \"object\" && msg.payload) || {};\n\n// A missing or invalid body lat/lon falls back to the same\n// WEATHER_DEFAULT_LAT/LON the daily_* tabs use; with neither there is no\n// point to ask about (otherwise the URL would be \"point=NaN,NaN\").\nconst coord = function (value, fallback, limit) {\n    let n = Number(value);\n    if (value === undefined || value === null || value === \"\" ||\n        !isFinite(n) || Math.abs(n) > limit) {\n        n = Number(fallback);\n        if (fallback === undefined || fallback === null || fallback === \"\" ||\n            !isFinite(n) || Math.abs(n) > limit) { return null; }\n    }\n    return n;\n};\nconst lat = coord(b.lat, env.get(\"WEATHER_DEFAULT_LAT\"), 90);\nconst lon = coord(b.lon, env.get(\"WEATHER_DEFAULT_LON\"), 180);\n\n// The location is echoed back in the response, never interpolated into a URL.\nmsg.alert_location = typeof b.location === \"string\"\n    ? b.location.replace(/[\\u0000-\\u001f\\u007f]/g, \" \").slice(0, 120)\n    : null;\n\nmsg.method = \"GET\";\nmsg.headers = {\n    \"Accept\": \"application/geo+json\",\n    \"User-Agent\": env.get(\"PUFFPAI_USER_AGENT\") || \"PuffPAI/1.0 (node-red)\"\n};\nmsg.requestTimeout = 15000;\ndelete msg.payload;\nif (lat === null || lon === null) {\n    node.log(\"no coordinates set (lat/lon or WEATHER_DEFAULT_LAT/LON), skipping the alerts call\");\n    // The scheduled run has no caller to answer.\n    if (!msg.res) { return null; }\n    // A webhook caller must get an answer: with no msg.url the request node\n    // raises \"no url\" to this tab's catch node, and \"request failed\" answers\n    // with location_unset.\n    msg.location_unset = true;\n    delete msg.url;\n    return msg;\n}\nmsg.url = \"https://api.weather.gov/alerts/active?point=\" +\n    encodeURIComponent(lat + \",\" + lon);\n// Bridge switch: this node is about to reach api.weather.gov, which the backend's\n// `weather` switch covers. Ask the backend first and go out only on a clear yes.\n// A closed switch, a missing key, an unreachable backend or an unclear answer\n// all skip the call. The key comes from env only and goes only to\n// PUFFPAI_API_URL (see README, credential/host pairing).\nconst bridge = await (function askBridge(doorId) {\n    return new Promise(function (resolve) {\n        const base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\n        const apiKey = env.get(\"PUFFPAI_API_KEY\") || \"\";\n        const lib = /^https:\\/\\//i.test(base) ? bridgeHttps\n            : (/^http:\\/\\//i.test(base) ? bridgeHttp : null);\n        let settled = false;\n        const finish = function (open, why) {\n            if (!settled) { settled = true; resolve({ open: open, why: why }); }\n        };\n        if (!lib) { finish(false, \"PUFFPAI_API_URL is not an http(s) address\"); return; }\n        const headers = { \"Accept\": \"application/json\" };\n        if (apiKey) { headers[\"X-API-Key\"] = apiKey; }\n        try {\n            const req = lib.request(base + \"/system/egress/door/\" + doorId,\n                { method: \"GET\", headers: headers, timeout: 5000 }, function (res) {\n                    let body = \"\";\n                    res.setEncoding(\"utf8\");\n                    res.on(\"data\", function (chunk) {\n                        if (body.length < 16384) { body += chunk; }\n                    });\n                    res.on(\"error\", function () { finish(false, \"the backend's answer broke off\"); });\n                    res.on(\"end\", function () {\n                        let answer = null;\n                        try { answer = JSON.parse(body); } catch (e) { answer = null; }\n                        if (res.statusCode === 200 && answer && answer.success === true &&\n                                answer.id === doorId && answer.open === true) {\n                            finish(true, \"\");\n                        } else if (res.statusCode === 200 && answer && answer.open === false) {\n                            finish(false, \"the switch is off\");\n                        } else {\n                            finish(false, \"the backend answered HTTP \" + res.statusCode +\n                                \" without a clear yes\");\n                        }\n                    });\n                });\n            req.on(\"timeout\", function () {\n                req.destroy();\n                finish(false, \"the backend did not answer in time\");\n            });\n            req.on(\"error\", function () { finish(false, \"the backend could not be reached\"); });\n            req.end();\n        } catch (e) {\n            finish(false, \"the backend could not be asked\");\n        }\n    });\n})(\"weather\");\nif (!bridge.open) {\n    const reason = \"Bridge switch 'weather' is not open (\" + bridge.why +\n        \"), so nothing was sent to api.weather.gov.\";\n    delete msg.url;\n    delete msg.headers;\n    delete msg.statusCode;\n    // A webhook run is answered through this tab's catch handler; a scheduled\n    // run has no one to answer and only logs.\n    if (msg.res) { node.error(reason, msg); } else { node.warn(reason); }\n    return null;\n}\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [
+      {
+        "var": "bridgeHttp",
+        "module": "http"
+      },
+      {
+        "var": "bridgeHttps",
+        "module": "https"
+      }
+    ],
+    "x": 410,
+    "y": 280,
+    "wires": [
+      [
+        "8504a658c2325bba"
+      ]
+    ]
+  },
+  {
+    "id": "cd186be06e82d8e8",
+    "type": "http in",
+    "z": "290fe43da075e6ce",
+    "name": "",
+    "url": "/webhook/weather-alerts",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 240,
+    "wires": [
+      [
+        "52e7b3fb0849b21b"
+      ]
+    ]
+  },
+  {
+    "id": "9ba647e6d7980964",
+    "type": "inject",
+    "z": "290fe43da075e6ce",
+    "name": "every 2 hours",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "crontab": "0 */2 * * *",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "scheduled",
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 190,
+    "y": 360,
+    "wires": [
+      [
+        "52e7b3fb0849b21b"
+      ]
+    ]
+  },
+  {
+    "id": "d63b990fe2279a10",
+    "type": "function",
+    "z": "290fe43da075e6ce",
+    "name": "request failed",
+    "func": "// Error handler for this tab's HTTP Request nodes. Answers the webhook\n// explicitly so the HTTP client never hangs.\nif (msg.location_unset) {\n    // \"prep NOAA alerts request\" skipped the call: no coordinates are set.\n    msg.statusCode = 422;\n    msg.payload = {\n        error: \"location_unset\",\n        detail: \"No coordinates: post lat/lon or set WEATHER_DEFAULT_LAT and WEATHER_DEFAULT_LON.\"\n    };\n} else {\n    node.warn(\"request failed: \" + (msg.error && msg.error.message));\n    msg.statusCode = 502;\n    msg.payload = {\n        error: \"upstream_request_failed\",\n        detail: (msg.error && msg.error.message) || \"unknown error\",\n        node: (msg.error && msg.error.source && msg.error.source.name) || \"\"\n    };\n}\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 850,
+    "y": 460,
+    "wires": [
+      [
+        "e1c2900419df56dd"
+      ]
+    ]
+  },
+  {
+    "id": "b428c1ac1bc1f961",
+    "type": "catch",
+    "z": "290fe43da075e6ce",
+    "name": "on request error",
+    "scope": [
+      "8504a658c2325bba",
+      "52e7b3fb0849b21b"
+    ],
+    "uncaught": false,
+    "x": 630,
+    "y": 460,
+    "wires": [
+      [
+        "d63b990fe2279a10"
+      ]
+    ]
+  },
+  {
+    "id": "98c6e66ec742d0b0",
+    "type": "tab",
+    "label": "puffpai_voice",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "ace55a4afe82ca20",
+    "type": "http response",
+    "z": "98c6e66ec742d0b0",
+    "name": "respond",
+    "statusCode": "",
+    "headers": {},
+    "x": 1510,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "e87b178e76dce177",
+    "type": "function",
+    "z": "98c6e66ec742d0b0",
+    "name": "respond accepted",
+    "func": "// Echoes the text the webhook received. This node runs after \"Update HA State\",\n// whose response has replaced msg.payload, so the original text comes from\n// msg.voice_text (set by \"prep conversation request\").\nmsg.statusCode = 200;\nmsg.payload = {\n    status: \"accepted\",\n    message: \"PuffPAI is processing your request.\",\n    received_text: msg.voice_text || \"no text received\",\n    timestamp: new Date().toISOString()\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1290,
+    "y": 200,
+    "wires": [
+      [
+        "ace55a4afe82ca20"
+      ]
+    ]
+  },
+  {
+    "id": "6521ce300ffc907e",
+    "type": "http request",
+    "z": "98c6e66ec742d0b0",
+    "name": "POST HA input_text/set_value",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 1070,
+    "y": 200,
+    "wires": [
+      [
+        "e87b178e76dce177"
+      ]
+    ]
+  },
+  {
+    "id": "89a93fbb98a0ffbc",
+    "type": "function",
+    "z": "98c6e66ec742d0b0",
+    "name": "build HA state update",
+    "func": "// SECURITY -- trust-domain pairing (see nodered_flows/README.md).\n// This flow performs STATE-CHANGING Home Assistant calls, so the host is taken\n// from env/config ONLY. A body-supplied ha_url/ha_token is not honoured at all:\n// there is no branch that could pair the env HA_TOKEN with a caller-chosen host,\n// and no branch that lets a caller aim these actions at another Home Assistant.\nconst clean = function (v) {\n    if (typeof v !== \"string\") { return \"\"; }\n    const s = v.trim();\n    return /[\\u0000-\\u001f\\u007f]/.test(s) ? \"\" : s;\n};\nlet haHost = clean(env.get(\"HA_URL\")) || \"homeassistant.local:8123\";\nif (!/^https?:\\/\\//.test(haHost)) { haHost = \"http://\" + haHost; }\nhaHost = haHost.replace(/\\/$/, \"\");\nconst haToken = clean(env.get(\"HA_TOKEN\"));\n\n// Writes the reply text to Home Assistant. The credential is env HA_TOKEN sent\n// as `Authorization: Bearer ...`, the header every other HA call in this repo\n// uses; the host is env HA_URL.\nconst resp = (typeof msg.payload === \"object\" && msg.payload) || {};\nconst clean_response = resp.response;\n\n// The entity id is a constant, never taken from the request body: this is a\n// state-changing HA service call and a caller must not be able to redirect it to\n// another entity.\nconst value = String(clean_response ?? resp.response ?? resp.reply_text ?? \"\")\n    .replace(/\\s+/g, \" \")\n    .trim()\n    .slice(0, 250);\n\nmsg.method = \"POST\";\nmsg.url = haHost + \"/api/services/input_text/set_value\";\nmsg.headers = { \"Accept\": \"application/json\", \"Content-Type\": \"application/json\" };\nif (haToken) { msg.headers[\"Authorization\"] = \"Bearer \" + haToken; }\nmsg.requestTimeout = 5000;\nmsg.payload = { entity_id: \"input_text.puffpai_last_reply\", value: value };\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 850,
+    "y": 200,
+    "wires": [
+      [
+        "6521ce300ffc907e"
+      ]
+    ]
+  },
+  {
+    "id": "1b3f41563b6d8bb6",
+    "type": "http request",
+    "z": "98c6e66ec742d0b0",
+    "name": "POST /conversation",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 630,
+    "y": 200,
+    "wires": [
+      [
+        "89a93fbb98a0ffbc"
+      ]
+    ]
+  },
+  {
+    "id": "9cc5cfc63cfb7136",
+    "type": "function",
+    "z": "98c6e66ec742d0b0",
+    "name": "prep conversation request",
+    "func": "// SECURITY: the backend base URL is config-domain only (env PUFFPAI_API_URL /\n// localhost). It is never taken from the request body -- that would send the env\n// PUFFPAI_API_KEY to a caller-chosen host.\nconst base = (env.get(\"PUFFPAI_API_URL\") || \"http://localhost:8000\").replace(/\\/$/, \"\");\nconst apiKey = env.get(\"PUFFPAI_API_KEY\") || \"\";\nconst b = (typeof msg.payload === \"object\" && msg.payload) || {};\nconst text = typeof b.text === \"string\" ? b.text : \"\";\n// Kept for the response body -- see \"respond accepted\".\nmsg.voice_text = text;\n\nmsg.method = \"POST\";\nmsg.url = base + \"/conversation\";\nmsg.headers = { \"Content-Type\": \"application/json\", \"Accept\": \"application/json\" };\nif (apiKey) { msg.headers[\"X-API-Key\"] = apiKey; }\n// Bounded so a wedged LLM cannot hold the request open indefinitely.\nmsg.requestTimeout = 120000;\nmsg.payload = { text: text };\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 410,
+    "y": 200,
+    "wires": [
+      [
+        "1b3f41563b6d8bb6"
+      ]
+    ]
+  },
+  {
+    "id": "6e9e5de75f60763a",
+    "type": "http in",
+    "z": "98c6e66ec742d0b0",
+    "name": "",
+    "url": "/webhook/puffpai_voice",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 200,
+    "wires": [
+      [
+        "9cc5cfc63cfb7136"
+      ]
+    ]
+  },
+  {
+    "id": "8258d98a684a0338",
+    "type": "function",
+    "z": "98c6e66ec742d0b0",
+    "name": "request failed",
+    "func": "// Error handler for this tab's HTTP Request nodes. Answers the webhook\n// explicitly with a 502 so the HTTP client never hangs.\nnode.warn(\"request failed: \" + (msg.error && msg.error.message));\nmsg.statusCode = 502;\nmsg.payload = {\n    error: \"upstream_request_failed\",\n    detail: (msg.error && msg.error.message) || \"unknown error\",\n    node: (msg.error && msg.error.source && msg.error.source.name) || \"\"\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1070,
+    "y": 340,
+    "wires": [
+      [
+        "ace55a4afe82ca20"
+      ]
+    ]
+  },
+  {
+    "id": "fa36abb25496fc42",
+    "type": "catch",
+    "z": "98c6e66ec742d0b0",
+    "name": "on request error",
+    "scope": [
+      "1b3f41563b6d8bb6",
+      "6521ce300ffc907e"
+    ],
+    "uncaught": false,
+    "x": 850,
+    "y": 340,
+    "wires": [
+      [
+        "8258d98a684a0338"
+      ]
+    ]
+  },
+  {
+    "id": "f758609826de0856",
+    "type": "tab",
+    "label": "good_morning",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "fca3b5f09fa51daf",
+    "type": "http response",
+    "z": "f758609826de0856",
+    "name": "respond",
+    "statusCode": "",
+    "headers": {},
+    "x": 1290,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "cf1b92ff01ca4ab3",
+    "type": "function",
+    "z": "f758609826de0856",
+    "name": "respond good morning",
+    "func": "const state = (typeof msg.payload === \"object\" && msg.payload) || {};\nmsg.statusCode = 200;\nmsg.payload = {\n    success: true,\n    routine: \"good-morning\",\n    lights: \"on\",\n    brightness_pct: msg.brightness_pct,\n    temperature: state.state || \"unknown\"\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1070,
+    "y": 200,
+    "wires": [
+      [
+        "fca3b5f09fa51daf"
+      ]
+    ]
+  },
+  {
+    "id": "180c0e53f05bb42f",
+    "type": "http request",
+    "z": "f758609826de0856",
+    "name": "GET HA temperature sensor",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 850,
+    "y": 200,
+    "wires": [
+      [
+        "cf1b92ff01ca4ab3"
+      ]
+    ]
+  },
+  {
+    "id": "39ab6c42f3ff665c",
+    "type": "function",
+    "z": "f758609826de0856",
+    "name": "prep get temperature",
+    "func": "// SECURITY -- trust-domain pairing (see nodered_flows/README.md).\n// This flow performs STATE-CHANGING Home Assistant calls, so the host is taken\n// from env/config ONLY. A body-supplied ha_url/ha_token is not honoured at all:\n// there is no branch that could pair the env HA_TOKEN with a caller-chosen host,\n// and no branch that lets a caller aim these actions at another Home Assistant.\nconst clean = function (v) {\n    if (typeof v !== \"string\") { return \"\"; }\n    const s = v.trim();\n    return /[\\u0000-\\u001f\\u007f]/.test(s) ? \"\" : s;\n};\nlet haHost = clean(env.get(\"HA_URL\")) || \"homeassistant.local:8123\";\nif (!/^https?:\\/\\//.test(haHost)) { haHost = \"http://\" + haHost; }\nhaHost = haHost.replace(/\\/$/, \"\");\nconst haToken = clean(env.get(\"HA_TOKEN\"));\n\nmsg.method = \"GET\";\nmsg.url = haHost + \"/api/states/sensor.openweathermap_temperature\";\nmsg.headers = { \"Accept\": \"application/json\" };\nif (haToken) { msg.headers[\"Authorization\"] = \"Bearer \" + haToken; }\nmsg.requestTimeout = 5000;\ndelete msg.payload;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 630,
+    "y": 200,
+    "wires": [
+      [
+        "180c0e53f05bb42f"
+      ]
+    ]
+  },
+  {
+    "id": "5d3a970c85f37e6b",
+    "type": "http request",
+    "z": "f758609826de0856",
+    "name": "POST HA light/turn_on",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 410,
+    "y": 200,
+    "wires": [
+      [
+        "39ab6c42f3ff665c"
+      ]
+    ]
+  },
+  {
+    "id": "a898d253dfb0abcb",
+    "type": "function",
+    "z": "f758609826de0856",
+    "name": "prep turn on lights",
+    "func": "// SECURITY -- trust-domain pairing (see nodered_flows/README.md).\n// This flow performs STATE-CHANGING Home Assistant calls, so the host is taken\n// from env/config ONLY. A body-supplied ha_url/ha_token is not honoured at all:\n// there is no branch that could pair the env HA_TOKEN with a caller-chosen host,\n// and no branch that lets a caller aim these actions at another Home Assistant.\nconst clean = function (v) {\n    if (typeof v !== \"string\") { return \"\"; }\n    const s = v.trim();\n    return /[\\u0000-\\u001f\\u007f]/.test(s) ? \"\" : s;\n};\nlet haHost = clean(env.get(\"HA_URL\")) || \"homeassistant.local:8123\";\nif (!/^https?:\\/\\//.test(haHost)) { haHost = \"http://\" + haHost; }\nhaHost = haHost.replace(/\\/$/, \"\");\nconst haToken = clean(env.get(\"HA_TOKEN\"));\n\n// The only caller-controlled value is the brightness, and it is range-checked:\n// entity_id stays hardcoded so a caller cannot aim a light service call at an\n// arbitrary entity.\nconst b = (typeof msg.payload === \"object\" && msg.payload) || {};\nlet brightness = Number(b.brightness);\nif (!isFinite(brightness)) { brightness = 70; }\nbrightness = Math.min(100, Math.max(1, Math.round(brightness)));\nmsg.brightness_pct = brightness;\n\nmsg.method = \"POST\";\nmsg.url = haHost + \"/api/services/light/turn_on\";\nmsg.headers = { \"Accept\": \"application/json\", \"Content-Type\": \"application/json\" };\nif (haToken) { msg.headers[\"Authorization\"] = \"Bearer \" + haToken; }\nmsg.requestTimeout = 5000;\nmsg.payload = { entity_id: \"light.living_room\", brightness_pct: brightness };\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 190,
+    "y": 280,
+    "wires": [
+      [
+        "5d3a970c85f37e6b"
+      ]
+    ]
+  },
+  {
+    "id": "2ac5f222a3c334e2",
+    "type": "http in",
+    "z": "f758609826de0856",
+    "name": "",
+    "url": "/webhook/good-morning",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 200,
+    "wires": [
+      [
+        "a898d253dfb0abcb"
+      ]
+    ]
+  },
+  {
+    "id": "ad849413557c5c5a",
+    "type": "function",
+    "z": "f758609826de0856",
+    "name": "request failed",
+    "func": "// Error handler for this tab's HTTP Request nodes. Answers the webhook\n// explicitly with a 502 so the HTTP client never hangs.\nnode.warn(\"request failed: \" + (msg.error && msg.error.message));\nmsg.statusCode = 502;\nmsg.payload = {\n    error: \"upstream_request_failed\",\n    detail: (msg.error && msg.error.message) || \"unknown error\",\n    node: (msg.error && msg.error.source && msg.error.source.name) || \"\"\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 850,
+    "y": 340,
+    "wires": [
+      [
+        "fca3b5f09fa51daf"
+      ]
+    ]
+  },
+  {
+    "id": "644ebac7b0ed5705",
+    "type": "catch",
+    "z": "f758609826de0856",
+    "name": "on request error",
+    "scope": [
+      "5d3a970c85f37e6b",
+      "180c0e53f05bb42f"
+    ],
+    "uncaught": false,
+    "x": 630,
+    "y": 340,
+    "wires": [
+      [
+        "ad849413557c5c5a"
+      ]
+    ]
+  },
+  {
+    "id": "563fe45ebf2b9b3e",
+    "type": "tab",
+    "label": "leaving_home",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "4abb73ddb7e6c8f1",
+    "type": "http response",
+    "z": "563fe45ebf2b9b3e",
+    "name": "respond",
+    "statusCode": "",
+    "headers": {},
+    "x": 1730,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "dc1c34261a971082",
+    "type": "function",
+    "z": "563fe45ebf2b9b3e",
+    "name": "respond leaving home",
+    "func": "// This routine only turns lights off; it makes no lock or alarm service calls.\nmsg.statusCode = 200;\nmsg.payload = {\n    success: true,\n    routine: \"leaving-home\",\n    lights: \"off\",\n    note: \"lights only; no lock or alarm calls\"\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1510,
+    "y": 200,
+    "wires": [
+      [
+        "4abb73ddb7e6c8f1"
+      ]
+    ]
+  },
+  {
+    "id": "00daeaaaf34350e8",
+    "type": "http request",
+    "z": "563fe45ebf2b9b3e",
+    "name": "POST HA light/turn_off",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 410,
+    "y": 200,
+    "wires": [
+      [
+        "dc1c34261a971082"
+      ]
+    ]
+  },
+  {
+    "id": "0b56a47d3b57c2e6",
+    "type": "function",
+    "z": "563fe45ebf2b9b3e",
+    "name": "prep turn off all lights",
+    "func": "// SECURITY -- trust-domain pairing (see nodered_flows/README.md).\n// This flow performs STATE-CHANGING Home Assistant calls, so the host is taken\n// from env/config ONLY. A body-supplied ha_url/ha_token is not honoured at all:\n// there is no branch that could pair the env HA_TOKEN with a caller-chosen host,\n// and no branch that lets a caller aim these actions at another Home Assistant.\nconst clean = function (v) {\n    if (typeof v !== \"string\") { return \"\"; }\n    const s = v.trim();\n    return /[\\u0000-\\u001f\\u007f]/.test(s) ? \"\" : s;\n};\nlet haHost = clean(env.get(\"HA_URL\")) || \"homeassistant.local:8123\";\nif (!/^https?:\\/\\//.test(haHost)) { haHost = \"http://\" + haHost; }\nhaHost = haHost.replace(/\\/$/, \"\");\nconst haToken = clean(env.get(\"HA_TOKEN\"));\n\n// This tab takes NOTHING from the request body: every entity id is a constant\n// and the HA host/token come from env only.\nmsg.method = \"POST\";\nmsg.url = haHost + \"/api/services/light/turn_off\";\nmsg.headers = { \"Accept\": \"application/json\", \"Content-Type\": \"application/json\" };\nif (haToken) { msg.headers[\"Authorization\"] = \"Bearer \" + haToken; }\nmsg.requestTimeout = 5000;\nmsg.payload = { entity_id: \"all\" };\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 190,
+    "y": 280,
+    "wires": [
+      [
+        "00daeaaaf34350e8"
+      ]
+    ]
+  },
+  {
+    "id": "649d4b521a74b6c4",
+    "type": "http in",
+    "z": "563fe45ebf2b9b3e",
+    "name": "",
+    "url": "/webhook/leaving-home",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 200,
+    "wires": [
+      [
+        "0b56a47d3b57c2e6"
+      ]
+    ]
+  },
+  {
+    "id": "6402b67bf0797be9",
+    "type": "function",
+    "z": "563fe45ebf2b9b3e",
+    "name": "request failed",
+    "func": "// Error handler for this tab's HTTP Request nodes. Answers the webhook\n// explicitly with a 502 so the HTTP client never hangs.\nnode.warn(\"request failed: \" + (msg.error && msg.error.message));\nmsg.statusCode = 502;\nmsg.payload = {\n    error: \"upstream_request_failed\",\n    detail: (msg.error && msg.error.message) || \"unknown error\",\n    node: (msg.error && msg.error.source && msg.error.source.name) || \"\"\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1070,
+    "y": 360,
+    "wires": [
+      [
+        "4abb73ddb7e6c8f1"
+      ]
+    ]
+  },
+  {
+    "id": "86788e01216212b5",
+    "type": "catch",
+    "z": "563fe45ebf2b9b3e",
+    "name": "on request error",
+    "scope": [
+      "00daeaaaf34350e8"
+    ],
+    "uncaught": false,
+    "x": 850,
+    "y": 360,
+    "wires": [
+      [
+        "6402b67bf0797be9"
+      ]
+    ]
+  },
+  {
+    "id": "13ac5e241a4ded1a",
+    "type": "tab",
+    "label": "security_check",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "ca3dad7c433907f6",
+    "type": "http response",
+    "z": "13ac5e241a4ded1a",
+    "name": "respond",
+    "statusCode": "",
+    "headers": {},
+    "x": 1070,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "0668296ed5d7d006",
+    "type": "function",
+    "z": "13ac5e241a4ded1a",
+    "name": "analyze security status",
+    "func": "// Summarises lock, camera, motion and alarm entities and builds the response.\nconst states = msg.payload;\nconst results = {\n  doors: { locked: 0, unlocked: 0, entities: [] },\n  cameras: { active: 0, inactive: 0, entities: [] },\n  motion_sensors: { on: 0, off: 0, entities: [] },\n  alarm: { state: 'unknown', entity: null }\n};\n\nif (Array.isArray(states)) {\n  for (const entity of states) {\n    const id = entity.entity_id || '';\n    const state = entity.state || '';\n\n    if (id.startsWith('lock.')) {\n      if (state === 'locked') results.doors.locked++;\n      else results.doors.unlocked++;\n      if (state !== 'locked') results.doors.entities.push(id);\n    }\n\n    if (id.startsWith('camera.')) {\n      if (state === 'recording' || state === 'streaming' || state === 'idle') results.cameras.active++;\n      else results.cameras.inactive++;\n      if (state !== 'recording' && state !== 'streaming' && state !== 'idle') results.cameras.entities.push(id);\n    }\n\n    if (id.startsWith('binary_sensor.') && id.includes('motion')) {\n      if (state === 'on') results.motion_sensors.on++;\n      else results.motion_sensors.off++;\n    }\n\n    if (id.startsWith('alarm_control_panel.')) {\n      results.alarm.state = state;\n      results.alarm.entity = id;\n    }\n  }\n}\n\nresults.all_secure = results.doors.unlocked === 0 && results.cameras.inactive === 0;\nresults.issues = [];\nif (results.doors.unlocked > 0) results.issues.push(`${results.doors.unlocked} door(s) unlocked: ${results.doors.entities.join(', ')}`);\nif (results.cameras.inactive > 0) results.issues.push(`${results.cameras.inactive} camera(s) inactive: ${results.cameras.entities.join(', ')}`);\n\nmsg.statusCode = 200;\nmsg.payload = Object.assign({ success: true, routine: 'security-check' }, results);\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 850,
+    "y": 200,
+    "wires": [
+      [
+        "ca3dad7c433907f6"
+      ]
+    ]
+  },
+  {
+    "id": "cc94d9d597256380",
+    "type": "http request",
+    "z": "13ac5e241a4ded1a",
+    "name": "GET HA /api/states",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 630,
+    "y": 200,
+    "wires": [
+      [
+        "0668296ed5d7d006"
+      ]
+    ]
+  },
+  {
+    "id": "0f71830436743003",
+    "type": "function",
+    "z": "13ac5e241a4ded1a",
+    "name": "prep get all device states",
+    "func": "// SECURITY -- trust-domain pairing (see nodered_flows/README.md).\n// This flow performs STATE-CHANGING Home Assistant calls, so the host is taken\n// from env/config ONLY. A body-supplied ha_url/ha_token is not honoured at all:\n// there is no branch that could pair the env HA_TOKEN with a caller-chosen host,\n// and no branch that lets a caller aim these actions at another Home Assistant.\nconst clean = function (v) {\n    if (typeof v !== \"string\") { return \"\"; }\n    const s = v.trim();\n    return /[\\u0000-\\u001f\\u007f]/.test(s) ? \"\" : s;\n};\nlet haHost = clean(env.get(\"HA_URL\")) || \"homeassistant.local:8123\";\nif (!/^https?:\\/\\//.test(haHost)) { haHost = \"http://\" + haHost; }\nhaHost = haHost.replace(/\\/$/, \"\");\nconst haToken = clean(env.get(\"HA_TOKEN\"));\n\n// Read-only, and takes nothing from the request body.\nmsg.method = \"GET\";\nmsg.url = haHost + \"/api/states\";\nmsg.headers = { \"Accept\": \"application/json\" };\nif (haToken) { msg.headers[\"Authorization\"] = \"Bearer \" + haToken; }\nmsg.requestTimeout = 10000;\ndelete msg.payload;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 410,
+    "y": 200,
+    "wires": [
+      [
+        "cc94d9d597256380"
+      ]
+    ]
+  },
+  {
+    "id": "b616be3fd45be19a",
+    "type": "http in",
+    "z": "13ac5e241a4ded1a",
+    "name": "",
+    "url": "/webhook/security-check",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 200,
+    "wires": [
+      [
+        "0f71830436743003"
+      ]
+    ]
+  },
+  {
+    "id": "6c9c9505228649e3",
+    "type": "function",
+    "z": "13ac5e241a4ded1a",
+    "name": "request failed",
+    "func": "// Error handler for this tab's HTTP Request nodes. Answers the webhook\n// explicitly with a 502 so the HTTP client never hangs.\nnode.warn(\"request failed: \" + (msg.error && msg.error.message));\nmsg.statusCode = 502;\nmsg.payload = {\n    error: \"upstream_request_failed\",\n    detail: (msg.error && msg.error.message) || \"unknown error\",\n    node: (msg.error && msg.error.source && msg.error.source.name) || \"\"\n};\n// SECURITY: msg.headers still holds the OUTBOUND request headers (which carry\n// credentials on the error path, because a failed request never overwrites them\n// with the upstream response headers). Node-RED's `http response` node sends\n// msg.headers back to the caller, so it must be cleared before responding.\ndelete msg.headers;\n\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 850,
+    "y": 340,
+    "wires": [
+      [
+        "ca3dad7c433907f6"
+      ]
+    ]
+  },
+  {
+    "id": "0a9dab5356e2f990",
+    "type": "catch",
+    "z": "13ac5e241a4ded1a",
+    "name": "on request error",
+    "scope": [
+      "cc94d9d597256380"
+    ],
+    "uncaught": false,
+    "x": 630,
+    "y": 340,
+    "wires": [
+      [
+        "6c9c9505228649e3"
+      ]
+    ]
+  },
+  {
+    "id": "4a11ce0000000001",
+    "type": "function",
+    "z": "598639b02b37a8d9",
+    "name": "stamp run id",
+    "func": "// One id per health-check run. Fan-out clones inherit it, and both the\n// http-request output and the catch path preserve msg properties, so every\n// part of this run -- including a branch that errors twice over -- carries\n// the same run id for the guard below the probes.\nmsg.health_tick = msg._msgid + \":\" + Date.now();\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 280,
+    "y": 140,
+    "wires": [
+      [
+        "d979d384cb553dfb",
+        "11f01323e07b5235",
+        "53239effea81cd2b"
+      ]
+    ]
+  },
+  {
+    "id": "4a11ce0000000002",
+    "type": "function",
+    "z": "598639b02b37a8d9",
+    "name": "one part per branch per run",
+    "func": "// A failed probe can emit twice: the http request node's own error output\n// AND the catch->'branch failed' path, same topic. Two parts for one branch\n// desync the count-3 join: it completes early on the real run, then the\n// leftover part seeds a second group that fires on the 20s timeout as a\n// PARTIAL object -- and the compile step reads the missing branches as\n// 'down', reporting services down that are up. Keep the first part per\n// (run, branch).\nconst key = String(msg.health_tick || \"no-tick\") + \"|\" + String(msg.topic || \"unknown\");\nconst seen = flow.get(\"health_seen\") || {};\nconst now = Date.now();\nfor (const k of Object.keys(seen)) {\n    if (now - seen[k] > 120000) { delete seen[k]; }  // expire old runs\n}\nif (seen[key]) { return null; }\nseen[key] = now;\nflow.set(\"health_seen\", seen);\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 700,
+    "y": 320,
+    "wires": [
+      [
+        "4a11ce0000000003"
+      ]
+    ]
+  },
+  {
+    "id": "4a11ce0000000003",
+    "type": "function",
+    "z": "598639b02b37a8d9",
+    "name": "collect per run",
+    "func": "// Correlate the three probe branches BY RUN (health_tick). A stock join\n// node keeps one rolling count-3 group shared by every concurrent run, so\n// runs would steal each other's parts and close each other's groups (false\n// 'degraded' reports, hung HTTP responses, ERR_HTTP_HEADERS_SENT). Each run\n// gets its own bucket and its own 20s timer, so no caller can hang and\n// no run can contaminate another.\nconst EXPECTED = [\"puffpai\", \"ollama\", \"homeassistant\"];\nconst WAIT_MS = 20000;\nconst runs = context.get(\"runs\") || {};\nconst tick = String(msg.health_tick || msg._msgid);\nconst topic = String(msg.topic || \"unknown\");\nlet run = runs[tick];\nif (!run) {\n    run = runs[tick] = { parts: {}, msg: null, timer: null };\n    run.timer = setTimeout(function () {\n        delete runs[tick];\n        context.set(\"runs\", runs);\n        for (const t of EXPECTED) {\n            if (!(t in run.parts)) {\n                run.parts[t] = { __error: \"no probe result (plumbing fault)\" };\n            }\n        }\n        const out = run.msg;\n        out.payload = run.parts;\n        node.warn(\"health run \" + tick + \" incomplete after \" + WAIT_MS + \"ms\");\n        node.send(out);\n        node.done();\n    }, WAIT_MS);\n}\nrun.parts[topic] = msg.payload;\nif (!run.msg) { run.msg = msg; }   // res/req are shared refs on clones\nif (EXPECTED.every(function (t) { return t in run.parts; })) {\n    clearTimeout(run.timer);\n    delete runs[tick];\n    context.set(\"runs\", runs);\n    const out = run.msg;\n    out.payload = run.parts;\n    node.send(out);\n    node.done();\n    return null;\n}\ncontext.set(\"runs\", runs);\nreturn null;",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 850,
+    "y": 260,
+    "wires": [
+      [
+        "a778b19a256b6922"
+      ]
+    ]
+  },
+  {
+    "id": "hb_news_feed_note",
+    "type": "comment",
+    "z": "dc00697c161d622c",
+    "name": "Feeds you enable yourself",
+    "info": "This flow ships with NO feed. Set NEWS_RSS_URL in the .env beside docker-compose.nodered.yml to a feed you chose. Even then, each fetch first asks the backend whether the Bridge's `news_rss` switch is open, and goes out only on a clear yes.\n\nWhy it is empty: a feed shipped enabled would be an outbound connection to a host nobody in the house chose. Every host these flows talk to is one you named in the .env.",
+    "x": 190,
+    "y": 60,
+    "wires": []
+  }
+]

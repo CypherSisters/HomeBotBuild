@@ -1,0 +1,181 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# User Data - NEVER COMMIT THESE!
+chat_history/
+feedback_data.jsonl
+home_assistant_config.json
+blocked_devices.json
+
+# Keep templates
+!config/*.template
+!config/indexed_libraries.json.template
+
+# Kiwix Data
+kiwix_rag_db/
+*.zim
+kiwix-library.xml
+
+# AI Models (too large for git)
+*.gguf
+*.bin
+*.safetensors
+models/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+.DS_Store
+*.code-workspace
+
+# OS
+Thumbs.db
+.DS_Store
+*.log
+
+# Secrets & Keys
+*.key
+*.pem
+.env
+*.env
+secrets/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# Temporary files
+*.tmp
+*.bak
+*~
+.cache/
+
+# Secrets
+# Never commit service credentials or vault material.
+data/api_key.txt
+*api_key*.txt
+.env.local
+.env.production
+.env.*.local
+vault_data/
+.vault_key_salt
+**/.claude/settings.local.json
+
+# Media server credentials (Jellyfin API key) — never commit
+config/media_server_config.json
+# TV casting: the least-privilege tv-cast Jellyfin user's token. Never commit.
+config/tv_cast_jellyfin.json
+
+# Runtime state & household data: never commit
+# Four lines to say "ignore data/, except one shipped file", because git
+# cannot re-include a file whose PARENT DIRECTORY is excluded:
+#   1. 'data/' keeps ignoring every data dir at ANY depth (src/puffpai/data/,
+#      etc.) — dropping it for a root-anchored pattern would silently start
+#      tracking those.
+#   2. '!/data/' re-includes the ROOT one as a directory, so that...
+#   3. '/data/*' can exclude its contents, so that...
+#   4. the negation below can re-include the single file it needs to.
+data/
+!/data/
+/data/*
+# The workout library is CONTENT, not state: nothing writes it at runtime, and
+# GET /fitness/program 500s without it.
+!/data/workout_library.json
+app_data/
+config/profiles.json
+# The owner's home point (puffpai.home_point): the house's exact latitude and
+# longitude. Lives in $PUFFPAI_DATA_DIR/config/ on a box, state/config/ in a
+# dev checkout (also covered by state/ below); never tracked, wherever it is.
+home_point.json
+.home_point.*.tmp
+debug_*.png
+*.pid
+
+# Never commit runtime audit logs or nested node_modules
+security_logs/
+# Egress door owner overlay when $PUFFPAI_DATA_DIR is unset (dev checkout).
+state/
+node_modules/
+src/security_logs/
+
+# Deployment-specific knowledge manifest - gold image ships without it
+src/puffpai/indexed_libraries.json
+
+# Household member first names used ONLY by the local build guard
+# (tests/test_no_real_household_in_source.py). NEVER COMMIT.
+.household_names.local
+
+# Zone 3 (the Bridge) — AdGuard Home admin credential, generated per
+# appliance by scripts/zone3_bootstrap_adguard.py. Already covered by *.env
+# above; named explicitly because it is a credential and a future edit to the
+# glob must not silently start committing it.
+config/.zone3.env
+
+# ---------------------------------------------------------------------------
+# Remaining runtime-state and build artifacts.
+# Everything here is either household data or a rebuildable artifact; none of
+# it belongs in a public tree.
+# ---------------------------------------------------------------------------
+backups/
+*.bak
+*.orig
+*.sqlite
+*.sqlite3
+*.db
+*.pkl
+*.pickle
+data/*.db
+dashboard/node_modules/
+dashboard/.next/
+.next/
+dashboard/data/
+dashboard/tsconfig.tsbuildinfo
+*.tsbuildinfo
+.pytest_cache/
+
+# Example/template env files are the ONLY env files that may be tracked.
+# The '*.env' and '.env' rules above are deliberately broad; these two
+# negations keep the templates a fresh clone needs.
+!*.env.example
+!.env.example
+
+# dashboard/.env.production stays IGNORED. Its three
+# NEXT_PUBLIC_* values are non-secret (NEXT_PUBLIC_API_URL is the relative
+# path /api/pai, not a private host), but no real .env file is tracked in
+# this repo — one bright line, so nothing has to be re-reviewed every time
+# someone adds a variable. The template a fresh clone copies is
+# dashboard/.env.production.example.
+
+# Generated avatar images: a per-install cache, created on demand.
+assets/avatars/

@@ -1,0 +1,14 @@
+# Appended to ~/.config/pulse/default.pa on the appliance (after a
+# ".include /etc/pulse/default.pa" line, which must come first or the system
+# config is replaced rather than extended).
+#
+# Why a second socket: puffpai-api runs with ProtectHome=true, which bind-mounts
+# /run/user to systemd inaccessible dir. The standard Pulse socket at
+# /run/user/1000/pulse/native is therefore unreachable from inside the unit, and
+# every volume command answers "I could not reach the speaker mixer". A
+# BindPaths= drop-in may not fix it -- the mask is a read-only inaccessible
+# mount, so systemd cannot create a mountpoint under it to bind into, and the
+# bind silently never materialises. /data/puffpai IS in the unit
+# ReadWritePaths, so a socket there is reachable with no root and no sandbox
+# change. Pulse recreates it cleanly over a stale file.
+load-module module-native-protocol-unix socket=/data/puffpai/state/pulse.sock

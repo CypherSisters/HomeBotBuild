@@ -1,0 +1,39 @@
+{
+  "schema": "puffpai_package/v1",
+  "id": "discover",
+  "kind": "skill",
+  "version": "1.0.0",
+  "author": "puffpai",
+  "license": "Apache-2.0",
+  "label": "What this machine is",
+  "description": "The census of this machine, and where Ollama answers.",
+  "reads": [
+    "run"
+  ],
+  "writes": "machine",
+  "permissions": {
+    "network_hosts": [],
+    "files": [
+      "data"
+    ],
+    "ha_domains": [],
+    "secrets": []
+  },
+  "doors": [],
+  "secrets": [],
+  "egress": "none",
+  "estimate": {
+    "bytes": 0,
+    "seconds": 0,
+    "basis": "unknown"
+  },
+  "rerun": "idempotent",
+  "undo": "reversible",
+  "blocking": false,
+  "provides": [
+    "machine.census",
+    "machine.ollama_url"
+  ],
+  "needs": [],
+  "builtin": true
+}

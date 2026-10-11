@@ -1,0 +1,11 @@
+{
+  "name": "puffpai-avatars",
+  "version": "1.0.0",
+  "description": "DiceBear avatar generation for PuffPAI",
+  "main": "generate_avatar.js",
+  "dependencies": {
+    "@dicebear/collection": "^9.3.2",
+    "@dicebear/core": "^9.3.2",
+    "@resvg/resvg-js": "^2.6.2"
+  }
+}

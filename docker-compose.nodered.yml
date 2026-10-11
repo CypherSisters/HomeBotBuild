@@ -1,0 +1,82 @@
+# PuffPAI Automation Engine — Node-RED (Apache-2.0)
+#
+# Usage:
+#   docker compose -f docker-compose.nodered.yml up -d
+#   # editor: http://127.0.0.1:1880   (localhost only — never expose this)
+#
+# FLOWS ARE NOT AUTO-DEPLOYED. Two options:
+#   a) Manual import (default, recommended for the first stand-up):
+#        open the editor → menu → Import → clipboard → paste
+#        nodered_flows/flows.json → "new flows" → Deploy.
+#   b) Mount the file: uncomment the read-only bind mount below, which drops
+#      flows.json into /data as Node-RED's active flows file. Do this only on a
+#      fresh volume — it will shadow flows edited in the editor, and Node-RED
+#      cannot write back to a read-only mount.
+#
+# The nodered/node-red image is multi-arch (linux/amd64 + linux/arm64), so the
+# same file works on an x86 box and on the Orin.
+#
+# Environment variables consumed by the flows (see nodered_flows/README.md):
+#   PUFFPAI_API_KEY     — secret; sent as X-API-Key on calls back into PuffPAI
+#   HA_TOKEN            — secret; Home Assistant long-lived token
+#   JELLYFIN_API_KEY    — secret; Jellyfin token
+#   PUFFPAI_API_URL, OLLAMA_URL, HA_URL, JELLYFIN_URL, NEWS_RSS_URL,
+#   WEATHER_DEFAULT_LAT, WEATHER_DEFAULT_LON, PUFFPAI_USER_AGENT — config
+# Put the secrets in a .env file next to this compose file (git-ignored); do
+# NOT inline them here.
+
+services:
+  nodered:
+    image: nodered/node-red:4.0
+    container_name: puffpai-nodered
+    hostname: puffpai-nodered
+    restart: unless-stopped
+    # Default docker0 bridge, NOT a compose-created network: the appliance
+    # firewall, IF you install one, pins its container->host doors to docker0
+    # + 172.17.0.0/16. A user-defined bridge lands on
+    # br-xxxx/172.18.x and gets dropped.
+    network_mode: bridge
+    # Loopback-only bind: the editor has no auth by default, and the webhooks
+    # are called by the PuffPAI backend on the same host.
+    ports:
+      - "127.0.0.1:1880:1880"
+    environment:
+      TZ: "${TZ:-Etc/UTC}"
+      # Flow env vars (all optional; the flows have safe non-secret defaults).
+      PUFFPAI_API_URL: "${PUFFPAI_API_URL:-http://host.docker.internal:8000}"
+      # Secret. Put it in the .env next to this file, never inline here; it
+      # must equal the PUFFPAI_API_KEY in your state directory homebot.env.
+      PUFFPAI_API_KEY: "${PUFFPAI_API_KEY:-}"
+      OLLAMA_URL: "${OLLAMA_URL:-http://host.docker.internal:11434}"
+      HA_URL: "${HA_URL:-http://homeassistant.local:8123}"
+      HA_TOKEN: "${HA_TOKEN:-}"
+      JELLYFIN_URL: "${JELLYFIN_URL:-http://127.0.0.1:8096}"
+      JELLYFIN_API_KEY: "${JELLYFIN_API_KEY:-}"
+      # No feed ships enabled, so the news flows stay inert until you name a
+      # feed here and open the Bridge's news_rss switch.
+      NEWS_RSS_URL: "${NEWS_RSS_URL:-}"
+      WEATHER_DEFAULT_LAT: "${WEATHER_DEFAULT_LAT:-}"
+      WEATHER_DEFAULT_LON: "${WEATHER_DEFAULT_LON:-}"
+      PUFFPAI_USER_AGENT: "${PUFFPAI_USER_AGENT:-PuffPAI/1.0 (node-red)}"
+    volumes:
+      - nodered_data:/data
+      # Option (b) above — pre-seed the flows instead of importing by hand:
+      # - ./nodered_flows/flows.json:/data/flows.json:ro
+    # Lets the container reach the PuffPAI backend / Ollama on the host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    healthcheck:
+      # Node-RED serves its editor on "/" — the same probe the backend's
+      # AutomationClient.is_reachable() uses (nodered.health_path).
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:1880/',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  nodered_data:

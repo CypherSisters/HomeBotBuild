@@ -1,0 +1,5 @@
+{
+  "enabled": true,
+  "url": "http://homeassistant.local:8123",
+  "token": ""
+}

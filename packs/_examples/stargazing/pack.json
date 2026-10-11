@@ -1,0 +1,14 @@
+{
+  "schema": "puffpai_pack/v1",
+  "id": "stargazing",
+  "display_name": "Stargazing pack",
+  "blurb": "One example app, bundled: the observing log from apps/_examples.",
+  "version": "1.0.0",
+  "author": "Cypher Sisters",
+  "license": "Apache-2.0",
+  "posture_min": "offline",
+
+  "apps": [
+    { "id": "sky_log", "version": "1.0.0" }
+  ]
+}

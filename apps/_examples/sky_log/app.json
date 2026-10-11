@@ -1,0 +1,47 @@
+{
+  "schema": "puffpai_app/v1",
+  "id": "sky_log",
+  "name": "Sky Log",
+  "blurb": "An observing log: what you pointed at, when, and how it looked.",
+  "version": "1.0.0",
+  "author": "Cypher Sisters",
+  "license": "Apache-2.0",
+  "order": 400,
+
+  "surfaces": ["instruments.telescope"],
+
+  "data": {
+    "default": {
+      "sessions": [],
+      "targets": [],
+      "equipment": [],
+      "last_updated": ""
+    }
+  },
+
+  "ui": { "route": "/dashboard/apps/sky_log", "icon": "mdiTelescope" },
+
+  "vocabulary": {
+    "keywords": [
+      "sky log",
+      "observing log",
+      "stargazing"
+    ],
+    "examples": [
+      "add tonight to my observing log",
+      "what did i look at last week"
+    ]
+  },
+
+  "doors": [
+    {
+      "hosts": [],
+      "purpose": "None. The log is written by hand and stays on this box.",
+      "data_sent_plain": "nothing"
+    }
+  ],
+  "credential": { "kind": "none" },
+  "children": { "may_be_used_by_minor": true },
+
+  "requires": { "home_assistant": false, "network": false, "ollama": false }
+}

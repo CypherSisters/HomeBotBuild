@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <linearGradient id="cloudGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="keyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#fbbf24;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#f59e0b;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="circuitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#34d399;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#10b981;stop-opacity:1" />
+    </linearGradient>
+    <radialGradient id="glowGrad">
+      <stop offset="0%" style="stop-color:#fbbf24;stop-opacity:0.4" />
+      <stop offset="100%" style="stop-color:#667eea;stop-opacity:0" />
+    </radialGradient>
+  </defs>
+  
+  <!-- Cloud shape -->
+  <g id="cloud">
+    <ellipse cx="100" cy="85" rx="58" ry="35" fill="url(#cloudGrad)" opacity="0.9"/>
+    <circle cx="65" cy="78" r="25" fill="url(#cloudGrad)" opacity="0.8"/>
+    <circle cx="100" cy="65" r="26" fill="url(#cloudGrad)" opacity="0.85"/>
+    <circle cx="135" cy="78" r="25" fill="url(#cloudGrad)" opacity="0.8"/>
+  </g>
+  
+  <!-- Glow -->
+  <circle cx="100" cy="85" r="40" fill="url(#glowGrad)" opacity="0.5"/>
+  
+  <!-- Circuit Brain -->
+  <g id="circuitBrain">
+    <g stroke="url(#circuitGrad)" stroke-width="1.8" fill="none" opacity="0.75">
+      <!-- Top -->
+      <path d="M 100 73 L 100 63 L 90 60" stroke-linecap="round"/>
+      <path d="M 100 63 L 110 60" stroke-linecap="round"/>
+      
+      <!-- Right -->
+      <path d="M 110 85 L 122 85 L 125 80" stroke-linecap="round"/>
+      <path d="M 122 85 L 125 90" stroke-linecap="round"/>
+      
+      <!-- Bottom -->
+      <path d="M 100 97 L 100 107 L 110 110" stroke-linecap="round"/>
+      <path d="M 100 107 L 90 110" stroke-linecap="round"/>
+      
+      <!-- Left -->
+      <path d="M 90 85 L 78 85 L 75 90" stroke-linecap="round"/>
+      <path d="M 78 85 L 75 80" stroke-linecap="round"/>
+    </g>
+    
+    <!-- Nodes -->
+    <g fill="#10b981">
+      <circle cx="90" cy="60" r="3"/>
+      <circle cx="110" cy="60" r="3"/>
+      <circle cx="125" cy="80" r="3"/>
+      <circle cx="125" cy="90" r="3"/>
+      <circle cx="110" cy="110" r="3"/>
+      <circle cx="90" cy="110" r="3"/>
+      <circle cx="75" cy="90" r="3"/>
+      <circle cx="75" cy="80" r="3"/>
+    </g>
+    
+    <!-- Chip details -->
+    <g fill="#ffffff" opacity="0.7">
+      <rect x="88" y="58" width="4" height="4"/>
+      <rect x="108" y="58" width="4" height="4"/>
+      <rect x="123" y="78" width="4" height="4"/>
+      <rect x="123" y="88" width="4" height="4"/>
+      <rect x="108" y="108" width="4" height="4"/>
+      <rect x="88" y="108" width="4" height="4"/>
+      <rect x="73" y="88" width="4" height="4"/>
+      <rect x="73" y="78" width="4" height="4"/>
+    </g>
+  </g>
+  
+  <!-- Golden Key -->
+  <g id="key" transform="translate(100, 85)">
+    <!-- Key head -->
+    <circle cx="0" cy="-10" r="12" fill="url(#keyGrad)" stroke="#ffffff" stroke-width="2"/>
+    <circle cx="0" cy="-10" r="5" fill="#ffffff"/>
+    <circle cx="0" cy="-10" r="7.5" fill="none" stroke="#ffffff" stroke-width="0.8" opacity="0.5"/>
+    
+    <!-- Key shaft -->
+    <rect x="-3" y="2" width="6" height="22" rx="1.5" fill="url(#keyGrad)" stroke="#ffffff" stroke-width="1.2"/>
+    
+    <!-- Key teeth -->
+    <rect x="3" y="15" width="4" height="3" fill="url(#keyGrad)" stroke="#ffffff" stroke-width="0.8"/>
+    <rect x="3" y="19" width="4" height="4" fill="url(#keyGrad)" stroke="#ffffff" stroke-width="0.8"/>
+    
+    <!-- Shadow -->
+    <ellipse cx="0.5" cy="-9" rx="4" ry="2" fill="#000000" opacity="0.25"/>
+    
+    <!-- Highlight -->
+    <circle cx="-2.5" cy="-13" r="2" fill="#ffffff" opacity="0.6"/>
+  </g>
+  
+  <!-- Data particles -->
+  <g opacity="0.5">
+    <circle cx="80" cy="73" r="1.5" fill="#34d399">
+      <animate attributeName="opacity" values="0.3;1;0.3" dur="2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="120" cy="73" r="1.5" fill="#34d399">
+      <animate attributeName="opacity" values="1;0.3;1" dur="2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="80" cy="97" r="1.5" fill="#fbbf24">
+      <animate attributeName="opacity" values="0.4;1;0.4" dur="1.8s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="120" cy="97" r="1.5" fill="#fbbf24">
+      <animate attributeName="opacity" values="1;0.4;1" dur="1.8s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+</svg>

@@ -1,0 +1,511 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Calendar week view, the approved design rendered by the Next route.
+
+   Everything below paints from the canonical tokens defined per palette on
+   html[data-puff-theme] (css/_theme.css:17-32 / :54-60). No literal colour, no
+   `dark:` utility: one rule set, both palettes.
+
+   TYPE FLOOR. At 2560 nothing structural falls below ~14px and no
+   content below ~18px, and every size is vw-clamped so the same rules hold at
+   390. The five scale variables below are the whole vocabulary:
+
+     --t-struct  .56vw -> 14.3px @2560   day-part + day-of-week labels
+     --t-meta    .72vw -> 18.4px @2560   times and counts
+     --t-body    .86vw -> 22.0px @2560   event labels
+     --t-init    .66vw -> 16.9px @2560   the person label on a chip (>=16px)
+     --t-num     1.6vw -> 40.0px @2560   day numbers
+
+   MOTION. One keyframe set, `1 forwards`, and WeekView strips the class on
+   animationend — so a puff-no-motion / prefers-reduced-motion household can
+   never be left holding a paused ring. Nothing here is infinite.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.puff-wk {
+  --t-struct: clamp(11px, 0.56vw, 14.5px);
+  --t-meta: clamp(13px, 0.72vw, 18.5px);
+  --t-body: clamp(15px, 0.86vw, 22px);
+  --t-init: clamp(12px, 0.66vw, 17px);
+  --t-num: clamp(20px, 1.6vw, 40px);
+
+  /* Everything the board is NOT: the shell header, the app head, the filter
+     card, the tab strip and the collapsed add-form header above it, and the
+     footer below. The board takes what is left, so the page fills the wall
+     instead of ending in bare gradient.
+
+     MEASURED, not estimated. A review pass rejected the first
+     value of 608 and measured the real chrome ABOVE the board at 547 (629 in
+     day view, which carries the 7-day picker the page renders outside this
+     surface). Both numbers are correct and both are used below - plus 52px,
+     which is the shell's footer.
+
+     The footer is the part a top-down measurement does not see. Setting the
+     constant to 547 flat does give the predicted 893px board and does clear
+     the day-cell scrollers, but it lands `.puff-app`'s bottom edge exactly on
+     1440 and pushes the footer off the wall: the shell's own scroll container
+     goes from fitting to 1396 into 1344. So the constant is the measured
+     chrome PLUS the footer it has to leave room for.
+
+     html.puff-big-touch grows the footer with the root font size, and 599
+     left its last 8px off the wall, so both constants carry that 8 as well.
+     One pair of numbers that is correct in both touch modes beats a third
+     constant and a media query.
+
+     Re-measure if the shell header, the filter card, the tab strip or the
+     footer change height: the board's top, bottom and height must fit the
+     wall, and no inner scroller may be the shell's own container. */
+  --puff-wk-chrome: 607px;
+
+  display: flex;
+  flex-direction: column;
+  gap: clamp(9px, 0.75vw, 14px);
+  min-width: 0;
+  /* Fill the wall: the whole surface takes the height the chrome above it
+     leaves, and the board takes whatever the strip, the note and the meals
+     row do not. Every one of those rows therefore comes out of the
+     board instead of pushing the page past the bottom of the screen. */
+  height: max(480px, calc(100vh - var(--puff-wk-chrome)));
+}
+
+/* ── Surfaces ── */
+.puff-wk-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 26px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  color: var(--text);
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── The parsed-result strip. Never the transcript. ── */
+.puff-wk-strip {
+  display: flex;
+  align-items: center;
+  gap: clamp(10px, 0.9vw, 18px);
+  flex-wrap: wrap;
+  border: 1px solid var(--sky);
+  border-radius: 16px;
+  background: var(--card2);
+  padding: clamp(9px, 0.7vw, 15px) clamp(13px, 1.1vw, 22px);
+}
+.puff-wk-verb {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: var(--t-struct);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--sky);
+}
+.puff-wk-fields {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: var(--t-meta);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.puff-wk-undo { margin-left: auto; font-weight: 700; letter-spacing: 0.1em; }
+
+/* The 7-day picker is the one row the page renders OUTSIDE this surface, so
+   it is the one case the constant has to know about. Measured 629, plus the
+   same 52px of footer. */
+.puff-wk-dayview { --puff-wk-chrome: 689px; }
+
+/* One honest line when the box predates the occurrences route. */
+.puff-wk-note {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: var(--t-struct);
+  letter-spacing: 0.06em;
+  color: var(--lemon);
+  border: 1px solid var(--lemon);
+  border-radius: 16px;
+  padding: clamp(8px, 0.55vw, 12px) clamp(12px, 1vw, 20px);
+}
+
+/* The empty week says what is missing and one phrase that fills it. */
+.puff-wk-emptyline {
+  display: flex;
+  align-items: center;
+  gap: clamp(10px, 0.9vw, 18px);
+  flex-wrap: wrap;
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: var(--t-meta);
+  color: var(--text2);
+}
+.puff-wk-say { color: var(--text3); }
+
+/* ── Board: grid + rails ── */
+.puff-wk-board {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(260px, 17vw, 380px);
+  gap: clamp(9px, 0.75vw, 14px);
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+}
+.puff-wk-left {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(9px, 0.75vw, 14px);
+  min-height: 0;
+  min-width: 0;
+}
+.puff-wk-left > .puff-wk-card:first-child { flex: 1; min-height: 0; }
+
+.puff-wk-grid,
+.puff-wk-meals {
+  display: grid;
+  grid-template-columns:
+    clamp(72px, 4.8vw, 120px)
+    repeat(var(--puff-wk-cols, 7), minmax(0, 1fr));
+}
+.puff-wk-grid {
+  /* The ALL DAY band shares the height proportionally instead of taking
+     `auto`: an `auto` row sized by its busiest column stole ~50px from the
+     three timed bands, which are where the week actually lives. */
+  grid-template-rows: auto minmax(0, 0.75fr) 1fr 1fr 1fr;
+  height: 100%;
+  min-height: 0;
+}
+
+/* ── Day headers ── */
+.puff-wk-hcell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: clamp(9px, 0.7vw, 15px) clamp(8px, 0.6vw, 13px);
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  min-height: 48px;
+}
+.puff-wk-corner { cursor: default; }
+.puff-wk-hcell:last-child { border-right: 0; }
+.puff-wk-dow {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: var(--t-struct);
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  color: var(--text2);
+}
+.puff-wk-dnum {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-num);
+  font-weight: 700;
+  line-height: 1.12;
+  color: var(--text2);
+}
+.puff-wk-mark {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: var(--t-struct);
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  color: var(--sky);
+  border: 1px solid var(--sky);
+  border-radius: 9999px;
+  padding: 3px 9px;
+  margin-top: 4px;
+}
+/* Today needs no tap: it is the emphasised column of the default view. */
+.puff-wk-dayhead.puff-wk-today .puff-wk-dow,
+.puff-wk-dayhead.puff-wk-today .puff-wk-dnum { color: var(--sky); }
+.puff-wk-today {
+  background: color-mix(in srgb, var(--sky) 7%, transparent);
+  box-shadow: inset 1px 0 0 var(--sky), inset -1px 0 0 var(--sky);
+}
+
+/* ── Band labels and cells ── */
+.puff-wk-rowlab {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: var(--t-struct);
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  color: var(--text2);
+  text-align: right;
+  padding: clamp(9px, 0.7vw, 15px) clamp(7px, 0.55vw, 12px);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.puff-wk-cell {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(4px, 0.3vw, 7px);
+  padding: clamp(5px, 0.38vw, 9px);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+}
+.puff-wk-cell:last-child { border-right: 0; }
+.puff-wk-allrow { background: var(--card2); }
+
+/* ── Event chip: hairline row + person stripe. Not a gradient card. ── */
+.puff-wk-chip {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--pc, var(--text3));
+  border-radius: 16px;
+  background: var(--card2);
+  color: var(--text);
+  padding: clamp(6px, 0.42vw, 10px) clamp(9px, 0.7vw, 15px);
+  cursor: pointer;
+  font: inherit;
+  min-height: 48px;
+  flex: none;
+}
+.puff-wk-chip:hover { border-color: var(--pc, var(--text3)); background: var(--chip); }
+.puff-wk-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: clamp(6px, 0.5vw, 12px);
+}
+.puff-wk-top:empty { display: none; }
+.puff-wk-t {
+  display: block;
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-meta);
+  font-weight: 600;
+  color: var(--text2);
+}
+.puff-wk-n {
+  display: block;
+  margin-top: 1px;
+  font-size: var(--t-body);
+  font-weight: 600;
+  line-height: 1.24;
+  overflow-wrap: anywhere;
+}
+/* Colour separates three people; this label is the identity of record and is
+   why a fourth person is safe. */
+.puff-wk-who {
+  display: block;
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: var(--t-init);
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  color: var(--pc, var(--text2));
+}
+
+@keyframes puffWkLand {
+  0% { box-shadow: 0 0 0 0 var(--pc, var(--sky)); }
+  70% { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.puff-wk-landed {
+  animation: puffWkLand 600ms ease-out 1 forwards;
+  border-color: var(--pc, var(--sky));
+}
+
+/* ── Meals strip. Rendered only when the document carries dinners. ── */
+.puff-wk-meals { flex: none; }
+.puff-wk-meals .puff-wk-rowlab,
+.puff-wk-meals .puff-wk-cell {
+  border-bottom: 0;
+  justify-content: center;
+  min-height: clamp(56px, 5vh, 86px);
+}
+.puff-wk-meal { font-size: var(--t-body); font-weight: 600; line-height: 1.24; }
+.puff-wk-meal-off {
+  color: var(--text2);
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: var(--t-meta);
+}
+
+/* ── Rails ── */
+.puff-wk-rails {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(9px, 0.75vw, 14px);
+  min-height: 0;
+  min-width: 0;
+}
+.puff-wk-rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: clamp(12px, 0.95vw, 19px) clamp(13px, 1vw, 20px);
+}
+/* Tasks absorbs the spare height, Reminders takes what it needs.
+   `flex: 1` on both split the column 50/50, which scrolled the Tasks rail at
+   four tasks while the Reminders rail sat half empty - dead space and a
+   scrollbar at the same time. Reminders is short by nature (label and time,
+   no person row), so it is the one that should be content-sized. */
+.puff-wk-rail:first-child { flex: 1 1 auto; }
+.puff-wk-rail:last-child { flex: 0 0 auto; max-height: 50%; }
+.puff-wk-railhead {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: none;
+  margin: 0 0 clamp(9px, 0.7vw, 14px);
+  font-weight: 700;
+  letter-spacing: 0.15em;
+}
+.puff-wk-ct { margin-left: auto; font-variant-numeric: tabular-nums; }
+.puff-wk-raillist {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(6px, 0.5vw, 10px);
+  overflow-y: auto;
+  min-height: 0;
+}
+.puff-wk-quiet {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: var(--t-struct);
+  color: var(--text2);
+  margin: 0;
+}
+.puff-wk-overdue {
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: var(--t-meta);
+  font-weight: 700;
+  color: var(--puff-red);
+}
+
+/* ── The kit's shared caption clamp inside the board ──────────────────────
+   .puff-cap in _apps.css is sized for a list page: at 2560 it measures 12.8px,
+   under the wall floor. Inside the board it takes the board's own scale. */
+.puff-wk .puff-cap { font-size: var(--t-struct); }
+
+/* ── Rail rows ────────────────────────────────────────────────────────────
+   The kit's .puff-row is a full-width one-line list row. In a ~380px rail its
+   label, person label, due field and control collide, so the rail gets a
+   two-line row of its own built from the same vocabulary as a chip.
+   `flex: none` matters: without it the column flex shrinks the rows and the
+   label escapes the box. */
+.puff-wk-railrow {
+  display: flex;
+  align-items: center;
+  gap: clamp(8px, 0.6vw, 14px);
+  flex: none;
+  min-height: 48px;
+  padding: clamp(7px, 0.55vw, 12px) clamp(9px, 0.7vw, 15px);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--pc, var(--text3));
+  border-radius: 16px;
+  background: var(--card2);
+  color: var(--text);
+}
+/* A reminder carries no person colour and no person label. */
+.puff-wk-plain { border-left-color: var(--line); justify-content: space-between; }
+.puff-wk-railmain { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.puff-wk-railmeta { display: flex; align-items: baseline; gap: clamp(8px, 0.6vw, 14px); }
+.puff-wk-railmeta .puff-wk-who { margin-top: 0; }
+
+/* ── Lead cards above the board ───────────────────────────────────────────
+   The person filter and the tab strip keep every capability they had; they
+   just stop spending 24px margins and 20px padding each on a wall where that
+   height belongs to the week. */
+.puff-wk-lead { margin-bottom: clamp(8px, 0.6vw, 12px) !important; }
+.puff-wk-lead.puff-card,
+.puff-wk-lead > div:first-child { padding-top: 6px; padding-bottom: 6px; }
+
+/* ── The view switch and the day picker ── */
+.puff-wk-seg {
+  display: inline-flex;
+  gap: 2px;
+  background: var(--chip);
+  border-radius: 9999px;
+  padding: 3px;
+}
+.puff-wk-seg > button {
+  min-height: 48px;
+  padding: 0 clamp(14px, 1vw, 24px);
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--text2);
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: var(--t-struct, clamp(11px, 0.56vw, 14.5px));
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  cursor: pointer;
+}
+.puff-wk-seg > button[aria-pressed="true"] {
+  background: var(--card2);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+/* The picker scrolls inside its own container, so the body never does. */
+.puff-wk-daypick {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 4px;
+  flex: none;
+}
+.puff-wk-daypick > button {
+  flex: none;
+  min-width: 48px;
+  min-height: 52px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card2);
+  color: var(--text2);
+  cursor: pointer;
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: clamp(12px, 0.56vw, 14.5px);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.puff-wk-daypick > button[aria-pressed="true"] {
+  color: var(--sky);
+  border-color: var(--sky);
+}
+
+/* ── The honesty badge: --lemon, solid border, >=14px. ── */
+.puff-sample {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-jbmono), ui-monospace, monospace;
+  font-size: clamp(0.875rem, 0.56vw, 1rem);
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  color: var(--lemon);
+  border: 1px solid var(--lemon);
+  border-radius: 9999px;
+  padding: 8px 14px;
+  background: transparent;
+}
+
+/* ── Phone: one day, a picker above it, rails below ────────────────────────
+   390 is the target. Nothing clips and the body never scrolls sideways: the
+   day picker scrolls inside itself, chip labels wrap. */
+@media (max-width: 700px) {
+  .puff-wk {
+    --t-struct: 11.5px;
+    --t-meta: 14px;
+    --t-body: 16px;
+    --t-init: 12.5px;
+    --t-num: 26px;
+    --puff-wk-chrome: 0px;
+  }
+  .puff-wk { height: auto; }
+  .puff-wk-board {
+    grid-template-columns: minmax(0, 1fr);
+    flex: none;
+  }
+  .puff-wk-grid,
+  .puff-wk-meals { grid-template-columns: 52px minmax(0, 1fr); }
+  .puff-wk-grid { grid-template-rows: auto auto auto auto auto; height: auto; }
+  .puff-wk-cell { min-height: 72px; overflow-y: visible; }
+  .puff-wk-raillist { overflow-y: visible; }
+  .puff-wk-rail { flex: none; }
+  .puff-wk-undo { margin-left: 0; }
+  .puff-wk-fields { flex-basis: 100%; letter-spacing: 0.02em; }
+}

@@ -1,0 +1,19 @@
+{
+  "schema": "puffpai_skill/v1",
+  "id": "iss_position",
+  "name": "ISS position",
+  "description": "Where the International Space Station is right now, read from a public key-free API.",
+  "version": 1,
+  "author": "owner",
+  "triggers": ["where is the iss", "iss position"],
+  "inputs": {"type": "object", "properties": {}, "required": []},
+  "permissions": {
+    "network_hosts": ["api.wheretheiss.at"],
+    "files": [],
+    "ha_domains": [],
+    "secrets": []
+  },
+  "limits": {"timeout_s": 20, "max_requests": 2, "max_response_bytes": 65536},
+  "tests": ["tests.py"],
+  "source_urls": ["https://wheretheiss.at/w/developer"]
+}

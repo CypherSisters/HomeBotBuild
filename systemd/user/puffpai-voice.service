@@ -1,0 +1,25 @@
+[Unit]
+Description=PuffPAI Voice Assistant (on-box wake -> STT -> brain -> TTS)
+After=pulseaudio.service
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/puffpai/src
+Environment=PUFFPAI_DATA_DIR=/data/puffpai/state
+Environment=PUFF_WAKE_CONFIRM=0
+# Music ducking is configured in the 10-duck.conf drop-in beside this file:
+# PUFF_DUCK_ADDRESSED_LEVEL / PUFF_DUCK_PEEK_LEVEL / PUFF_DUCK_PEEK_ARM /
+# PUFF_DUCK_ON_LISTEN / PUFF_STT_WEAK_LOGPROB. Short version: it ducks only
+# for an addressed exchange, never for merely listening, and a light "peek"
+# duck covers a wake it may have mis-heard over music. See docs/VOICE_DUCKING.md.
+ExecStart=/opt/puffpai/venv/bin/python -m puffpai.voice.service
+# Required by the capture watchdog: when the microphone stream cannot be
+# recovered, service.main() returns 1 on purpose so systemd restarts us.
+# Without that exit a wedged capture PCM would leave the process running and
+# deaf, and this restart policy would never fire.
+Restart=on-failure
+RestartSec=4
+
+[Install]
+WantedBy=default.target

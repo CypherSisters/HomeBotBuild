@@ -1,0 +1,146 @@
+# PuffPAI Zone 3 (the Bridge) — DNS sinkhole
+#
+# WHAT THIS IS
+#   AdGuard Home, running on the appliance itself, as the house's DNS
+#   resolver. It answers every name your devices ask for, records what was
+#   asked, and — once protection is turned on — refuses the names that only
+#   exist to phone home.
+#
+#   It ships INERT in two independent ways, and BOTH have to be undone before
+#   anything on this network changes:
+#     1. Nothing points at it. The router still hands out its own address as
+#        the house DNS server until someone changes that one field.
+#     2. Protection is OFF in the seeded configuration. Even a device that is
+#        pointed here gets every answer resolved; the rules are loaded but
+#        disabled, so the first days are a recording, not a filter.
+#
+# RUN IT
+#   Not by hand — via the unit, so it survives a reboot:
+#       sudo systemctl start puffpai-zone3
+#   Direct equivalent (same command the unit runs):
+#       docker compose -f /opt/puffpai/docker-compose.zone3.yml up -d
+#
+# SEED IT (once, after the first `up`)
+#   python3 /opt/puffpai/scripts/zone3_bootstrap_adguard.py
+#   — completes the first-run wizard non-interactively, sets Quad9-over-DoH
+#   upstream, turns the query log on and protection OFF, and loads the
+#   PuffPAI rule block. It is idempotent; re-running it re-applies the policy.
+#
+# WHY THE ADDRESSES ARE PINNED
+#   53/tcp+udp and 3000/tcp are published on the LAN address ONLY, never on
+#   0.0.0.0:
+#     * binding :53 on all interfaces would collide with the systemd-resolved
+#       stub on 127.0.0.53:53, which is what the appliance itself resolves
+#       through. Zone 3 must never be able to break the box's own name
+#       resolution — that is a fail-closed rule, not a convenience.
+#     * the admin UI additionally gets a loopback publish so the PuffPAI API
+#       can reach it at 127.0.0.1:3000 without going out to the LAN and back.
+#   Docker-published ports are DNAT'd and traverse FORWARD, so they are
+#   governed by a DOCKER-USER hook IF you have one. NOTE: this release ships
+#   NO packet filter and no script that installs one, so on a fresh box the
+#   port bindings below are the only thing limiting reach. Publishing :53 on
+#   the LAN address is intended (that is the point of a house resolver);
+#   the :3000 admin UI on the LAN is not, if you would rather reach it only
+#   over the loopback publication on the next line -- delete the LAN :3000
+#   line in that case.
+#   That is the same door Jellyfin and Calibre-Web use.
+#
+# ZONE3_BIND_IP overrides the LAN address (this box's eno1 address). The
+# appliance holds it by DHCP; if the lease ever moves, set the variable in the
+# compose project's .env rather than editing this file.
+#
+# Pi-hole (the never-deployed legacy path) is RETIRED here: it wants the same
+# :53 and would have to be kept switched off to avoid a port collision, which
+# is not "costs nothing". src/puffpai/zone3/pihole_controller.py stays in the
+# tree for reference.
+
+services:
+  adguard:
+    image: adguard/adguardhome:v0.107.79
+    container_name: puffpai-adguard
+    hostname: puffpai-dns
+    restart: unless-stopped
+    ports:
+      # House DNS — LAN address only (see WHY THE ADDRESSES ARE PINNED).
+      # Host :53 maps to :5353 INSIDE the container; see WHY 5353 below.
+      - "${ZONE3_BIND_IP:-${PUFFPAI_BIND_IP:?set PUFFPAI_BIND_IP to this machine LAN IPv4 address in the .env beside this file (copy .env.example; install.sh --with-services prints the address to use)}}:53:5353/tcp"
+      - "${ZONE3_BIND_IP:-${PUFFPAI_BIND_IP:?set PUFFPAI_BIND_IP to this machine LAN IPv4 address in the .env beside this file (copy .env.example; install.sh --with-services prints the address to use)}}:53:5353/udp"
+      # Admin UI — LAN (for a browser) and loopback (for the PuffPAI API).
+      - "${ZONE3_BIND_IP:-${PUFFPAI_BIND_IP:?set PUFFPAI_BIND_IP to this machine LAN IPv4 address in the .env beside this file (copy .env.example; install.sh --with-services prints the address to use)}}:3000:3000/tcp"
+      - "127.0.0.1:3000:3000/tcp"
+    environment:
+      TZ: "${TZ:-Etc/UTC}"
+    volumes:
+      - adguard_work:/opt/adguardhome/work
+      - adguard_conf:/opt/adguardhome/conf
+    # The box is capped at MODE_50W and shares 62 GB with three resident
+    # models. AdGuard with a custom-rules-only filter set sits well under
+    # this; the cap is here so a runaway filter subscription cannot starve
+    # the engine.
+    mem_limit: 256m
+    # WHY 5353, AND WHY NOT root:
+    #   The published port is the privileged one (host :53); the LISTENER is
+    #   not. AdGuard binds :5353 inside its own netns, Docker's DNAT does the
+    #   translation, and nothing on the LAN has to know. So the resolver runs
+    #   as nobody, not as uid 0 -- which is what the image does by default.
+    #
+    #   Measured on this box, not assumed:
+    #     * uid 0 + cap_drop ALL      -> crash-loop, "creating DNS data dir
+    #       at /opt/adguardhome/work/data: permission denied". The image's
+    #       tree is owned by nobody:nogroup 0755 and root writes it only by
+    #       overriding the mode, i.e. it wants DAC_OVERRIDE.
+    #     * uid 65534 + cap_drop ALL  -> "exec ...: operation not permitted".
+    #       /opt/adguardhome/AdGuardHome carries the FILE capability
+    #       cap_net_bind_service=eip, and execve refuses when a file
+    #       capability is outside the bounding set.
+    #     * uid 65534 + cap_drop ALL + cap_add NET_BIND_SERVICE -> runs.
+    #
+    #     * no-new-privileges:true  -> "this is the first launch of adguard
+    #       home; you must run it as administrator". NNP makes execve IGNORE
+    #       file capabilities, so the effective set came back empty and
+    #       AdGuard's own first-launch permission check (can I bind :53?)
+    #       failed. It is therefore NOT set: it would break the binary rather
+    #       than confine it, and what it would have blocked -- setuid/setgid
+    #       escalation -- is not reachable here anyway, because the ONLY
+    #       capability the bounding set allows is NET_BIND_SERVICE.
+    #
+    #   So NET_BIND_SERVICE is here to satisfy the binary's own file
+    #   capability and its startup self-check, not because anything binds a
+    #   low port in service. It is the only capability in the set, held by
+    #   uid 65534, and it can do nothing but bind ports <1024 inside a
+    #   network namespace that reaches nothing but this container.
+    #
+    #   AdGuard's own DHCP server is never configured, so NET_RAW/NET_ADMIN
+    #   are not wanted either.
+    user: "65534:65534"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    healthcheck:
+      # The container has no dig or curl; AdGuard's image ships busybox wget.
+      #
+      # /login.html, NOT /control/status: once the instance is configured
+      # every /control endpoint answers 401 without credentials (measured on
+      # v0.107.79), and busybox wget treats 401 as failure -- so a
+      # /control/status probe reports "unhealthy" on a perfectly healthy
+      # resolver. The login page is served by the same HTTP listener and needs
+      # no credential, so it proves the process is up without putting the
+      # admin password in the container's health command, `docker inspect`
+      # output, and every `ps` on the box.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/login.html || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  adguard_work:
+    name: puffpai_adguard_work
+  adguard_conf:
+    name: puffpai_adguard_conf

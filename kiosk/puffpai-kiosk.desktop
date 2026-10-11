@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=PuffPAI Kiosk
+Comment=Full-screen PuffPAI dashboard wall display
+Exec=/opt/puffpai-kiosk/kiosk-session.sh
+Type=Application
+DesktopNames=PuffPAI-Kiosk

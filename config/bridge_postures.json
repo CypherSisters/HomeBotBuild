@@ -1,0 +1,67 @@
+{
+  "schema": "bridge_postures/v1",
+  "default": "fenced",
+  "_note": "Copy only. The strictness ordering that the reconciliation math uses lives in code (puffpai.zone_bridge), not here, so editing this file can never loosen a posture.",
+  "postures": [
+    {
+      "id": "open_yard",
+      "label": "Open Yard",
+      "strictness": 0,
+      "recommendable": false,
+      "summary": "Everything you already said yes to happens without asking you again.",
+      "allows": {
+        "lan_devices": "Reaches any device you listed, with no prompt each time.",
+        "actions": "Actions that reach into the world run without a per-use prompt.",
+        "egress": "Outbound doors you switched on stay open while the bot runs.",
+        "consent": "Asked once, when you set it up, and not again at each use."
+      },
+      "costs": "Nothing to click, but nothing to catch a mistake either. A wrong instruction reaches the world before you get a second chance to say no. Worth choosing on purpose, never by accident.",
+      "matches_run_egress": "enumerated"
+    },
+    {
+      "id": "fenced",
+      "label": "Fenced",
+      "strictness": 1,
+      "recommendable": true,
+      "summary": "Your bot can talk to things in your house, and anything that reaches past it is gated.",
+      "allows": {
+        "lan_devices": "Devices on your own network are allowed.",
+        "actions": "Actions are gated at the boundary before they run.",
+        "egress": "Outbound doors are listed one by one and every one starts off.",
+        "consent": "Asked when an action would reach past what you already allowed."
+      },
+      "costs": "You will be asked to confirm now and then. That is the trade for a bot that is useful in the house without being loose about the world outside it.",
+      "matches_run_egress": "island"
+    },
+    {
+      "id": "moat",
+      "label": "Moat",
+      "strictness": 2,
+      "recommendable": true,
+      "summary": "Every outbound call and every action asks you first, every session.",
+      "allows": {
+        "lan_devices": "Allowed, but each reach asks you first.",
+        "actions": "Every action asks, every session. Nothing is remembered as pre-approved.",
+        "egress": "Every outbound call asks, even through a door you opened before.",
+        "consent": "Asked every time. Approval never carries over to the next session."
+      },
+      "costs": "You will answer a lot of prompts. Good when the box is shared, when you are still learning what it does, or when you simply want to watch it work for a while.",
+      "matches_run_egress": "island"
+    },
+    {
+      "id": "drawbridge_up",
+      "label": "Drawbridge Up",
+      "strictness": 3,
+      "recommendable": true,
+      "summary": "Sealed. Nothing outbound, ever, and the bot says so plainly instead of failing quietly.",
+      "allows": {
+        "lan_devices": "Not reached. The bot works with what is already on the box.",
+        "actions": "Actions that would reach off the box do not run.",
+        "egress": "None. There are no doors to open.",
+        "consent": "Nothing to consent to, because nothing leaves."
+      },
+      "costs": "Anything that needs the network is off the table, and the bot will tell you which things those are. This is the posture for a machine you want fully on its own.",
+      "matches_run_egress": "sealed"
+    }
+  ]
+}

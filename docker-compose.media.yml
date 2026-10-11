@@ -1,0 +1,51 @@
+# PuffPAI media services (Jellyfin + Calibre-Web). Optional.
+#
+# Both ports are published on the LAN address only (PUFFPAI_BIND_IP), the
+# media library is mounted read-only, and config lives on the NVMe.
+#
+# Steps:
+#   1. Put the library under PUFFPAI_MEDIA_DIR (default /data/puffpai/media),
+#      books (a Calibre library) under its books/ subdirectory.
+#   2. sudo install -d -o 1000 -g 1000 /data/puffpai/jellyfin/config
+#      sudo install -d -o 1000 -g 1000 /data/puffpai/jellyfin/cache
+#      sudo install -d -o 1000 -g 1000 /data/puffpai/calibre-web
+#   3. docker compose -f /opt/puffpai/docker-compose.media.yml up -d
+#   4. Finish Jellyfin's setup at http://<box>:8096 and Calibre-Web's at
+#      http://<box>:8083, then set media_server.* in config/puffpai_config.json
+#      (docs/CONFIG.md) and store the Jellyfin API key as JELLYFIN_API_KEY
+#      (python scripts/store_secret.py JELLYFIN_API_KEY).
+#
+# If the media disk mounts late at boot and these exit, run step 3 again after
+# the mount. restart: unless-stopped brings both back after a reboot.
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:10.11.6
+    container_name: puffpai-jellyfin
+    network_mode: bridge
+    user: "1000:1000"
+    environment:
+      - TZ=${TZ:-Etc/UTC}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+    ports:
+      - "${PUFFPAI_BIND_IP:?set PUFFPAI_BIND_IP to this machine LAN IPv4 address in the .env beside this file (copy .env.example; install.sh --with-services prints the address to use)}:8096:8096"
+    volumes:
+      - /data/puffpai/jellyfin/config:/config
+      - /data/puffpai/jellyfin/config:/var/lib/jellyfin
+      - /data/puffpai/jellyfin/cache:/cache
+      - "${PUFFPAI_MEDIA_DIR:-/data/puffpai/media}:/mnt/media:ro"
+    restart: unless-stopped
+  calibre-web:
+    image: lscr.io/linuxserver/calibre-web:latest
+    container_name: puffpai-calibre-web
+    network_mode: bridge
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TZ:-Etc/UTC}
+    ports:
+      - "${PUFFPAI_BIND_IP:?set PUFFPAI_BIND_IP to this machine LAN IPv4 address in the .env beside this file (copy .env.example; install.sh --with-services prints the address to use)}:8083:8083"
+    volumes:
+      - "${PUFFPAI_MEDIA_DIR:-/data/puffpai/media}/books:/mnt/media/books:ro"
+      - /data/puffpai/calibre-web:/config
+    restart: unless-stopped

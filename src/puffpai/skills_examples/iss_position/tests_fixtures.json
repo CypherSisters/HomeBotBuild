@@ -1,0 +1,26 @@
+{
+  "responses": {
+    "https://api.wheretheiss.at/v1/satellites/25544": {
+      "json": {
+        "name": "iss",
+        "id": 25544,
+        "latitude": 37.148923,
+        "longitude": -122.874382,
+        "altitude": 421.63,
+        "velocity": 27583.4,
+        "visibility": "daylight",
+        "timestamp": 1757980000
+      }
+    }
+  },
+  "cases": [
+    {
+      "inputs": {},
+      "expect": {
+        "speech_contains": ["The ISS is at 37.1", "about 422 km up"],
+        "data": {"latitude": 37.1, "longitude": -122.9, "altitude_km": 422,
+                 "velocity_kmh": 27583}
+      }
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security issue?
+    url: https://github.com/CypherSisters/HomeBotBuild/security/advisories/new
+    about: Please use GitHub private vulnerability reporting instead of a public issue. See SECURITY.md.
+  - name: Where help is most welcome
+    url: https://github.com/CypherSisters/HomeBotBuild#how-this-was-built
+    about: How this was built, and the areas where we'd most like a hand.

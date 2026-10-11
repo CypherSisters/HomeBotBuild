@@ -1,0 +1,96 @@
+# PuffPAI Spotify VOICE device -- librespot signed into ONE shared account.
+#
+# This is the SECOND, separate Spotify identity on the appliance. Do not
+# confuse it with docker-compose.spotify.yml:
+#
+#   spotify.yml        zeroconf discovery, NO credentials. People in the house
+#                      cast from their own phones; each plays as themselves,
+#                      with their own account. Stateless.
+#   spotify-voice.yml  (this file) signed into ONE shared household account and
+#                      STAYS signed in. That is what makes "hey PuffPAI, play my
+#                      Discover Weekly" possible with no phone in the room: the
+#                      Spotify Web API can only start playback on a device that
+#                      is signed in to the account, and this is that device.
+#
+# The two coexist. A personal caster still sees the zeroconf "PuffPAI" over the
+# LAN; the shared account sees THIS one, always online, in its device list. The
+# backend (spotify_control.py) targets this one by name to run voice commands.
+#
+# WHY --enable-oauth (not username/password, not a stored token):
+#   Spotify killed password auth, and a plain access token expires in an hour
+#   with no refresh. librespot's own OAuth signs in once interactively and then
+#   CACHES a self-refreshing credential in the system-cache below, so the device
+#   comes back on its own after every reboot with no human present. The one-time
+#   sign-in prints a http://127.0.0.1:5588/login URL to the container logs; it is
+#   a loopback address, so that sign-in must be done ONCE on the appliance's own
+#   screen. After that, never again.
+#
+# WHY host networking: only so that one-time 127.0.0.1:5588 sign-in is reachable
+#   from the box's own browser. There are NO inbound LAN ports here (discovery is
+#   OFF), so this needs no firewall doors -- unlike the casting instance.
+#
+# puff puff pass
+services:
+  puffpai-spotify-voice:
+    image: giof71/librespot:bookworm-2026-03-14@sha256:0c7cd19a49547cd0e34ac7c6d9aadd4b2703c5cb13acd1dbfd4982c311d478fb
+    container_name: puffpai-spotify-voice
+    restart: unless-stopped
+
+    # See "WHY host networking" above -- one-time loopback sign-in only.
+    network_mode: host
+
+    # Non-root, same as the casting instance: user: skips the image's root
+    # useradd/chown path entirely, so no root process ever exists. group 29 ==
+    # host "audio", which owns /dev/snd/*.
+    user: "1000:1000"
+    group_add:
+      - "29"
+    devices:
+      - /dev/snd:/dev/snd
+
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+
+    volumes:
+      # The host ALSA config -- without it "default" resolves to nothing and
+      # playback fails the moment it starts (see the casting compose for the
+      # full story). Read-only.
+      - /etc/asound.conf:/etc/asound.conf:ro
+      # The ONLY writable state: the self-refreshing OAuth credential cache.
+      # This is what lets the device sign back in unattended after a reboot.
+      # 0700 puffpai on the host. It holds a reusable credential for the shared
+      # account -- protect it like any sign-in.
+      - /data/puffpai/spotify-voice/system-cache:/data/system-cache
+
+    environment:
+      TZ: "${TZ:-Etc/UTC}"
+      # -> librespot --name PuffPAI   (how it appears in the account's devices)
+      DEVICE_NAME: "PuffPAI"
+      BACKEND: "alsa"
+      BITRATE: "320"
+      INITIAL_VOLUME: "60"
+      # No decrypted audio spooled to disk.
+      DISABLE_AUDIO_CACHE: "Y"
+      # -> --system-cache /data/system-cache : persist the OAuth credential so
+      # the sign-in survives reboots. This is the whole point of this instance.
+      ENABLE_SYSTEM_CACHE: "Y"
+      # Everything OAuth-and-discovery is passed raw so the port is FIXED at
+      # 5588 (the image's ENABLE_OAUTH=HEADLESS would use a random port, which
+      # we could not tell the user to open). --disable-discovery keeps this
+      # instance off mDNS/5353 so it never collides with the casting instance.
+      ADDITIONAL_ARGUMENTS: "--enable-oauth --oauth-port 5588 --disable-discovery"
+
+    # No healthcheck: before the one-time sign-in this process legitimately sits
+    # waiting for OAuth, which a port/liveness probe would misread as unhealthy.
+    # restart: unless-stopped already covers a real crash.
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

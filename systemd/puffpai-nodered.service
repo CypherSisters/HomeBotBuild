@@ -1,0 +1,43 @@
+[Unit]
+# Node-RED (Apache-2.0) is the automation engine: it runs the flows in
+# nodered_flows/flows.json and serves their webhooks on
+# 127.0.0.1:1880.
+#
+# It runs as a CONTAINER, not a native service: docker-compose.nodered.yml
+# pins nodered/node-red:4.0, which is multi-arch (amd64 + arm64), so the same
+# file works on a development machine and on the Orin. This unit exists so Node-RED
+# comes up in a defined order relative to the backend and so `systemctl
+# status puffpai-nodered` tells the truth.
+#
+# The compose file already sets `restart: unless-stopped`, so Docker itself
+# will restart the container. This unit is therefore about ORDERING and
+# operator ergonomics, not crash recovery — if you would rather let Docker
+# own it entirely, skip this unit and just `docker compose up -d` once.
+Description=PuffPAI Automation Engine (Node-RED container)
+Documentation=file:///opt/puffpai/nodered_flows/README.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+# Runs as root, like most compose units: talking to the docker socket requires
+# either root or docker-group membership, and docker-group membership is
+# root-equivalent anyway (you can bind-mount / into a container). Granting the
+# puffpai user that privilege to avoid nominal root here would be a downgrade,
+# so provision_orin.sh deliberately does not add it to the docker group.
+# The container itself is unprivileged and loopback-bound.
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/puffpai
+# Secrets consumed by the flows (PUFFPAI_API_KEY, HA_TOKEN, JELLYFIN_API_KEY)
+# live in /opt/puffpai/.env, which compose reads directly — it is git-ignored
+# and must be 0600.
+ExecStart=/usr/bin/docker compose -f /opt/puffpai/docker-compose.nodered.yml up -d
+ExecStop=/usr/bin/docker compose -f /opt/puffpai/docker-compose.nodered.yml down
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=puffpai-nodered
+
+[Install]
+WantedBy=multi-user.target

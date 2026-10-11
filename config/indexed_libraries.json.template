@@ -1,0 +1,37 @@
+[
+  {
+    "library": "Wikipedia (English)",
+    "collection": "wikipedia_en",
+    "file": "wikipedia_en_all_maxi_2024-01.zim",
+    "size": "95GB",
+    "description": "Complete English Wikipedia"
+  },
+  {
+    "library": "Stack Exchange",
+    "collection": "stackexchange",
+    "file": "stackexchange_en_all_2023-05.zim",
+    "size": "52GB",
+    "description": "All Stack Exchange Q&A sites"
+  },
+  {
+    "library": "Project Gutenberg",
+    "collection": "gutenberg",
+    "file": "gutenberg_en_all_2023-08.zim",
+    "size": "18GB",
+    "description": "Free ebooks - classics and public domain"
+  },
+  {
+    "library": "WikiHow",
+    "collection": "wikihow",
+    "file": "wikihow_en_all_maxi_2023-01.zim",
+    "size": "5.2GB",
+    "description": "How-to guides for everything"
+  },
+  {
+    "library": "Survival Library",
+    "collection": "survival",
+    "file": "survival_library_2023.zim",
+    "size": "850MB",
+    "description": "Emergency preparedness and survival guides"
+  }
+]

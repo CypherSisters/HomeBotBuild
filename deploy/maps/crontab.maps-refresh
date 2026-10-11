@@ -1,0 +1,8 @@
+# Open Maps: map data refresh. Runs nightly at 3:30 AM (after the 3:00
+# Jellyfin scan); the job itself decides whether an update is due: about
+# every 28 days, retrying a failed run on the next nights (at most 5 in a
+# row). On a night with nothing due it reads two local files and exits:
+# no network, no output. The build refuses to start unless the models leave
+# it enough free memory. Replace @HOMEBOT_DIR@ (the checkout) and
+# @DATA_DIR@ (the API service's PUFFPAI_DATA_DIR) before installing it.
+30 3 * * * PUFFPAI_DATA_DIR=@DATA_DIR@ /bin/bash @HOMEBOT_DIR@/deploy/maps/refresh.sh run >> @DATA_DIR@/maps_refresh.err 2>&1
