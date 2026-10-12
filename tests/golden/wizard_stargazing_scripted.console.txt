@@ -13,10 +13,10 @@ What this build may reach   [secure:posture]
     - Online while building -- This machine can reach the internet while you build, so the wizard may download models, knowled
     - Offline while building -- This machine has no internet while you build, so the wizard offers only what is already on the
   What may the FINISHED BOT reach when it runs?: island
-    This is a build-time list: which doors exist at all. Whether your bot asks you before using a door it already has is a separate question you answer at the Bridge step ('Moat' asks every time).
+    This is a build-time list: which Bridge switches exist at all. Whether your bot asks you before using a switch it already has is a separate question you answer at the Bridge step ('Moat' asks every time).
     - Sealed -- No outbound anything, ever. Your bot says plainly what it cannot do instead of failing quietly.
     - Island (home network only) -- Your home network is allowed, the wider internet is not. Local devices and servers work; n
-    - Only the doors you pick (weather, music, web search) -- You pick, from a fixed list, which outside services your bot can
+    - Only the Bridge switches you pick (weather, music, web search) -- You pick, from a fixed list, which outside services yo
   Doors
     Individual doors belong to the enumerated tier. Pick it here and this card comes back with the list.
 --- end card ---
@@ -76,7 +76,7 @@ Who does what   [crew]
   7 master agents, plus room for up to 5 specialists.
   status: ready
   Specialists on top of the master team: 5
-    On a machine this size, the crew can take up to 5 specialists on top of the master team. That number is grounded in running the master team live on our reference board.
+    On a machine this size, the crew can take up to 5 specialists on top of the master team. That number is grounded in a live run of the full agent team on measured test hardware.
   Sized from
     a workstation machine (reference)
   Concierge - Front desk and routing

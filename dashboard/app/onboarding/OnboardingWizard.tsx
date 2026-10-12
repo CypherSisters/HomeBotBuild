@@ -984,8 +984,8 @@ export default function OnboardingWizard() {
                 </div>
                 {runEgress === "enumerated" && (
                   <div style={{ marginTop: 18 }}>
-                    <Eyebrow>Doors you are opening</Eyebrow>
-                    <Lede>Every door is shut until you open it. Each one says what it sends.</Lede>
+                    <Eyebrow>Bridge switches you are opening</Eyebrow>
+                    <Lede>Every switch is shut until you open it. Each one says what it sends.</Lede>
                     {(postureOpts?.egress_switches || []).map((sw) => (
                       <Toggle
                         key={sw.id}
@@ -1087,7 +1087,7 @@ export default function OnboardingWizard() {
                     {labelOf(pickedBrain)} is not installed yet, and picking it here downloads
                     nothing. Pull it with <code>ollama pull {pickedBrain.id}</code>
                     {ollamaUrl ? <> on the Ollama at {ollamaUrl}</> : null}. HomeBot itself
-                    fetches the models on this list only through the Model pull door.
+                    fetches the models on this list only through the Model pull Bridge switch.
                   </Notice>
                 )}
                 {(menu?.options || []).length === 0 && (

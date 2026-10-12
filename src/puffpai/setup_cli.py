@@ -376,7 +376,7 @@ def _step_posture(args, setup_ops, *, non_interactive: bool) -> dict:
             egress = _pick_by_id("Choose", options["run_egress"])
         if egress == "enumerated" and not doors:
             print()
-            print("Which doors may the finished bot use? Every one is shut until")
+            print("Which Bridge switches may the finished bot use? Every one is shut until")
             print("you name it. Numbers or ids, comma separated, blank for none.")
             table = options["egress_switches"]
             for index, row in enumerate(table, start=1):

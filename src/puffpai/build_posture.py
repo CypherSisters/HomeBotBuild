@@ -82,7 +82,7 @@ _RUN_EGRESS: dict[str, str] = {
 _RUN_EGRESS_LABEL: dict[str, str] = {
     "sealed": "Sealed",
     "island": "Island (home network only)",
-    "enumerated": "Only the doors you pick (weather, music, web search)",
+    "enumerated": "Only the Bridge switches you pick (weather, music, web search)",
 }
 
 # Printed under the enumerated option while the owner is choosing. The two
@@ -90,8 +90,8 @@ _RUN_EGRESS_LABEL: dict[str, str] = {
 # which doors are built at all, once, now. Whether walking through an open door
 # asks you first is the Bridge posture, chosen later.
 ENUMERATED_VS_MOAT_NOTE = (
-    "This is a build-time list: which doors exist at all. Whether your bot asks "
-    "you before using a door it already has is a separate question you answer "
+    "This is a build-time list: which Bridge switches exist at all. Whether your "
+    "bot asks you before using a switch it already has is a separate question you answer "
     "at the Bridge step ('Moat' asks every time)."
 )
 

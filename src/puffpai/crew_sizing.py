@@ -82,7 +82,7 @@ def crew_budget(census: dict[str, Any]) -> dict[str, Any]:
     else:
         plural = "specialist" if max_specialists == 1 else "specialists"
         basis = (
-            "grounded in running the master team live on our reference board"
+            "grounded in a live run of the full agent team on measured test hardware"
             if grounded
             else "a conservative starting budget, not a measured limit, and reports are welcome"
         )

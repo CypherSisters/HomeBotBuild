@@ -261,7 +261,7 @@ def limits_summary(manifest: Optional[dict[str, Any]] = None) -> list[str]:
         lines.append("Reach: your own network only. No internet.")
     elif egress:
         doors = posture.get("enabled_switches") or []
-        lines.append("Reach: only the doors you opened - "
+        lines.append("Reach: only the Bridge switches you opened - "
                      + (", ".join(doors) if doors else "none yet") + ".")
 
     surfaces = man.get("surfaces") or {}

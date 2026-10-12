@@ -132,11 +132,13 @@ export function isBackendDown(reply: Reply): boolean {
 /**
  * Some routes answer `{ok:true, <block>:{…}}` and some answer the block's keys
  * inline. Read through either without guessing wrong: if `key` is present and
- * object-shaped it is the payload, otherwise the envelope itself is.
+ * a plain object it is the payload, otherwise the envelope itself is. An array
+ * under `key` is a field of the envelope (e.g. `/setup/surfaces` answers with
+ * `surfaces: [...]` beside `available` and `reasons`), never the payload.
  */
 export function unwrap<T>(data: any, key: string): T {
   const inner = data?.[key];
-  if (inner && typeof inner === "object") return inner as T;
+  if (inner && typeof inner === "object" && !Array.isArray(inner)) return inner as T;
   return (data ?? {}) as T;
 }
 

@@ -33,6 +33,7 @@
     "test:proxyheaders": "node app/_lib/server/__tests__/proxy-headers.test.mjs",
     "test:lantargets": "node app/_lib/server/__tests__/lan-targets.test.mjs",
     "test:enginestatus": "node app/_lib/services/__tests__/engine-status.test.mjs",
+    "test:unwrap": "node app/_lib/services/__tests__/unwrap.test.mjs",
     "test:haautomations": "node app/dashboard/workflows/__tests__/ha-automations.test.mjs",
     "test:pinentry": "node app/_components/Consent/__tests__/pin-entry.test.mjs",
     "format": "prettier 'app/**/*.{tsx,ts,js}' --write",

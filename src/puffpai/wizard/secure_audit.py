@@ -29,7 +29,7 @@ from typing import Any
 _TIER_WORDS = {
     "sealed": "reaches nothing at all",
     "island": "reaches your own network and nothing beyond it",
-    "enumerated": "reaches only the doors you opened by name",
+    "enumerated": "reaches only the Bridge switches you opened by name",
 }
 
 

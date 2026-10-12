@@ -71,7 +71,7 @@
     "hardware_class": "workstation",
     "master_core": 7,
     "max_specialists": 5,
-    "note": "On a machine this size, the crew can take up to 5 specialists on top of the master team. That number is grounded in running the master team live on our reference board."
+    "note": "On a machine this size, the crew can take up to 5 specialists on top of the master team. That number is grounded in a live run of the full agent team on measured test hardware."
   },
   "egress": {
     "enabled": [],
