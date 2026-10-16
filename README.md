@@ -230,7 +230,7 @@ that matters, and a total time it cannot know says "time unknown". The review sc
 
 Nothing is enabled that you did not choose. Voice and media are install extras
 (`--with-voice`, the media compose file), not cards. The wizard comes from
-BuildBot, our bot-building tool.
+[BuildBot](https://github.com/CypherSisters/PuffPAIBuildBot), our bot-building tool.
 
 ## The three zones
 
@@ -354,6 +354,7 @@ your router, and protection is off in the seeded configuration
 |---|---|
 | **HomeBotBuild** (this one) | You want HomeBot on a Windows or Linux PC you already own (64-bit Windows 10/11 or Linux), installed by one command and set up by the wizard |
 | [`CypherSisters/HomeBotFounders`](https://github.com/CypherSisters/HomeBotFounders) | You have an NVIDIA Jetson AGX Orin 64 GB and want HomeBot Founders Edition, the complete build installed and tuned for that board |
+| [`CypherSisters/PuffPAIBuildBot`](https://github.com/CypherSisters/PuffPAIBuildBot) | You want to make your own private bot for something other than the home, on your own computer. BuildBot is the bot-building tool HomeBot's setup wizard comes from |
 
 More about PuffPAI: [puffpai.com](https://www.puffpai.com).
 
