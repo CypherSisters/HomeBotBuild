@@ -1,4 +1,4 @@
-# HomeBotBuild: a private, offline home AI for your Windows or Linux PC
+# HomeBotBuild: a private, offline-capable home AI for your Windows or Linux PC
 
 **Your Hardware. Your Data. Your AI.**
 
@@ -20,9 +20,10 @@ Orin? See [Which repository](#which-repository).
 
 ## First use: emergency preparedness
 
-A cloud assistant stops when the internet does. Once HomeBot is installed and
-has a model, chat, the apps, the knowledge library and the wizard work with no
-internet at all, on your own machine.
+A cloud assistant stops when the internet does. HomeBot works with the internet
+off: once it is installed and has a model, chat, the apps, the knowledge library
+and the wizard run on your own machine. How much it can do offline depends on
+the build.
 
 **An offline library you choose.** [`docs/KNOWLEDGE_PACKS.md`](docs/KNOWLEDGE_PACKS.md)
 lists 66 Kiwix packs in ten groups, each with its official download, size and
