@@ -64,9 +64,10 @@ def test_entry_ids_are_unique_and_runner_entries_own_no_skill():
 
 
 def test_the_spec_order_is_the_twelve_in_the_spec_order():
+    # Plus Assemble, between Surfaces and Prove.
     assert wizard_runner.SKILL_ORDER == (
         "discover", "purpose", "brain", "sources", "tools", "integrate",
-        "context", "crew", "secure", "surfaces", "prove", "handoff")
+        "context", "crew", "secure", "surfaces", "assemble", "prove", "handoff")
 
 
 # -- one writer per section ---------------------------------------------------
@@ -463,3 +464,22 @@ def test_the_value_scrub_leaves_short_values_alone(cfg, monkeypatch):
                  non_interactive=True, schedule=())
     assert run.redactions() == ()
     assert wizard_runner.json_safe({"a": "abc"}, redact=()) == {"a": "abc"}
+
+
+# -- one missing thing, said once ------------------------------------------------
+
+def test_two_steps_naming_one_unsearchable_book_make_one_gap(cfg):
+    """Any-bot check: the closing screen listed a downloaded book that is not
+    searchable yet twice, once from Integrate and once from Prove."""
+    from puffpai.wizard import fixes
+    run = Runner(args=_args(), cfg=cfg, non_interactive=True, schedule=())
+    sync = {"kind": "command", "id": "knowledge.sync", "args": {}}
+    for skill in ("integrate", "prove"):
+        run.record_gap(fixes.gap(skill=skill, what="Some Book is downloaded but not "
+                                 "searchable yet.", why="Downloaded and waiting.",
+                                 impact="", fix=sync))
+    run.record_gap(fixes.gap(skill="prove", what="Other Book is downloaded but not "
+                             "searchable yet.", why="", impact="", fix=sync))
+    assert [g["what"] for g in run.gaps] == [
+        "Some Book is downloaded but not searchable yet.",
+        "Other Book is downloaded but not searchable yet."]

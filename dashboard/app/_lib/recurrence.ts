@@ -278,15 +278,3 @@ export function expandEvents(
   return out;
 }
 
-/**
- * Get the next single occurrence of an event from a given starting point.
- * Useful for "what's next" displays.
- */
-export function nextOccurrence(
-  event: CalendarEvent,
-  from: Date = new Date()
-): CalendarEvent | null {
-  const horizon = addYears(from, 1);
-  const occs = expandEvent(event, from, horizon, 1);
-  return occs[0] || null;
-}

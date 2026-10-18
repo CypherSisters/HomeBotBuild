@@ -1686,11 +1686,135 @@ except Exception:  # pragma: no cover - defensive: keep endpoints importable
         pass
 
 
+#: (settings file, its change time, the vault folder) when ``_get_vault`` made
+#: the handle. ``puffpai vault location|move`` in a terminal writes the setting
+#: in another process: the next ``_get_vault`` sees the file change and, when
+#: the folder in it is a different one, lets go of the old handle instead of
+#: keeping the old folder for the life of the process.
+_vault_made_for = None
+
+#: The key file's stamp the last "sealed since" reload was made for, so a key
+#: file the vault cannot read is not reloaded on every request.
+_vault_seal_seen = None
+_vault_seal_lock = threading.Lock()
+
+
+def _vault_settings_file() -> str:
+    from puffpai.config import get_config
+    return os.path.join(get_config().CONFIG_DIR, "puffpai_config.json")
+
+
+def _file_stamp(path):
+    try:
+        return os.stat(path).st_mtime_ns
+    except OSError:
+        return None
+
+
+def _vault_folder_key(folder) -> str:
+    return os.path.normcase(os.path.normpath(os.path.abspath(folder)))
+
+
+def _vault_setting_moved() -> bool:
+    """True when the settings file now names another vault folder than the
+    one the cached handle was made for. A handle put in place by hand (tests)
+    is never second-guessed."""
+    global _vault_made_for
+    made, inst = _vault_made_for, _vault_instance
+    if made is None or inst is None:
+        return False
+    path, stamp, folder = made
+    if _vault_folder_key(getattr(inst, 'vault_dir', '') or '') != folder:
+        return False
+    now = _file_stamp(path)
+    if now == stamp:
+        return False
+    from puffpai.config import PathConfig, get_config
+    try:
+        with open(path, 'r', encoding='utf-8') as fh:
+            raw = json.load(fh)
+        vd = ((raw.get('paths') or {}).get('vault_data_dir')
+              if isinstance(raw, dict) else None) or PathConfig().vault_data_dir
+    except (OSError, ValueError, AttributeError):
+        return False
+    vd = str(vd)
+    target = vd if os.path.isabs(vd) else os.path.join(get_config().DATA_DIR, vd)
+    if _vault_folder_key(target) == folder:
+        _vault_made_for = (path, now, folder)
+        return False
+    return True
+
+
+def _vault_sealed_since(inst) -> bool:
+    """True when the cached handle still reads "not set up" but its folder now
+    holds the vault's key file: the vault was sealed through another handle
+    (the browser setup, or the console setup in another process). A handle put
+    in place by hand (tests) is never second-guessed."""
+    global _vault_seal_seen
+    if _vault_made_for is None or inst is None:
+        return False
+    try:
+        if inst.is_initialized:
+            return False
+        key_file = getattr(inst, '_key_file', None)
+        stamp = _file_stamp(key_file) if key_file else None
+    except Exception:  # noqa: BLE001 - not knowing means keep the handle
+        return False
+    if stamp is None:
+        return False
+    with _vault_seal_lock:
+        if stamp == _vault_seal_seen:
+            return False
+        _vault_seal_seen = stamp
+    return True
+
+
+def _reload_vault_handle(reason: str = 'moved') -> None:
+    """Let go of the vault handle (locking it) so the next ``_get_vault`` makes
+    one for the folder in the settings now. Used after the vault's place
+    changes (puffpai.vault_place_api)."""
+    global _vault_instance, _vault_made_for
+    with _vault_lock:
+        old = _vault_instance
+        _vault_instance = None
+        _vault_made_for = None
+    try:
+        from puffpai.config import get_config
+        get_config(_force_reload=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("settings reload failed: %s", type(exc).__name__)
+    if old is not None:
+        try:
+            old.lock()
+        except Exception:  # noqa: BLE001
+            pass
+    _on_vault_locked(reason)
+
+
+def _on_vault_locked(reason: str) -> None:
+    """The vault locked (by hand, when left alone, or moved): every API-level
+    vault session and every chat's open-vault mark go with it."""
+    _vault_sessions.clear()
+    for state in list(globals().get('_VAULT_CHAT_STATE', {}).values()):
+        if isinstance(state, dict):
+            state.pop('vault_session', None)
+            state.pop('unlocked_at', None)
+    if reason == 'idle':
+        logger.info("Vault locked itself after being left alone")
+
+
 def _get_vault():
     """Return a cached Vault instance (lazy init, graceful fallback)."""
-    global _vault_instance
+    global _vault_instance, _vault_made_for
     if _vault_instance is not None:
-        return _vault_instance
+        if _vault_sealed_since(_vault_instance):
+            logger.info("The vault was set up after this handle was made; using it now")
+            _reload_vault_handle('setup')
+        elif not _vault_setting_moved():
+            return _vault_instance
+        else:
+            logger.info("The vault's folder changed in the settings; using it now")
+            _reload_vault_handle('moved')
 
     with _vault_lock:
         if _vault_instance is not None:
@@ -1698,6 +1822,17 @@ def _get_vault():
         try:
             from puffpai.security.vault import Vault
             _vault_instance = Vault()
+            try:
+                settings = _vault_settings_file()
+                _vault_made_for = (settings, _file_stamp(settings),
+                                   _vault_folder_key(_vault_instance.vault_dir))
+            except Exception:  # noqa: BLE001 - only the self-check is lost
+                _vault_made_for = None
+            # The vault may lock itself when left alone; when it does, every
+            # API-level session and chat open-vault mark go with it.
+            add_listener = getattr(_vault_instance, 'add_lock_listener', None)
+            if callable(add_listener):
+                add_listener(_on_vault_locked)
             logger.info("Vault initialized")
         except Exception as exc:
             # Retried on every vault-touching request (the dashboard polls one
@@ -1983,12 +2118,10 @@ def _load_or_create_api_key() -> str:
         _API_KEY_SOURCE = 'newly provisioned OS keyring entry'
         return key
 
-    # The message names THE FILE THIS INSTALL ACTUALLY LOOKED AT. It used to
-    # name /etc/puffpai/api.env and "the Orin appliance" on every platform,
-    # which sent an owner on a laptop looking for a path that does not exist —
-    # while the file the installer really minted (and start_api.py really
-    # loads) went unmentioned. HomeBotBuild installs anywhere, so the path is
-    # computed, not recited.
+    # The message names THE FILE THIS INSTALL ACTUALLY LOOKED AT (the file the
+    # installer minted and start_api.py loads), never a fixed appliance path
+    # that does not exist on a laptop. HomeBotBuild installs anywhere, so the
+    # path is computed, not recited.
     try:
         from puffpai.envfile import state_env_path
         env_file = state_env_path()
@@ -2025,6 +2158,21 @@ _API_KEY = validate_api_key(_load_or_create_api_key())
 def api_key_source() -> str:
     """The name of the chain tier the running API key came from. No value."""
     return _API_KEY_SOURCE
+
+# A call marked `# lan-egress:` may only reach this computer or the home
+# network, and with the Bridge at Moat or Drawbridge Up an internet connection
+# that did not come through a listed exit is refused at connect time
+# (lan_guard + bridge_guard). The same backstop ``cli.main`` installs; a
+# failure here is logged and never stops the server.
+try:
+    from puffpai.security import lan_guard as _lan_guard  # noqa: E402
+    _lan_guard.install()
+except Exception as _exc:  # noqa: BLE001
+    logger.error(
+        "lan_guard: the connect-time check was not installed (%s). While "
+        "this server runs, home-network calls are not stopped from reaching the "
+        "internet and the Bridge is held only by each outside service's own "
+        "switch, not at connect time.", type(_exc).__name__)
 
 # Endpoints that don't require auth:
 # - health/static: basic infra
@@ -2089,6 +2237,29 @@ _PUBLIC_ENDPOINTS = frozenset([
 ])
 
 
+def _request_has_key() -> bool:
+    """True when this request carried the app API key."""
+    auth = request.headers.get('Authorization', '')
+    if auth.startswith('Bearer '):
+        token = auth[7:]
+    else:
+        token = request.headers.get('X-API-Key', '')
+    return bool(token) and secrets.compare_digest(token, _API_KEY)
+
+
+def _request_is_owner() -> bool:
+    """Did this request carry the app API key?
+
+    A keyless caller (a public endpoint, or a same-host caller let through by
+    ``endpoint_gate.LOCAL_ONLY_ENDPOINTS``) is never the owner. Code running in
+    this process outside any request (the on-box voice loop, the CLI) is.
+    """
+    from flask import g, has_request_context
+    if not has_request_context():
+        return True
+    return bool(g.get('puffpai_has_key', False))
+
+
 def _check_api_key():
     """Before-request hook: verify API key on all non-public endpoints.
 
@@ -2096,19 +2267,18 @@ def _check_api_key():
     ``endpoint_gate.LOCAL_ONLY_ENDPOINTS`` -> 401. The key is checked before the
     peer so that a credentialed caller is served from anywhere, exactly as
     before; only the keyless path is narrowed to same-host peers.
+
+    Whether the key was present is kept on ``g`` for ``_request_is_owner``.
     """
+    from flask import g
     if request.method == 'OPTIONS':
         return None
+    has_key = _request_has_key()
+    g.puffpai_has_key = has_key
     if request.endpoint in _PUBLIC_ENDPOINTS:
         return None
 
-    auth = request.headers.get('Authorization', '')
-    if auth.startswith('Bearer '):
-        token = auth[7:]
-    else:
-        token = request.headers.get('X-API-Key', '')
-
-    if token and secrets.compare_digest(token, _API_KEY):
+    if has_key:
         return None
 
     if endpoint_gate.local_caller_allowed(
@@ -5255,6 +5425,112 @@ def _get_chat_client_id():
         return f'peer:{request.remote_addr}' if request.remote_addr else 'unknown'
     except Exception:
         return 'unknown'
+
+
+# ── Who is asking, for the build engine's own routes ────────────────────────
+# The engine's blueprints (developer terminal, things, add more, keys, ...)
+# ask these instead of reading headers themselves, so the pairing rule above
+# stays the only one.
+
+def _voice_key_caller():
+    """True when THIS request is Home Assistant with the build's voice key:
+    ``/v1/chat/completions`` with ``Authorization: Bearer <voice key>``.
+    Never true for the API key, never on another path. Never raises."""
+    from flask import has_request_context
+    try:
+        if not has_request_context():
+            return False
+        from puffpai.integrate import voice_key
+        if request.path not in voice_key.VOICE_PATHS or _request_is_owner():
+            return False
+        return voice_key.matches(voice_key.bearer(request.headers.get('Authorization', '')))
+    except Exception:
+        return False
+
+
+def _app_caller_class():
+    """Who is asking, for the app and engine rules:
+
+    * ``terminal``: no request (``puffpai chat``, the on-box voice loop);
+    * ``owner``: a request with the API key (the dashboard, a keyed script);
+    * ``voice``: Home Assistant with the voice key: reads and changes that
+      can be undone, never removes;
+    * ``None``: no key. No app actions and no app data.
+    """
+    from flask import has_request_context
+    if not has_request_context():
+        return 'terminal'
+    if _request_is_owner():
+        return 'owner'
+    if _voice_key_caller():
+        return 'voice'
+    return None
+
+
+#: The dashboard's chat page streams through this OpenAI-shaped route.
+_DASHBOARD_CHAT_PATH = '/v1/chat/completions'
+
+
+def _dashboard_device_chat_client():
+    """The paired device's chat id when THIS request is the dashboard's chat
+    page on ``/v1/chat/completions`` with the API key, else "".
+
+    The route is shared with Home Assistant's conversation agent and other
+    keyless clients; only a keyed request carrying a device id the dashboard
+    proxy asserted (see ``_get_chat_client_id``) is the dashboard's chat.
+    """
+    from flask import has_request_context
+    try:
+        if (not has_request_context() or request.path != _DASHBOARD_CHAT_PATH
+                or not _request_is_owner()):
+            return ''
+        client = str(_get_chat_client_id() or '')
+    except Exception:
+        return ''
+    return client if client.startswith('device:') else ''
+
+
+def _actions_identity(surface='chat'):
+    """The identity integrated-app actions may run for on THIS request, or None.
+
+    * no request context: the terminal's id (the on-box voice loop, *surface*
+      ``voice``, has none);
+    * ``/v1/chat/completions``: the dashboard chat's paired device, else Home
+      Assistant's voice identity when the request carries the build's voice
+      key, else None;
+    * ``/chat/send`` and ``/chat/stream``: the paired device the dashboard
+      proxy asserted, on a keyed request, else None;
+    * every other path: None, whatever it sends.
+    """
+    from flask import has_request_context
+    from puffpai.security import consent_tickets
+    try:
+        if not has_request_context():
+            return None if surface == 'voice' else consent_tickets.terminal_device_id()
+        path = request.path
+        if path == _DASHBOARD_CHAT_PATH:
+            device = _dashboard_device_chat_client()
+            if not device and _voice_key_caller():
+                from puffpai.integrate import voice_key
+                return voice_key.identity()
+        elif surface == 'voice':
+            device = ''
+        elif path in ('/chat/send', '/chat/stream') and _request_is_owner():
+            client = str(_get_chat_client_id() or '')
+            device = client if client.startswith('device:') else ''
+        else:
+            device = ''
+    except Exception:  # an identity that cannot be read is no identity
+        return None
+    return device if consent_tickets.usable_device(device) else None
+
+
+def _loop_ctx(device=None):
+    """The chat tool loop for a thing's Ask, or None.
+
+    This build's chat does not run the tool loop, so a thing's page is told
+    to ask in chat instead (puffpai.things_api answers 503 on None)."""
+    return None
 
 
 def _cleanup_vault_chat_state():
@@ -17917,7 +18193,7 @@ def conversation():
                             'conversation_id': conversation_id,
                             'private': True})
         # Vault PIN follow-up: capture a pending display-challenge PIN before it
-        # reaches the LLM or the transcript (ported onto the Orin PII pipeline).
+        # reaches the LLM or the transcript.
         from puffpai import dashboard_display as _dd_pending
         if _dd_pending.pending_vault_active():
             _fu = _try_vault_pin_followup(text)
@@ -18656,6 +18932,19 @@ VALID_APPS = ['alarmflow', 'calendar', 'freshtable', 'fitfam', 'trivia',
               'mediahub']
 
 
+def _turned_off(name):
+    """A plain "turned off" answer for a first app this bot has not turned
+    on (:mod:`puffpai.first_apps`), or None. Its saved data is untouched."""
+    try:
+        from puffpai import first_apps
+        if first_apps.is_off(name):
+            return jsonify({'error': first_apps.turned_off_line(name),
+                            'turned_off': True}), 409
+    except Exception:  # noqa: BLE001 - never a 500 over this check
+        logger.warning("first apps check failed for %s", name)
+    return None
+
+
 def _valid_app(name):
     """True when this build actually serves an app by that name.
 
@@ -19269,6 +19558,9 @@ def app_get_data(name):
     """
     if not _valid_app(name):
         return jsonify({'error': f'Unknown app: {name}'}), 404
+    off = _turned_off(name)
+    if off:
+        return off
 
     ad = _get_app_data()
     try:
@@ -19396,6 +19688,9 @@ def app_put_data(name):
     """
     if not _valid_app(name):
         return jsonify({'error': f'Unknown app: {name}'}), 404
+    off = _turned_off(name)
+    if off:
+        return off
 
     payload = request.json
     if payload is None:
@@ -19575,6 +19870,9 @@ def app_action(name):
     """
     if not _valid_app(name):
         return jsonify({'error': f'Unknown app: {name}'}), 404
+    off = _turned_off(name)
+    if off:
+        return off
 
     body = request.json or {}
     action = body.get('action')
@@ -19623,6 +19921,9 @@ def app_updated(name):
     """Lightweight poll — returns last_updated timestamp for change detection."""
     if not _valid_app(name):
         return jsonify({'error': f'Unknown app: {name}'}), 404
+    off = _turned_off(name)
+    if off:
+        return off
 
     ad = _get_app_data()
     try:
@@ -19981,8 +20282,8 @@ def system_status():
         # Counts must agree with /knowledge/libraries: every ZIM on disk is a
         # library whether or not it was ever ingested into ChromaDB, and
         # manifest rows that merely re-describe a discovered ZIM fold into it.
-        # (The old manifest-only count reported 0 on the Orin, where the whole
-        # library is ZIM+FTS with an empty ingestion manifest.)
+        # (A manifest-only count reports 0 where the whole library is ZIM+FTS
+        # with an empty ingestion manifest.)
         knowledge_info = {'status': 'unavailable', 'library_count': 0, 'chunk_count': 0}
         try:
             from puffpai.knowledge.fts_index import library_id_for
@@ -20234,6 +20535,17 @@ def system_status():
         except Exception as exc:
             logger.debug("Egress policy status unavailable: %s", exc)
 
+        # The switches govern the internet; this governs the addresses in the
+        # config. `lan_services` is "ok" or the list of findings (resolved, so a
+        # single-label name a search domain sends off-site shows up here).
+        posture_check_info = {'posture': 'unknown', 'lan_services': 'unknown'}
+        try:
+            from puffpai.config import get_config as _status_cfg
+            from puffpai.security import lan_posture
+            posture_check_info = lan_posture.posture_check(_status_cfg())
+        except Exception as exc:
+            logger.debug("LAN posture check failed: %s", exc)
+
         return jsonify({
             'success': True,
             'knowledge': knowledge_info,
@@ -20246,6 +20558,7 @@ def system_status():
             'online_search': search_info,
             'egress_doors': egress_info,
             'egress_policies': egress_policy_info,
+            'posture_check': posture_check_info,
             'uptime_seconds': round(uptime, 2),
         })
 
@@ -20313,6 +20626,8 @@ def system_egress_door_set():
 
     Refusals, all of which name a reason fit to display:
       400  body is not an object, ``id`` missing, or ``open`` is not a boolean
+      403  ``open: true`` from a caller that is not a paired device (switching
+           off needs no pairing)
       404  no such door
       409  the door is unenforced, derived (connectivity_probe),
            currently forced by a PUFFPAI_EGRESS_* environment variable, or the
@@ -20348,6 +20663,17 @@ def system_egress_door_set():
         # guessing which one a caller meant is how a door gets opened by a typo.
         return jsonify({'success': False,
                         'error': '"open" must be true or false.'}), 400
+
+    if want_open:
+        # Switching an outside service ON needs a paired device, the same rule
+        # as POST /outside/<id>/on: the paired identity the dashboard proxy
+        # derives from the pairing cookie (trusted from a loopback peer only).
+        # Switching OFF stays open to every caller with the key.
+        from puffpai import outside_api
+        if not outside_api.paired_device_id():
+            return jsonify({'success': False,
+                            'error': outside_api._NOT_PAIRED,  # noqa: SLF001
+                            'door': door_id.strip()[:64]}), 403
 
     from puffpai.security.egress_admin import ToggleRefused, set_door_open
     try:
@@ -21525,9 +21851,12 @@ def vault_unlock():
         if not vault.is_initialized:
             initialize = data.get('initialize', False)
             if not initialize:
+                # Plain words: this message reaches the owner's screen. A
+                # client sets the vault up with ``initialize: true``.
                 return jsonify({
                     'success': False,
-                    'message': 'Vault not initialized. Send {"pin": "...", "initialize": true} to set up.',
+                    'message': 'Your Vault is not set up yet. Choose a PIN on '
+                               'the Vault page first.',
                     'needs_initialization': True,
                 }), 400
             vault.initialize(pin)
@@ -21632,6 +21961,14 @@ def vault_lock():
         if vault_sid:
             vault.logout(vault_sid)
 
+        try:
+            # A lock also ends Toolsmith's build lease on its cloud key, so
+            # the key is not held in memory past the owner's own lock.
+            from puffpai.security import toolsmith_cloud as _tc
+            _tc.drop_lease("lock")
+        except Exception:  # noqa: BLE001 - the session above is already ended
+            logger.warning("Toolsmith key lease not dropped on lock")
+
         return jsonify({'success': True, 'message': 'Vault locked'})
 
     except Exception as e:
@@ -21689,6 +22026,33 @@ def vault_scan_pii():
         'types': result['pii_types'],
         'redacted_text': result['redacted_text'],
         'vaulted': result['vaulted_items'],
+    })
+
+
+@app.route('/system/privacy', methods=['GET'])
+def system_privacy():
+    """What stays private and what leaves the computer, in plain sentences.
+
+    Generated by :func:`puffpai.security.privacy_explainer.plain_summary` from
+    the live vault, the outside services that are on and the model address.
+    Values are never included, only states and counts. Read-only; the API key
+    hook guards it like every non-public route.
+    """
+    from puffpai.security import privacy_explainer as pe
+    vault = _get_vault()
+    services = pe.open_services()
+    return jsonify({
+        'success': True,
+        'lines': pe.plain_summary(None, vault=vault, services=services,
+                                  model_url=OLLAMA_URL),
+        # None when the switches could not be read, never reported as 0.
+        'outside_services_on': (len(services) if services is not None
+                                else None),
+        'consent': pe.consent_summary(services),
+        'vault': pe.vault_state(vault),
+        'waiting_in_vault': (pe.waiting_count(vault)
+                             if pe.vault_state(vault) == 'locked' else 0),
+        'saved_chats_encrypted': False,
     })
 
 
@@ -32360,6 +32724,106 @@ def media_scan():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  THE BUILD ENGINE: find, install, run and prove apps
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Every engine route lives in a blueprint, so it sits behind the same app-level
+# hooks as everything else: the rate limiter, the API key, the first-run code
+# (_enforce_setup_code) and, after setup, the vault for the engine's changes
+# (_enforce_engine_post_setup_gate). Each blueprint also asks for a paired
+# device itself, through _get_chat_client_id. Outside services are reached
+# only through their Bridge switches (puffpai.security.egress_doors).
+#
+# Each part is registered on its own: a part that fails to load is reported
+# at ERROR and its routes are simply absent, so a broken engine part never
+# takes the home's API (voice, Home Assistant, the kiosk) down with it.
+
+#: Engine parts that are always in this build.
+_ENGINE_BLUEPRINTS = (
+    'puffpai.outside_api',          # what leaves your computer: switches, log
+    'puffpai.developer_api',        # the Developer page: read-only
+    'puffpai.developer_terminal',   # the Developer command line: paired device
+    'puffpai.vault_place_api',      # where the vault lives: paired device, PIN to move
+    'puffpai.keys_api',             # sign-up keys: into the vault only
+    'puffpai.github_account_api',   # the owner's GitHub account: token into the vault
+    'puffpai.toolsmith_model_api',  # Toolsmith's model: this computer by default
+    'puffpai.add_more_api',         # Add more: find, check, one yes
+    'puffpai.things_api',           # the bot's things, each with its own page
+    'puffpai.first_apps_api',       # shipped apps that can be turned on and off
+    'puffpai.programs_api',         # the Developer page's own programs + open a file
+)
+
+#: Engine parts that may be left out of a build (skipped when absent).
+_OPTIONAL_BLUEPRINTS = ('puffpai.wizard.needs_api', 'puffpai.integrate.api',
+                      'puffpai.webapps.api', 'puffpai.box.api',
+                      'puffpai.finding.api',  # finding things + installing them
+                      'puffpai.assemble.api',  # putting an app together per capability
+                      'puffpai.build.api')  # the one build: jobs, setup list, one yes
+
+
+def _optional_module(modname):
+    """The module, or None when it is not in this build. A module that exists
+    but fails to import raises."""
+    import importlib
+    try:
+        return importlib.import_module(modname)
+    except ModuleNotFoundError as e:
+        if e.name is not None and (e.name == modname or modname.startswith(e.name + ".")):
+            return None          # not in this build
+        raise                    # exists but broken
+
+
+def _register_optional_blueprints(flask_app, modules=_OPTIONAL_BLUEPRINTS,
+                                  importer=None):
+    """Register each blueprint in *modules* that is in this build. Returns the
+    names registered. Raises for a module that is broken or has no ``bp``."""
+    importer = importer or _optional_module
+    done = []
+    for modname in modules:
+        module = importer(modname)
+        if module is None:
+            continue
+        blueprint = getattr(module, 'bp', None)
+        if blueprint is None:
+            raise RuntimeError(f"{modname} has no blueprint 'bp'")
+        if blueprint.name not in flask_app.blueprints:
+            flask_app.register_blueprint(blueprint)
+        done.append(modname)
+    return done
+
+
+def _register_engine(flask_app):
+    """Every engine part, one at a time; a broken one is reported, not fatal."""
+    done = []
+    for modname in _ENGINE_BLUEPRINTS + _OPTIONAL_BLUEPRINTS:
+        try:
+            done += _register_optional_blueprints(flask_app, modules=(modname,))
+        except Exception as exc:  # noqa: BLE001 - the home API keeps running
+            logger.error("Build engine part %s not loaded: %s: %s",
+                         modname, type(exc).__name__, exc)
+    return done
+
+
+_register_engine(app)
+
+# HomeBot's first apps: a bot with no first-apps file yet starts with its
+# household apps on (the engine's own default is none).
+try:
+    from puffpai import homebot_preset as _homebot_preset  # noqa: E402
+    _homebot_preset.use_household_apps()
+except Exception as _apps_exc:  # noqa: BLE001
+    logger.error("The household apps default is not set: %s", _apps_exc)
+
+# The key broker reads keys through the same vault singleton the /vault routes
+# open, so a key is only ever stored in, and read from, the owner's vault.
+try:
+    from puffpai.security import keys as _keys_broker  # noqa: E402
+    _keys_broker.set_vault_provider(_get_vault)
+except Exception as _keys_exc:  # noqa: BLE001
+    logger.error("The key broker is not connected to the vault: %s", _keys_exc)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  SERVER STARTUP
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -32507,6 +32971,121 @@ def start_background_services() -> None:
     except Exception as _exc:
         print(f"[Startup] Task dispatcher failed to start: {_exc}")
 
+    _start_build_engine()
+
+
+#: Set once the start-up build migration has finished (or had nothing to do),
+#: so GET /build/status can wait for it rather than migrate without a brain.
+BUILD_MIGRATION_DONE = threading.Event()
+
+
+def _migrate_build_at_start() -> None:
+    """build.json from an older bot's files, once, with the brain. Never
+    raises and never deletes: ``build.migrate`` only reads the old files."""
+    try:
+        from puffpai.build import migrate
+        from puffpai.build import schema as build_schema
+        if not build_schema.exists() and migrate.has_old():
+            migrate.ensure({"use_brain": True})
+            print("[Startup] Build record made from this bot's older files.")
+    except ImportError:
+        pass
+    except Exception as exc:  # noqa: BLE001 - the bot still opens
+        print(f"[Startup] Build record not made yet: {type(exc).__name__}")
+    finally:
+        BUILD_MIGRATION_DONE.set()
+
+
+def _start_build_engine() -> None:
+    """The build engine's start-up work. Each step is best-effort: the home
+    keeps running without any of them."""
+    # Drawbridge's checkers for the engine's kinds, then its registry closes,
+    # so no checker can be added or replaced after start-up. Until this runs
+    # every addition of those kinds is blocked (unknown kinds block).
+    try:
+        from puffpai import factory_wiring
+        print("[Startup] Drawbridge checkers: " + ", ".join(
+            factory_wiring.connect_checkers()))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[Startup] Drawbridge checkers not wired: {type(exc).__name__}")
+
+    # A bot made before the one build record gets its build.json from its
+    # old files once, here, with the brain. Never deletes anything.
+    threading.Thread(target=_migrate_build_at_start, daemon=True).start()
+
+    # Every added browser app gets its place on the Bridge back (its sites,
+    # as off as the owner's recorded yeses say). Places live in memory.
+    try:
+        from puffpai.build import make as _build_make
+        _restored = _build_make.restore_web_sites()
+        if _restored:
+            print(f"[Startup] Outside sites ready for {len(_restored)} added app(s).")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[Startup] Added apps' outside sites not restored: {type(exc).__name__}")
+
+    _start_optional_services()
+    _start_assemble()
+    _start_app_restarts()
+
+
+def _start_app_restarts(delay: float = 10.0) -> None:
+    """The apps Toolsmith got working stopped with the backend: start them
+    again in the background, one at a time, a little after the API is up.
+    The owner can turn it off: ``"apps": {"restart_on_start": false}``."""
+    apps_cfg = (getattr(_cfg, '_raw', None) or {}).get('apps')
+    if isinstance(apps_cfg, dict) and apps_cfg.get('restart_on_start') is False:
+        print("[Startup] Your apps are not started again (apps.restart_on_start is off).")
+        return
+
+    def _run() -> None:
+        time.sleep(max(0.0, delay))
+        try:
+            from puffpai.build import toolsmith_run
+            toolsmith_run.restart_all(lambda line: print(f"[Startup] {line}"))
+        except Exception as exc:  # noqa: BLE001 - the bot runs without them
+            print(f"[Startup] Your apps were not started again: {type(exc).__name__}")
+
+    threading.Thread(target=_run, name="puffpai-app-restarts", daemon=True).start()
+
+
+def _start_assemble() -> None:
+    """The wizard's Assemble step left its run waiting for this server: start
+    it in the background, a little after start-up so this server answers the
+    app servers' calls back. Best-effort: the bot runs without it."""
+    try:
+        assemble = _optional_module('puffpai.assemble.api')
+        if assemble is None:
+            return
+        if assemble.resume_waiting(delay=15.0):
+            print("[Startup] Putting your bot's apps together in the background.")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[Startup] Putting apps together did not start: {type(exc).__name__}")
+
+
+def _start_optional_services() -> None:
+    """Start the app host (loopback only) when it is in this build, and stop
+    it when the backend exits. A host that fails to start is reported and the
+    backend keeps running without it."""
+    try:
+        host = _optional_module('puffpai.webapps.host')
+        if host is None:
+            return
+        host.start(_cfg)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[Startup] The app host did not start: {type(exc).__name__}")
+        return
+    import atexit
+    atexit.register(_stop_optional_services)
+
+
+def _stop_optional_services() -> None:
+    try:
+        host = _optional_module('puffpai.webapps.host')
+        if host is not None:
+            host.stop()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("app host stop failed: %s", type(exc).__name__)
+
 
 # ── The Hatch: naming ritual + adoption certificate ─────────────────────────
 # Routes live in puffpai.hatch_api (registered here so they inherit the API
@@ -32635,15 +33214,28 @@ _SETUP_READ_METHODS = frozenset({'GET', 'HEAD', 'OPTIONS'})
 # build; there is no equivalent bootstrap need, and the restrictive choice is
 # the right default for a surface that exists to configure the appliance.
 #
-# ``/build/self`` is named although no such route ships today: a prefix that
-# matches nothing costs nothing, and the day it is added it is already covered.
+# ``/build/self`` and the build engine's own ``/build`` routes (its jobs,
+# setup list and one Yes) are the build record itself. The engine's other
+# families are the same surface by other names: finding and installing things
+# (``/add``, ``/things``, ``/installed``), putting apps together
+# (``/assemble``), the locked box (``/box``), integrated and browser apps
+# (``/integrations``, ``/webapps``), sign-up keys and accounts (``/keys``,
+# ``/github``, ``/toolsmith``), the outside-service switches (``/outside``)
+# and the Developer page with its command line (``/developer``). All of them
+# need the code during first run, reads included.
 #
 # ``/persona`` WRITES are the same build surface (``POST /persona/scaffold``
 # writes an app folder and a pack; PATCH and DELETE rewrite or remove one), so
 # they need the code during first run too. Its reads stay open: the kiosk asks
 # ``GET /persona/list`` as an unpaired client by design.
 _SETUP_CODE_PREFIXES = ('/setup', '/wizard', '/persona', '/build/prove',
-                        '/build/self')
+                        '/build/self', '/build/status', '/build/apps',
+                        '/build/job', '/build/yes', '/build/knowledge',
+                        '/build/check', '/build/more', '/build/project',
+                        '/build/setup', '/installed', '/assemble', '/box',
+                        '/add', '/things', '/integrations', '/webapps',
+                        '/keys', '/github', '/toolsmith', '/outside',
+                        '/developer')
 
 #: Prefixes whose READS stay open (/setup and /persona -- see above).
 _SETUP_CODE_READS_OPEN = ('/setup', '/persona')
@@ -32689,9 +33281,9 @@ def _enforce_setup_code():
     the only version of this that stays true.
 
     Covers ``/setup/*`` (state-changing calls only, as before) and the rest of
-    the build surface -- ``/wizard/*``, ``/build/prove*``, ``/build/self`` --
-    for EVERY method, while first-run setup is still required. See
-    ``_SETUP_CODE_PREFIXES``.
+    the build surface -- ``/wizard/*``, ``/build/prove*``, ``/build/self``
+    and the build engine's routes -- for EVERY method, while first-run setup
+    is still required. See ``_SETUP_CODE_PREFIXES``.
     """
     path = request.path or ''
     if not _under_prefix(path, _SETUP_CODE_PREFIXES):
@@ -32765,6 +33357,153 @@ def _enforce_post_setup_gate():
     if path in _POST_SETUP_READ_ONLY_POSTS:
         return None
     return _setup_gate()
+
+
+# ── after completion: the build engine's changes ────────────────────────────
+#
+# The build engine keeps changing the build after first run: its one Yes
+# installs found apps (often as Docker containers), Add more and Find install
+# more, the app host serves them, and the Developer page opens a command line
+# on this computer. Each of those carries a device-bound consent ticket or a
+# paired-device check of its own, but any paired device can mint its own
+# ticket, so on their own they answer the same question the API key does:
+# "is this a paired device?". The wizard writes above answer a stricter one,
+# "is the owner standing at an unlocked vault?", and these routes change the
+# build just as much. Same rule, same helper.
+#
+# Not gated here, on purpose: reads; using what is installed (run, ask, look
+# up, home-page placement); finding and previewing; minting a consent ticket;
+# and every OFF (an outside service, a key, a GitHub account, Toolsmith's
+# cloud key, the voice key), because switching something off must never wait
+# for a PIN.
+_ENGINE_WRITE_METHODS = frozenset({'POST', 'PUT', 'PATCH', 'DELETE'})
+
+#: (methods, path pattern) for the engine writes that need an unlocked vault
+#: after first run. Patterns are anchored at both ends.
+_ENGINE_POST_SETUP_WRITES = tuple(
+    (frozenset(methods), re.compile(pattern)) for methods, pattern in (
+        # The build record: jobs, setup rows, the one Yes. The proofs keep
+        # their own rule (the API key), as before.
+        (_ENGINE_WRITE_METHODS, r'/build/(?!prove(?:/|$))[^/]+(?:/.*)?'),
+        (_ENGINE_WRITE_METHODS, r'/assemble(?:/.*)?'),
+        (_ENGINE_WRITE_METHODS, r'/box(?:/.*)?'),
+        ({'POST'}, r'/developer/terminal/open'),
+        ({'POST'}, r'/add/[^/]+/approve'),
+        ({'POST'}, r'/add/added/[^/]+/remove'),
+        ({'POST'}, r'/add/things/install'),
+        ({'POST'}, r'/add/things/installed/[^/]+/undo'),
+        ({'POST'}, r'/things/install-missing'),
+        ({'DELETE'}, r'/things/[^/]+'),
+        ({'POST'}, r'/things/[^/]+/(?:host|key)'),
+        ({'POST'}, r'/integrations/(?!voice-key/off$)[^/]+(?:/.*)?'),
+        ({'POST'}, r'/webapps/[^/]+/(?:hosts|folder|undo)'),
+        ({'POST'}, r'/keys/[^/]+'),
+        ({'POST'}, r'/github/(?:token|device/start|device/poll)'),
+        ({'POST'}, r'/toolsmith/model(?:/keep)?'),
+        ({'POST'}, r'/programs'),
+        ({'PATCH', 'DELETE'}, r'/programs/[^/]+'),
+    ))
+
+
+#: Keeping a key working while the vault is locked: switching it ON is an
+#: engine write (it needs the unlocked vault after setup); switching it off
+#: never waits for a PIN.
+_KEY_LOCKED_RE = re.compile(r'/keys/[^/]+/locked')
+
+#: Switching one of the engine's outside services ON (its consent ticket is
+#: spent here): the list's own route and the Add page's live-card route. Their
+#: confirm (minting the ticket) and every OFF are not engine writes.
+_OUTSIDE_ON_RE = re.compile(r'/(?:outside/([^/]+)/on|add/switch-on/([^/]+))')
+
+#: A chat "fix it now" card. Its switch_on turns an outside service on and its
+#: assemble_yes starts an app: the same changes as the routes above and /assemble.
+_FIX_APPLY_PATH = '/fix/apply'
+_FIX_ENGINE_KINDS = frozenset({'switch_on', 'assemble_yes'})
+
+#: The Settings card's own switch route. Switching one of the engine's
+#: services below ON there is the same engine write as on its own routes.
+_EGRESS_DOOR_PATH = '/system/egress/door'
+
+#: Outside services the build engine brought that also sit in HomeBot's egress
+#: registry (so the Settings card lists them): engine switches all the same.
+_ENGINE_REGISTRY_SWITCHES = frozenset({
+    'github', 'toolsmith_cloud', 'brave_search', 'marginalia_search',
+    'wikipedia_books', 'gutenberg_books', 'openstax_books', 'wikibooks_books',
+    'archive_books', 'result_pictures'})
+
+
+def _engine_switch(sid) -> bool:
+    """True when *sid* is one of the build engine's outside services (Code
+    downloads, Code search, the book library and book sites, GitHub,
+    Toolsmith's cloud model, a live card, a tool server...). HomeBot's own
+    built-in Bridge switches (weather, news, radio...) keep the rule of the
+    Settings card that switches them: a paired device. Fails closed."""
+    key = str(sid or '').strip().lower()
+    if key in _ENGINE_REGISTRY_SWITCHES:
+        return True
+    try:
+        from puffpai.security import egress_doors
+        return key not in egress_doors._BY_ID  # noqa: SLF001
+    except Exception:
+        return True
+
+
+def _engine_write_needs_vault(method, path) -> bool:
+    """True when *method* on *path* is an engine write gated after setup."""
+    if method == 'POST' and _KEY_LOCKED_RE.fullmatch(path):
+        body = request.get_json(silent=True) if request else None
+        return isinstance(body, dict) and body.get('on') is True
+    if method == 'POST':
+        switch = _OUTSIDE_ON_RE.fullmatch(path)
+        if switch:
+            return _engine_switch(switch.group(1) or switch.group(2))
+        if path == _FIX_APPLY_PATH:
+            body = request.get_json(silent=True) if request else None
+            if not isinstance(body, dict) or body.get('kind') not in _FIX_ENGINE_KINDS:
+                return False   # a town, a key link: refused or saved as before
+            return body.get('kind') == 'assemble_yes' or _engine_switch(body.get('service'))
+        if path == _EGRESS_DOOR_PATH:
+            # ON only (anything but open: false counts as on, as the proxy
+            # reads it); OFF never waits. HomeBot's own switches: unchanged.
+            body = request.get_json(silent=True) if request else None
+            return (isinstance(body, dict) and body.get('open') is not False
+                    and str(body.get('id') or '').strip().lower()
+                    in _ENGINE_REGISTRY_SWITCHES)
+    return any(method in methods and pattern.fullmatch(path)
+               for methods, pattern in _ENGINE_POST_SETUP_WRITES)
+
+
+@app.before_request
+def _enforce_engine_post_setup_gate():
+    """After completion, the build engine's changes need an unlocked vault.
+
+    Before completion this does nothing (the first-run code gate above is in
+    charge). See ``_ENGINE_POST_SETUP_WRITES`` for exactly which writes.
+    """
+    path = request.path or ''
+    if not _engine_write_needs_vault(request.method, path):
+        return None
+    return _setup_gate()
+
+
+# The outside-service switches are the Bridge's switches by another name:
+# the same tight per-peer budget as ``/system/egress/door`` applies.
+_OUTSIDE_SWITCH_WRITE_RE = re.compile(
+    r'/(?:outside/[^/]+/(?:on|off|confirm)|add/switch-on/[^/]+(?:/confirm)?)')
+
+
+@app.before_request
+def _throttle_outside_switches():
+    """429 once this peer has spent its switch budget for the window."""
+    if request.method != 'POST':
+        return None
+    if not _OUTSIDE_SWITCH_WRITE_RE.fullmatch(request.path or ''):
+        return None
+    if _egress_write_throttled():
+        return jsonify({'ok': False, 'success': False,
+                        'message': 'Too many switch changes. Try again in a '
+                                   'minute.'}), 429
+    return None
 
 
 def _setup_ok(payload=None, *, status=200, no_store=False):
@@ -32967,7 +33706,18 @@ def setup_posture():
     build_network = str(data.get('build_network') or '').strip() or None
     run_egress = str(data.get('run_egress') or '').strip() or None
     switches = _setup_str_list(data.get('enabled_switches'))
-    posture = setup_ops.assess_posture(build_network, run_egress, switches)
+    if run_egress is None:
+        # Nobody stated the run-time reach: this build's setup is the HomeBot
+        # preset, which records the same reach the console does (only the
+        # outside services the owner switches on) with its switches (none),
+        # and records it as defaulted, not chosen.
+        from puffpai import homebot_preset
+        posture = setup_ops.assess_posture(
+            build_network, homebot_preset.RUN_EGRESS,
+            list(homebot_preset.EGRESS_SWITCHES))
+        posture = dict(posture, run_egress_source='defaulted')
+    else:
+        posture = setup_ops.assess_posture(build_network, run_egress, switches)
     config_path = setup_ops.persist_posture(posture)
     payload = dict(posture)
     payload['gates'] = setup_ops.posture_gates(posture)
@@ -32992,6 +33742,10 @@ def setup_bridge():
       maps to ``edge.kind = "zone3"``, ``false`` to ``"none"``.
     * ``{posture, edge: {kind, external_kind?, external_url?}}`` - the whole
       edge answer, the same one the terminal wizard collects.
+
+    ``defaulted: true`` says nobody picked the posture (the build's own
+    default was sent), so it is recorded as ``chosen_by: default``, never as
+    the owner's choice.
 
     Both go through ``setup_ops.reconcile_bridge``'s dict form, so the browser
     and the terminal record the SAME ``manifest.bridge.edge``. The boolean route
@@ -33034,6 +33788,8 @@ def setup_bridge():
     if known and posture not in known:
         return _setup_error('unknown_posture',
                             'That is not one of the Bridge postures.')
+
+    chosen_by = 'default' if data.get('defaulted') is True else 'owner'
 
     manifest = build_manifest.read_manifest() or {}
     run_egress = (manifest.get('posture') or {}).get('run_egress')
@@ -33083,7 +33839,7 @@ def setup_bridge():
              'posture': reconciled, 'run_egress': run_egress})
     return _setup_ok({
         'bridge': setup_ops.bridge_block(reconciled, run_egress=run_egress,
-                                         chosen_by='owner', edge=edge),
+                                         chosen_by=chosen_by, edge=edge),
         'posture': reconciled,
         'requested_posture': posture,
         'run_egress': run_egress,
@@ -33285,6 +34041,14 @@ def setup_create_vault():
                             'The vault could not be created on this build.',
                             503, no_store=True)
 
+    # The seal used a handle of its own. The server's cached handle read "not
+    # set up" when it was made, so it is let go of now: the owner's first
+    # unlock must not need a restart. It held no session (there was no vault
+    # to open), so nothing the owner had open is closed by this.
+    live = _vault_instance
+    if live is not None and not getattr(live, 'is_initialized', False):
+        _reload_vault_handle('setup')
+
     with _setup_recovery_lock:
         _setup_recovery_pending.clear()
         _setup_recovery_pending.update({
@@ -33424,15 +34188,31 @@ def _setup_refuse_offhouse_ha(url):
     """
     from puffpai.security import lan_http, netaddr
     try:
-        lan_http.validate_url(url)
+        # local_names: a .local name passes when one of its answers is inside
+        # the house (an IPv6 home also answers with a global address); the
+        # test probe then connects only to those answers.
+        lan_http.validate_url(url, local_names=True)
         return None
     except ValueError as exc:
         return _setup_error('bad_ha_url', str(exc), no_store=True)
     except netaddr.AddressRefused:
+        try:
+            from urllib.parse import urlsplit
+            local_name = netaddr.is_local_name(urlsplit(url).hostname or '')
+        except ValueError:
+            local_name = False
+        if local_name:
+            return _setup_error(
+                'ha_not_local',
+                'That name did not answer with an address on your home '
+                'network, so no token was sent. Type the IP address of your '
+                'Home Assistant box instead, for example '
+                'http://192.168.1.20:8123.',
+                no_store=True)
         return _setup_error(
             'ha_not_local',
             'That address is not inside your house. Home Assistant has to be '
-            'on your own network - this build will not send a token off it.',
+            'on your own network, and this build will not send a token off it.',
             no_store=True)
     except Exception:
         # Resolution failed, or the module would not load. "We could not tell"
@@ -33557,6 +34337,84 @@ def setup_set_ollama():
                             or 'That address cannot be used by this build.')
     return jsonify({'success': True, 'ok': True, 'model': model,
                     'config_path': path})
+
+
+#: One model download at a time, and what each asked-for model's last one did:
+#: ``{model: {"state": "running"|"done"|"failed", "line": str, "message": str}}``.
+_SETUP_PULLS: dict = {}
+_SETUP_PULLS_LOCK = threading.Lock()
+_SETUP_PULL_MODEL_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$')
+
+
+@app.route('/setup/ollama/pull', methods=['GET', 'POST'])
+def setup_ollama_pull():
+    """Download a thinking model into this build's Ollama, in the background.
+
+    POST ``{model, switch_on: true}``: the Download button. The press is the
+    owner's yes for the named Model downloads switch, so the switch is turned
+    on for this download only and goes back off when it ends unless it was
+    already on (``homebot_preset.pull_with_switch``, the same step the setup
+    build runs). Without ``switch_on: true`` nothing is switched or fetched.
+
+    GET ``?model=<id>``: ``{state: idle|running|done|failed, line, message}``.
+    ``line`` is the latest progress line.
+    """
+    if request.method == 'GET':
+        model = str(request.args.get('model') or '').strip()
+        with _SETUP_PULLS_LOCK:
+            row = dict(_SETUP_PULLS.get(model) or {})
+        return _setup_ok({'model': model, 'state': row.get('state') or 'idle',
+                          'line': row.get('line') or '',
+                          'message': row.get('message') or ''})
+
+    blocked = _setup_gate()
+    if blocked is not None:
+        return blocked
+    data = request.json or {}
+    model = str(data.get('model') or '').strip()
+    if not _SETUP_PULL_MODEL_RE.match(model):
+        return _setup_error('model_required', 'A model name is required.')
+    if data.get('switch_on') is not True:
+        return _setup_error(
+            'switch_not_on',
+            'Downloading a model needs the Model downloads switch on. '
+            'Nothing was downloaded.')
+    with _SETUP_PULLS_LOCK:
+        if any(row.get('state') == 'running' for row in _SETUP_PULLS.values()):
+            running = _SETUP_PULLS.get(model) or {}
+            if running.get('state') == 'running':
+                return _setup_ok({'model': model, 'state': 'running',
+                                  'line': running.get('line') or '',
+                                  'message': running.get('message') or ''},
+                                 status=202)
+            return _setup_error('pull_running',
+                                'Another model is downloading. Try again when '
+                                'it is done.', 409)
+        _SETUP_PULLS[model] = {'state': 'running', 'line': '',
+                               'message': f'Downloading {model}.'}
+
+    from puffpai import homebot_preset
+    from puffpai.config import get_config
+    url = str(get_config().ollama.url or '')
+
+    def _line(text):
+        with _SETUP_PULLS_LOCK:
+            _SETUP_PULLS[model]['line'] = str(text).strip()
+
+    def _pull():
+        try:
+            result = homebot_preset.pull_with_switch(model, url, _line)
+        except Exception as exc:  # noqa: BLE001 - said plainly, never raised
+            logger.warning("Setup: model download failed (%s)", type(exc).__name__)
+            result = {'ok': False, 'message': 'The download stopped. Try again.'}
+        with _SETUP_PULLS_LOCK:
+            _SETUP_PULLS[model].update(
+                state='done' if result.get('ok') else 'failed',
+                message=str(result.get('message') or ''))
+
+    threading.Thread(target=_pull, name='setup-model-pull', daemon=True).start()
+    return _setup_ok({'model': model, 'state': 'running', 'line': '',
+                      'message': f'Downloading {model}.'}, status=202)
 
 
 @app.route('/setup/knowledge', methods=['POST'])
@@ -33896,6 +34754,204 @@ def wizard_resume():
     return jsonify(result)
 
 
+# --- The conversation: the browser face of the same wizard ------------------
+#
+# The browser asks the same questions in the same order as the terminal, shows
+# the same one summary, and one "Looks good" approves it. These routes return
+# what wizard.service computes; the browser keeps no list of questions of its
+# own. Same gates as every /wizard neighbour: the API key, the first-run code
+# while setup is open (_enforce_setup_code), and an unlocked vault for writes
+# after it (_enforce_post_setup_gate). Nothing here echoes a secret: the vault
+# PIN goes through /setup/vault and the keys through /keys and /toolsmith.
+
+@app.route('/wizard/flow', methods=['GET'])
+def wizard_flow():
+    """What to show next: the questions, whether the plan is approved, the
+    vault, the build and the closing screen. Read-only."""
+    from puffpai.wizard import service
+    return jsonify(service.flow())
+
+
+@app.route('/wizard/first-look', methods=['POST'])
+def wizard_first_look():
+    """The first screen: what this computer has and the thinking model that
+    fits it. ``{}`` draws it; ``{"choose": true, "model": ...}`` keeps the
+    pick (null takes the recommendation)."""
+    from puffpai.wizard import cards as wizard_cards_mod, service
+    data = request.json if isinstance(request.json, dict) else {}
+    try:
+        if data.get('choose'):
+            result = service.first_look_choose(data.get('model'))
+        else:
+            result = service.first_look()
+    except wizard_cards_mod.CardError as exc:
+        return jsonify({'success': False, 'field': getattr(exc, 'field', None),
+                        'message': str(exc)}), 400
+    except service.RunInProgress as exc:
+        return jsonify({'success': False, 'field': None,
+                        'message': str(exc)}), 409
+    result['success'] = True
+    return jsonify(result)
+
+
+@app.route('/wizard/github', methods=['POST'])
+def wizard_github():
+    """``{"choice": "connected"}`` or ``{"choice": "skipped"}``: the browser's
+    "Do you have a GitHub account?" was answered, so it is not asked again.
+    Records nothing about the account (that is /github/*)."""
+    from puffpai.wizard import cards as wizard_cards_mod, service
+    data = request.json if isinstance(request.json, dict) else {}
+    try:
+        result = service.github_choose(data.get('choice'))
+    except wizard_cards_mod.CardError as exc:
+        return jsonify({'success': False, 'field': getattr(exc, 'field', None),
+                        'message': str(exc)}), 400
+    except service.RunInProgress as exc:
+        return jsonify({'success': False, 'field': None,
+                        'message': str(exc)}), 409
+    result['success'] = True
+    return jsonify(result)
+
+
+@app.route('/wizard/toolsmith', methods=['POST'])
+def wizard_toolsmith():
+    """``{"choice": "local" | "cloud" | "skipped"}``: the browser's "Who should
+    do Toolsmith's installs?" was answered, so it is not asked again. The
+    setting and the key go through /toolsmith/model; nothing else is kept."""
+    from puffpai.wizard import cards as wizard_cards_mod, service
+    data = request.json if isinstance(request.json, dict) else {}
+    try:
+        result = service.toolsmith_choose(data.get('choice'))
+    except wizard_cards_mod.CardError as exc:
+        return jsonify({'success': False, 'field': getattr(exc, 'field', None),
+                        'message': str(exc)}), 400
+    except service.ToolsmithNotSaved as exc:
+        return jsonify({'success': False, 'field': None, 'code': exc.code,
+                        'message': str(exc)}), 409
+    except service.RunInProgress as exc:
+        return jsonify({'success': False, 'field': None,
+                        'message': str(exc)}), 409
+    result['success'] = True
+    return jsonify(result)
+
+
+@app.route('/wizard/summary', methods=['POST'])
+def wizard_summary():
+    """The one summary, with ``{"changes": {...}}`` drawn in. Approves
+    nothing; the first call checks this computer, as the terminal does."""
+    from puffpai.wizard import cards as wizard_cards_mod, service
+    data = request.json if isinstance(request.json, dict) else {}
+    try:
+        result = service.summary(data.get('changes'))
+    except wizard_cards_mod.CardError as exc:
+        return jsonify({'success': False, 'field': None,
+                        'message': str(exc)}), 400
+    result['success'] = True
+    return jsonify(result)
+
+
+@app.route('/wizard/approve', methods=['POST'])
+def wizard_approve():
+    """"Looks good": ``{"changes": {...}}`` checked against the plan, then
+    recorded. One at a time."""
+    from puffpai.wizard import cards as wizard_cards_mod, service
+    data = request.json if isinstance(request.json, dict) else {}
+    try:
+        result = service.approve(data.get('changes'))
+    except wizard_cards_mod.CardError as exc:
+        return jsonify({'success': False, 'field': None,
+                        'message': str(exc)}), 400
+    except service.RunInProgress as exc:
+        return jsonify({'success': False, 'field': None,
+                        'message': str(exc)}), 409
+    result['success'] = True
+    return jsonify(result)
+
+
+@app.route('/wizard/vault/skip', methods=['POST'])
+def wizard_vault_skip():
+    """The owner will set the vault PIN later. Recorded, and said on the
+    closing screen."""
+    from puffpai.wizard import service
+    result = service.skip_vault()
+    result['success'] = True
+    return jsonify(result)
+
+
+@app.route('/wizard/model-download', methods=['POST'])
+def wizard_model_download():
+    """``{"yes": true}`` or ``{"yes": false}``: the answer to "Download it when
+    the build starts?" for the picked thinking model. Records the answer; on
+    yes the build switches Model downloads on for that one download and back
+    off when it ends."""
+    from puffpai.wizard import cards as wizard_cards_mod, service
+    data = request.json if isinstance(request.json, dict) else {}
+    try:
+        result = service.model_download_choose(data.get('yes'))
+    except wizard_cards_mod.CardError as exc:
+        return jsonify({'success': False, 'field': getattr(exc, 'field', None),
+                        'message': str(exc)}), 400
+    except service.RunInProgress as exc:
+        return jsonify({'success': False, 'field': None,
+                        'message': str(exc)}), 409
+    result['success'] = True
+    return jsonify(result)
+
+
+@app.route('/wizard/home-assistant', methods=['POST'])
+def wizard_home_assistant():
+    """``{"choice": "connected" | "skipped"}``: the optional Home Assistant
+    screen was answered, so it is not shown again. The address and the token
+    go through /setup/ha/test and /setup/ha; nothing else is kept here."""
+    from puffpai.wizard import cards as wizard_cards_mod, service
+    data = request.json if isinstance(request.json, dict) else {}
+    try:
+        result = service.home_assistant_choose(data.get('choice'))
+    except wizard_cards_mod.CardError as exc:
+        return jsonify({'success': False, 'field': getattr(exc, 'field', None),
+                        'message': str(exc)}), 400
+    except service.RunInProgress as exc:
+        return jsonify({'success': False, 'field': None,
+                        'message': str(exc)}), 409
+    result['success'] = True
+    return jsonify(result)
+
+
+@app.route('/wizard/build', methods=['GET', 'POST'])
+def wizard_build():
+    """POST starts building the approved plan in the background (downloads
+    take minutes); GET says whether it is still running and what it did."""
+    from puffpai.wizard import cards as wizard_cards_mod, service
+    if request.method == 'GET':
+        return jsonify(service.rest_status())
+    try:
+        result = service.start_rest()
+    except wizard_cards_mod.CardError as exc:
+        return jsonify({'success': False, 'field': None,
+                        'message': str(exc)}), 400
+    except service.RunInProgress as exc:
+        return jsonify({'success': False, 'field': None,
+                        'message': str(exc)}), 409
+    result['success'] = True
+    return jsonify(result), 202
+
+
+@app.after_request
+def _wizard_step_keeps_toolsmith_key(response):
+    """A wizard step the owner took (any /wizard/ POST answered OK, or a GET
+    /wizard/build poll while it builds) counts as Toolsmith activity for its
+    key's keep time. A wizard left alone does not (wizard/service.py
+    note_step). Refused and failed requests count for nothing."""
+    try:
+        path = request.path or ''
+        if path.startswith('/wizard/') and response.status_code < 400:
+            from puffpai.wizard import service
+            service.note_step(request.method, path)
+    except Exception:  # noqa: BLE001 - never breaks a reply
+        logger.debug("wizard step not noted for the Toolsmith key")
+    return response
+
+
 def _prove_payload(record):
     """The one shape every /build/prove* route answers with.
 
@@ -33911,10 +34967,16 @@ def _prove_payload(record):
                 'live': None,
                 'message': 'Not proven yet: run puffpai prove'}
 
+    from puffpai import prove
+
     live = record.get('live') if isinstance(record.get('live'), dict) else None
     return {
         'ran': True,
         'verdict': str(record.get('verdict') or ''),
+        # The end screen's own words (prove.summary_*), so the home page and
+        # the end screen read the same record the same way.
+        'summary': prove.summary_head(record),
+        'line': prove.summary_line(record),
         'static_at': record.get('static_at'),
         'bot_name': str(record.get('bot_name') or ''),
         'persona_id': str(record.get('persona_id') or ''),
@@ -34134,6 +35196,317 @@ def build_prove():
         record = {}
 
     return jsonify(_prove_payload(record))
+
+
+# --- What this build IS: the Developer page's view --------------------------
+#
+# The Developer page draws the owner's own build (three zones, crew,
+# knowledge, device, apps) from this one read-only route. It reads the
+# committed manifest, the live config and the vault's state; it writes
+# nothing and runs no wizard step.
+#
+# Secrets discipline: the manifest is never echoed wholesale. Every field below
+# is copied out by name, so a hand-edited manifest carrying a stray PIN or token
+# cannot leak through this route.
+#
+# Gates: the API key (not in _PUBLIC_ENDPOINTS), and the first-run code while
+# setup is open (``/build`` is in _SETUP_CODE_PREFIXES).
+
+def _build_self_vault(man):
+    """Vault zone: what the wizard recorded, reconciled with what is on disk."""
+    from puffpai import setup_ops, zone_vault
+    recorded = man.get('vault')
+    block = dict(recorded) if isinstance(recorded, dict) else {}
+    initialized = False
+    try:
+        initialized = bool(setup_ops.vault_initialized())
+    except Exception as exc:
+        logger.debug("Vault zone check failed: %s", exc)
+    # The manifest says what the wizard did; the disk says what is there now.
+    # A vault the owner created outside the wizard still counts as configured.
+    configured = bool(block.get('configured')) or initialized
+    live_state = {}
+    try:
+        from puffpai.security import vault as _vault_mod
+        live = _get_vault()
+        seconds = float(getattr(live, 'idle_lock_seconds',
+                                _vault_mod.IDLE_LOCK_SECONDS))
+        try:
+            missing = live.missing_reason() if live is not None else ''
+        except Exception:
+            missing = ''
+        # The real state now, never a fixed line: open or locked, how long it
+        # stays open when left alone, and a missing drive said plainly.
+        live_state = {
+            'unlocked': bool(live is not None and live.is_unlocked),
+            'auto_lock_minutes': _vault_mod.idle_lock_minutes(seconds),
+            'auto_lock_line': _vault_mod.idle_lock_line(seconds),
+            'missing': missing,
+        }
+    except Exception as exc:
+        logger.debug("Vault live state unreadable: %s", exc)
+    return {
+        'configured': configured,
+        'initialized': initialized,
+        **live_state,
+        'sealed': bool(block.get('sealed')) if block else initialized,
+        'method': str(block.get('method') or ('pin' if initialized else '')),
+        'recovery_issued': bool(block.get('recovery_issued')),
+        'recovery_confirmed': bool(block.get('recovery_confirmed')),
+        'recovery_escrow': str(block.get('recovery_escrow') or ''),
+        'summary': zone_vault.vault_summary_lines(
+            block if block else {'configured': configured,
+                                 'sealed': initialized, 'method': 'pin'}),
+    }
+
+
+def _build_self_brain(man, capabilities):
+    """Brain zone: the model this build runs, its tier, and what that costs."""
+    from puffpai import model_profile
+    brain = man.get('brain') if isinstance(man.get('brain'), dict) else {}
+    model = brain.get('model')
+    if not model:
+        try:
+            model = _get_puffpai_config().ollama.model
+        except Exception:
+            model = None
+    out = {
+        'configured': bool(brain.get('model')),
+        'model': str(model) if model else None,
+        'recommended': str(brain.get('recommended')) if brain.get('recommended') else None,
+        'chosen_by': str(brain.get('chosen_by')) if brain.get('chosen_by') else None,
+        'routing_tier': None,
+        'limits': '',
+        'can_plan': bool(capabilities.get('can_plan')),
+        'backend_status': 'unknown',
+    }
+    if model:
+        try:
+            out['routing_tier'] = model_profile.routing_tier(str(model))
+            out['limits'] = model_profile.limits_sentence(str(model))
+        except Exception as exc:
+            logger.debug("Model profile lookup failed: %s", exc)
+    try:
+        from puffpai.config import get_llm_backend
+        backend = get_llm_backend()
+        out['backend_status'] = ('connected' if backend.is_available()
+                                 else 'disconnected')
+    except Exception as exc:
+        logger.debug("Brain backend probe failed: %s", exc)
+    return out
+
+
+def _build_self_bridge(man):
+    """Bridge zone: the posture, and which switches it leaves on."""
+    recorded = man.get('bridge')
+    block = dict(recorded) if isinstance(recorded, dict) else {}
+    from puffpai import zone_bridge as _zb
+    from puffpai.security import bridge_guard as _bg
+    # Today's words for the recorded choice, never the copy frozen into an
+    # older record (which could promise more than is enforced).
+    block = _zb.current_words(block)
+    posture = man.get('posture') if isinstance(man.get('posture'), dict) else {}
+    egress = str(posture.get('run_egress') or '').lower()
+    switches = posture.get('egress_switches')
+    try:
+        enforced = _bg.enforced()
+    except Exception as exc:
+        logger.debug("Bridge enforcement unreadable: %s", exc)
+        enforced = {}
+    return {
+        'configured': bool(block.get('posture')),
+        'posture': str(block.get('posture') or ''),
+        'label': str(block.get('label') or ''),
+        'summary': str(block.get('summary') or ''),
+        'costs': str(block.get('costs') or ''),
+        'note': str(block.get('note') or ''),
+        'chosen_by': str(block.get('chosen_by') or ''),
+        'enforced_by': str(block.get('enforced_by') or ''),
+        'run_egress': egress,
+        'run_egress_source': str(posture.get('run_egress_source') or ''),
+        # What the running bot actually enforces: the stricter of the Bridge
+        # and the run setting, read back from disk.
+        'enforced_posture': str(enforced.get('posture') or ''),
+        'enforced_level': str(enforced.get('level') or ''),
+        'enforced_line': str(enforced.get('line') or ''),
+        'open_doors': [str(s) for s in (posture.get('enabled_switches') or [])],
+        'all_doors': sorted(switches) if isinstance(switches, dict) else [],
+    }
+
+
+def _build_self_device(man):
+    """The hardware this build sits on, as recorded, or as it looks now."""
+    from puffpai import hardware_census as hc
+    census = man.get('hardware') if isinstance(man.get('hardware'), dict) else None
+    source = 'manifest'
+    if not census:
+        # No manifest yet. Look at the machine rather than reporting zeros.
+        source = 'live'
+        try:
+            census = hc.run_census()
+        except Exception as exc:
+            logger.debug("Live census failed: %s", exc)
+            census = {}
+    memory = census.get('memory') if isinstance(census.get('memory'), dict) else {}
+    cpu = census.get('cpu') if isinstance(census.get('cpu'), dict) else {}
+    accel = census.get('accelerator') if isinstance(census.get('accelerator'), dict) else {}
+    try:
+        summary = hc.census_summary_lines(census) if census else []
+    except Exception:
+        summary = []
+    return {
+        'source': source,
+        'hardware_class': str(census.get('hardware_class') or 'unknown'),
+        'total_ram_gb': memory.get('total_gb'),
+        'ram_source': str(memory.get('source') or ''),
+        'model_budget_gb': census.get('model_budget_gb'),
+        'cpu_model': cpu.get('model'),
+        'logical_cores': cpu.get('logical_cores'),
+        'accelerator_kind': str(accel.get('kind') or 'unknown'),
+        'accelerator_name': accel.get('name'),
+        'vram_gb': accel.get('vram_gb'),
+        'summary': summary,
+    }
+
+
+def _build_self_crew(man, census_class):
+    """The crew: what this build selected, and what the hardware affords."""
+    from puffpai import crew_sizing
+    crew = man.get('crew') if isinstance(man.get('crew'), dict) else {}
+    selected = [str(s) for s in (crew.get('selected_specialists') or [])]
+    recorded_max = crew.get('max_specialists')
+    budget = {}
+    try:
+        budget = crew_sizing.crew_budget({'hardware_class': census_class})
+    except Exception as exc:
+        logger.debug("Crew budget failed: %s", exc)
+    # A manifest whose crew step never ran carries max_specialists 0 with a
+    # null master_core. That is "nobody answered", not "no room": report the
+    # hardware's affordance instead of a limit the owner never hit.
+    sized = crew.get('master_core') is not None and isinstance(recorded_max, int)
+    return {
+        'configured': sized,
+        'master_core': crew.get('master_core') or budget.get('master_core'),
+        'max_specialists': recorded_max if sized else budget.get('max_specialists', 0),
+        'selected_specialists': selected,
+        'basis': str(budget.get('basis') or ''),
+        'note': str(budget.get('note') or ''),
+    }
+
+
+def _build_self_knowledge(man):
+    """The knowledge base: what is indexed and what is waiting."""
+    from puffpai import setup_ops
+    try:
+        cfg = _get_puffpai_config()
+        zim_dir = cfg.knowledge.zim_dir
+        auto_index = bool(cfg.knowledge.auto_index)
+    except Exception:
+        zim_dir, auto_index = '', True
+
+    out = {
+        'zim_dir': zim_dir or '',
+        'auto_index': auto_index,
+        'declared_packs': [str(p) for p in
+                           ((man.get('knowledge') or {}).get('packs') or [])],
+        'indexed_libraries': 0,
+        'indexed_chunks': 0,
+        'indexed_known': False,
+        'pending_packs': 0,
+        'pending_known': False,
+        'indexing_now': [],
+    }
+
+    try:
+        with open(os.path.join(_SRC_DIR, 'indexed_libraries.json'), 'r') as fh:
+            libs = json.load(fh)
+        out['indexed_libraries'] = len(libs)
+        out['indexed_known'] = True
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        # No record file yet is a real answer: nothing has been indexed.
+        out['indexed_known'] = True
+
+    if zim_dir:
+        try:
+            volume = setup_ops.pending_index_volume(zim_dir)
+            out['pending_packs'] = int(volume.get('packs') or 0)
+            out['pending_known'] = True
+        except Exception as exc:
+            logger.debug("Pending index volume failed: %s", exc)
+    return out
+
+
+def _build_self_apps():
+    """The installed apps, or ``None`` when the scan itself could not be done.
+
+    An empty list is a real answer (a build carrying no apps) and ``None``
+    means "not known", which every reader treats as "show the built-in menu".
+    Fields are copied by name and bounded in
+    :func:`puffpai.app_registry.ui_records`.
+    """
+    from puffpai import app_registry
+    try:
+        return app_registry.ui_records(app_registry.current_manifests(),
+                                       _requirement_availability())
+    except Exception as exc:
+        logger.debug("Installed-app scan failed: %s", exc)
+        return None
+
+
+@app.route('/build/self', methods=['GET'])
+def build_self():
+    """What this build is: zones, crew, device, knowledge, surfaces, limits.
+
+    Read-only, contains no secrets (no PIN, no recovery code, no HA token, no
+    API key), and every field is copied out of the manifest by name rather
+    than echoed wholesale. An unconfigured build answers ``configured: false``
+    with each zone marked unconfigured, never an empty payload.
+    """
+    from puffpai import build_interview, build_manifest, self_knowledge
+
+    man = build_manifest.read_manifest() or {}
+    capabilities = self_knowledge.capabilities(man or None)
+    surfaces = man.get('surfaces') if isinstance(man.get('surfaces'), dict) else {}
+    try:
+        taxonomy = build_interview.surface_taxonomy()
+    except Exception as exc:
+        logger.debug("Surface taxonomy load failed: %s", exc)
+        taxonomy = {}
+
+    build = man.get('build') if isinstance(man.get('build'), dict) else {}
+    device = _build_self_device(man)
+
+    return jsonify({
+        'configured': bool(man),
+        'schema': str(man.get('schema') or ''),
+        'generated_at': man.get('generated_at'),
+        'build': {
+            # The live name (the one chat and voice answer with), not the
+            # manifest's snapshot of it.
+            'name': (_live_ai_name() or str(build.get('name') or '')),
+            'identity': str(build.get('identity') or ''),
+            'based_on': str(build.get('based_on') or 'homebotbuild'),
+        },
+        'capabilities': capabilities,
+        'surfaces': {
+            'trimmed': bool(capabilities.get('trimmed')),
+            'allowlist': sorted(str(s) for s in (surfaces.get('allowlist') or [])),
+            'reasons': {str(k): str(v) for k, v in
+                        (surfaces.get('reasons') or {}).items()},
+            'derived_from_goal': bool(surfaces.get('derived_from_goal')),
+            'owner_edited': bool(surfaces.get('owner_edited')),
+            'taxonomy': taxonomy,
+        },
+        'zones': {
+            'vault': _build_self_vault(man),
+            'brain': _build_self_brain(man, capabilities),
+            'bridge': _build_self_bridge(man),
+        },
+        'crew': _build_self_crew(man, device['hardware_class']),
+        'device': device,
+        'knowledge': _build_self_knowledge(man),
+        'apps': _build_self_apps(),
+    })
 
 
 

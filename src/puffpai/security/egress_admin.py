@@ -402,6 +402,42 @@ def _persist(d: "egress_doors.Door", want_open: bool) -> str:
         "writable for the service.", status=503, door_id=d.id)
 
 
+def _has_owner_switch(d: "egress_doors.Door") -> bool:
+    """True for a built-in service: its switch is ALSO kept in
+    ``outside_switches.json``, which the engine reads (``is_off``) and the
+    registry reads as the owner's switch. Apps' and skills' doors are not."""
+    return egress_doors._BY_ID.get(d.id) is d  # noqa: SLF001 - same family
+
+
+def _set_owner_switch(d: "egress_doors.Door", on: bool) -> None:
+    """Write the same answer to ``outside_switches.json``. Raises
+    :class:`ToggleRefused` (503) when that list cannot be read."""
+    from puffpai.security import outside_switches
+    try:
+        outside_switches.set_switch(d.id, on, by="owner")
+    except outside_switches.SwitchesUnreadable as exc:
+        raise ToggleRefused(exc.message, status=503, door_id=d.id) from exc
+
+
+def sync_overlay(door_id: str, on: bool) -> None:
+    """After the owner's switch for *door_id* was set elsewhere (the list of
+    outside services), make the overlay say the same thing when it already
+    holds an answer for that door, so the two stores never disagree. Never
+    raises; an overlay that cannot be written keeps its answer, and when the
+    two disagree OFF wins (:func:`egress_doors._resolve_flag`)."""
+    d = egress_doors._BY_ID.get(str(door_id or "").strip().lower())  # noqa: SLF001
+    if d is None:
+        return
+    try:
+        shadow = egress_doors._raw_overlay()  # noqa: SLF001 - same family
+        if isinstance(shadow, dict) and d.config_flag in shadow:
+            _write_overlay(egress_doors.overlay_path(), d.config_flag, bool(on))
+    except Exception as exc:  # noqa: BLE001 - OFF still wins at read time
+        logger.warning("egress door overlay not brought in line for %s: %s",
+                       d.id, type(exc).__name__)
+    egress_doors.reset_cache()
+
+
 def set_door_open(door_id: str, want_open: bool) -> dict:
     """Open or close one door and return its freshly-read status row.
 
@@ -431,6 +467,24 @@ def set_door_open(door_id: str, want_open: bool) -> dict:
     want_open = bool(want_open)
     was_open, _reason = egress_doors.egress_allowed(d.id)
     wrote_to = _persist(d, want_open)
+    # One answer in both stores: a built-in service's switch is also kept in
+    # outside_switches.json (what the engine reads). Closing writes the overlay
+    # first, so the door is shut even if the list cannot be written; opening
+    # is undone in the overlay when the list cannot be written. Not after the
+    # config-file fallback (a dev checkout with no writable data dir, where
+    # that list lives too): the engine then keeps reading the service as off.
+    if wrote_to == "overlay" and _has_owner_switch(d):
+        try:
+            _set_owner_switch(d, want_open)
+        except ToggleRefused:
+            if want_open:
+                try:
+                    _persist(d, False)
+                finally:
+                    egress_doors.reset_cache()
+                raise
+            logger.warning("egress door %s closed in the overlay; the list of "
+                           "outside switches could not be written", d.id)
 
     # The registry caches both files; without this the write lands on disk and
     # /system/status keeps serving the old answer until a restart.
@@ -734,5 +788,6 @@ __all__ = [
     "set_door_open",
     "set_policy",
     "status_row",
+    "sync_overlay",
     "toggleable",
 ]

@@ -95,11 +95,11 @@ POLICIES: tuple[Policy, ...] = (
         config_section="agents",
         config_key="chat_allow_egress",
         purpose="Whether an ad-hoc chat turn may carry an egress budget at "
-                "all — that is, whether asking PuffPAI a question in chat can "
+                "all, that is, whether asking PuffPAI a question in chat can "
                 "make her look something up online.",
         data_effect="Nothing leaves the house because of this setting alone. "
-                    "It decides whether a chat turn may use the web doors you "
-                    "have opened; with every web door shut it changes "
+                    "It decides whether a chat turn may use the web switches you "
+                    "have turned on; with every web switch off it changes "
                     "nothing.",
         settings_hint="Looking things up from chat needs the chat egress "
                       "opt-in, which is off — turn it on in "
@@ -108,8 +108,8 @@ POLICIES: tuple[Policy, ...] = (
         notes="Read by api_server._chat_envelope_budget and by "
               "assistant_tools.ask_agent, which are the only two places a chat "
               "envelope can acquire allow_egress. Both AND it with the "
-              "relevant door, so this opt-in can never widen reach past the "
-              "doors: it gates WHO may walk through, never WHERE.",
+              "relevant switch, so this opt-in can never widen reach past the "
+              "switches: it gates WHO may walk through, never WHERE.",
     ),
 )
 

@@ -324,3 +324,78 @@ def recent(limit: int = 20) -> list[dict]:
     except Exception as exc:
         logger.warning("announcer: could not read the queue: %s", exc)
         return []
+
+
+# ── for the build engine's routines ─────────────────────────────────
+
+#: Where the next chat's "While you were away" catch-up stopped reading.
+CHAT_CURSOR_FILENAME = "announcements.chat_cursor"
+
+#: At most this many announcements open one chat reply.
+MAX_CHAT_CATCHUP = 3
+
+_box_voice = None        # cached True/False once probed
+_box_voice_reason = ""
+
+
+def chat_cursor_path() -> str:
+    return os.path.join(_data_dir(), CHAT_CURSOR_FILENAME)
+
+
+def box_voice_status() -> tuple:
+    """(this computer can speak by itself, plain reason when it cannot).
+
+    The on-box voice reads announcements through Piper, so this asks whether
+    a Piper voice loads here. Probed once per process."""
+    global _box_voice, _box_voice_reason
+    if _box_voice is None:
+        try:
+            from puffpai.voice.tts import PiperTTS
+            _box_voice = bool(PiperTTS().is_available())
+        except Exception as exc:
+            logger.info("announcer: no voice on this computer: %s", exc)
+            _box_voice = False
+        if not _box_voice:
+            _box_voice_reason = ("This computer has no working voice engine, so "
+                                 "the dashboard will read updates out loud "
+                                 "instead.")
+    return _box_voice, _box_voice_reason
+
+
+def _read_chat_cursor() -> str:
+    try:
+        with open(chat_cursor_path(), "r", encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def _write_chat_cursor(ts: str) -> None:
+    try:
+        path = chat_cursor_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(ts)
+    except OSError as exc:
+        logger.warning("announcer: could not save the chat cursor: %s", exc)
+
+
+def unseen_in_chat() -> list:
+    """Messages newer than the last one a chat showed, oldest first."""
+    cursor = _read_chat_cursor()
+    rows = [r for r in reversed(recent(MAX_QUEUE_ENTRIES))
+            if str(r.get("ts") or "") > cursor]
+    return rows[-MAX_CHAT_CATCHUP:]
+
+
+def take_chat_catchup():
+    """The 'While you were away' text for the next chat, once. None if nothing."""
+    with _LOCK:
+        rows = unseen_in_chat()
+        if not rows:
+            return None
+        _write_chat_cursor(str(rows[-1].get("ts") or ""))
+    if len(rows) == 1:
+        return f"While you were away: {rows[0]['text']}"
+    body = "\n".join(f"- {r['text']}" for r in rows)
+    return f"While you were away:\n{body}"

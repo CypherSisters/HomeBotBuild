@@ -107,7 +107,7 @@ export default function ImportRecipes({
           <div className="flex min-w-0 items-center gap-2">
             <Icon path={mdiSilverwareForkKnife} size="20" className="text-[var(--mint)]" />
             <h3 className="truncate font-semibold text-[var(--text)]">
-              Save recipes{fileName ? ` — ${fileName}` : ""}
+              Save recipes{fileName ? `: ${fileName}` : ""}
             </h3>
           </div>
           <button
@@ -133,7 +133,7 @@ export default function ImportRecipes({
               {result.method === "llm" && (
                 <div className="mb-3 flex items-center gap-2 rounded-lg bg-[color-mix(in_srgb,var(--lemon)_16%,transparent)] px-3 py-2 text-xs text-[var(--lemon)]">
                   <Icon path={mdiRobotOutline} size="16" />
-                  Read by the AI — check the ingredients before saving.
+                  Read by the AI. Check the ingredients before saving.
                 </div>
               )}
               {(result.notes ?? [])

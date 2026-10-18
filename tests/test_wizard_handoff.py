@@ -123,24 +123,69 @@ def test_the_card_names_the_commands_this_install_has(steady, capsys):
     card = _card(_ctx(steady, package), module)
     capsys.readouterr()
     shown = [field["current"] for field in card["fields"]]
-    assert "puffpai serve" in shown
-    assert cli.dashboard_start_command() in shown
+    assert "puffpai start" in shown
+    text = json.dumps(card)
+    # The closing screen is one step: never the npm recipe, never serve.
+    for homework in ("puffpai serve", "npm install", "npm run", "cd dashboard"):
+        assert homework not in text, homework
 
 
 def test_an_installed_build_is_told_to_use_its_own_launchers(steady, monkeypatch,
-                                                             capsys):
+                                                             capsys, tmp_path):
+    import os
     module, package = _module()
+    root = tmp_path / "bb"
+    root.mkdir()
+    (root / "Start BuildBot.cmd").write_text("@echo off\n")
+    (root / "Start Rex.cmd").write_text("@echo off\n")
     monkeypatch.setattr(cli, "installed_launchers", lambda *a, **k: {
         "env_file": "C:\\bb\\.env", "backend": ".\\run-backend.ps1",
-        "dashboard": ".\\run-dashboard.ps1",
+        "dashboard": ".\\run-dashboard.ps1", "root": str(root),
         "dashboard_url": "http://127.0.0.1:3100"})
-    card = _card(_ctx(steady, package), module)
+    monkeypatch.setattr(os, "name", "nt")
+    card = _card(_ctx(steady, package, shared={"identity": {"name": "Rex"}}),
+                 module)
     capsys.readouterr()
     shown = [field["current"] for field in card["fields"]]
 
-    assert ".\\run-backend.ps1" in shown and "http://127.0.0.1:3100" in shown
-    assert "puffpai serve" not in shown, (
-        "an installed build was told to start the manual way")
+    assert f"Start Rex.cmd - double-click it in {root}" in shown, shown
+    assert "http://127.0.0.1:3100 in your web browser" in shown
+    text = json.dumps(card)
+    for homework in ("puffpai serve", "puffpai start", "run-backend",
+                     "run-dashboard", "npm "):
+        assert homework not in text, (
+            f"an installed build was told to start the manual way: {homework}")
+
+
+def test_an_installed_build_not_yet_named_uses_the_start_buildbot_launcher(
+        steady, monkeypatch, capsys, tmp_path):
+    import os
+    module, package = _module()
+    (tmp_path / "Start BuildBot.cmd").write_text("@echo off\n")
+    monkeypatch.setattr(cli, "installed_launchers", lambda *a, **k: {
+        "env_file": "C:\\bb\\.env", "backend": ".\\run-backend.ps1",
+        "dashboard": ".\\run-dashboard.ps1", "root": str(tmp_path),
+        "dashboard_url": "http://127.0.0.1:3100"})
+    monkeypatch.setattr(os, "name", "nt")
+    card = _card(_ctx(steady, package, shared={"identity": {"name": "Rex"}}),
+                 module)
+    capsys.readouterr()
+    shown = [field["current"] for field in card["fields"]]
+    assert f"Start BuildBot.cmd - double-click it in {tmp_path}" in shown, shown
+
+
+def test_an_installed_build_with_no_web_page_keeps_its_bot_launcher(
+        steady, monkeypatch, capsys):
+    module, package = _module()
+    monkeypatch.setattr(cli, "installed_launchers", lambda *a, **k: {
+        "env_file": "C:\\bb\\.env", "backend": ".\\run-backend.ps1",
+        "dashboard": "", "root": "C:\\bb", "dashboard_url": ""})
+    card = _card(_ctx(steady, package), module)
+    capsys.readouterr()
+    shown = [field["current"] for field in card["fields"]]
+    assert ".\\run-backend.ps1" in shown
+    assert not any("pairing code" in line for line in shown), (
+        "no web page, nothing to pair with")
 
 
 def test_every_gap_the_run_recorded_is_on_the_card_with_a_fix(steady, capsys):
@@ -171,7 +216,9 @@ def test_the_pairing_code_is_not_on_the_card(steady, capsys):
     capsys.readouterr()
 
     assert code not in json.dumps(card)
-    assert cli.pair_code_command() in json.dumps(card), (
+    # HomeBot: a first device pairs with the web page's own pairing code, and
+    # the card names the command that prints a fresh one.
+    assert "puffpai pair" in json.dumps(card), (
         "the owner still needs the command that prints a fresh code")
 
 
@@ -199,9 +246,12 @@ def test_the_pairing_code_goes_to_the_face_and_is_stored_nowhere(steady,
     printed = capsys.readouterr().out
 
     code = _first_device_code()
-    assert any(code in line for line in face.shown), (
-        "the owner was never shown a pairing code")
-    assert result["data"]["pairing_shown"] is True
+    # HomeBot: setup is finished here, so the console setup code is shown to
+    # nobody; the first device's pairing code lives with the web page, which
+    # this run cannot read, so the face gets no code line either. The card
+    # names `puffpai pair` instead (test above).
+    assert not any(code in line for line in face.shown)
+    assert result["data"]["pairing_shown"] is False
     assert code not in json.dumps(result)
     assert code not in printed, "a skill does not print; the face does"
 

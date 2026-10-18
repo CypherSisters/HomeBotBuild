@@ -73,7 +73,7 @@ def _options(derivation: dict, chosen: list[str], always: list[str]) -> list[dic
 
 def propose(ctx) -> dict:
     """Derive the allowlist the goal implies. Read-only."""
-    from puffpai import build_interview as bi, cli, setup_ops
+    from puffpai import cli, setup_ops
 
     cli.enter_step("Surfaces")
     interview = _interview(ctx)
@@ -106,29 +106,32 @@ def propose(ctx) -> dict:
     if options:
         fields.append({
             "id": "allowlist", "kind": "multi_choice",
-            "label": "What your bot will be allowed to touch",
+            "label": "Pages your bot will have",
             "options": options, "current": chosen,
             "proposed": [s for s in proposed
                          if s in {opt["value"] for opt in options}],
-            "help": "Anything not on this list is not loaded -- not hidden, "
-                    "not loaded. An empty list is a valid build."})
-    for sid in always:
+            "help": "A page you leave unticked is left out of your bot "
+                    "completely. It is fine to leave them all out."})
+    for _sid in always:
         fields.append({
             "id": f"persona_{len(fields)}", "kind": "info",
             "label": "Always included",
-            "current": f"{sid} - your own bot's page. It is on the list "
-                       f"because your bot is, and it comes off when the "
-                       f"persona does."})
-    # ``surfaces_summary_lines`` already carries the derivation's message, so
-    # the card says it once. These are the reason lines -- every proposed
-    # surface has to cite the words in the goal that put it there.
-    for line in bi.surfaces_summary_lines(derivation)[:MAX_SUMMARY_LINES]:
+            "current": "Your bot's own page. It stays for as long as your "
+                       "bot does."})
+    # One reason line per page: every page on the list has to cite the words
+    # in the goal that put it there. Plain words, never the page's id.
+    for line in _why_lines(derivation)[:MAX_SUMMARY_LINES]:
         fields.append({"id": f"why_{len(fields)}", "kind": "info",
-                       "label": "Why", "current": str(line)})
+                       "label": "Why", "current": line})
+    # A page is a label and an icon. One with nothing behind it is said out
+    # loud here, not shown later as if it worked.
+    for line in _not_connected_lines(chosen):
+        fields.append({"id": f"missing_{len(fields)}", "kind": "info",
+                       "label": "Not connected yet", "current": line})
 
     card = {
         "skill": "surfaces", "section": "surfaces",
-        "title": "Where you meet it",
+        "title": "Pages your bot will have",
         "decided": _decided(derivation),
         "status": "ready",
         "consequential": False,
@@ -138,14 +141,58 @@ def propose(ctx) -> dict:
     return {"card": card, "derivation": derivation, "always": always}
 
 
+def _label(sid: str) -> str:
+    """A page in the owner's words. A page outside the taxonomy is the bot's
+    own page, and is called that."""
+    from puffpai import build_interview as bi
+
+    label = str((bi.surface_taxonomy().get(sid) or {}).get("label") or "")
+    return label or "your bot's own page"
+
+
+def _why_lines(derivation: dict) -> list[str]:
+    """Why each page is on the list, with the page's name in place of its id."""
+    reasons = derivation.get("reasons") or {}
+    out: list[str] = []
+    for sid in derivation.get("surfaces") or []:
+        sid = str(sid)
+        label = _label(sid)
+        reason = str(reasons.get(sid) or "").strip()
+        if not reason:
+            reason = f"{label}, because you chose it."
+        reason = reason.replace(sid, label)
+        out.append(reason)
+    return out
+
+
+def _not_connected_lines(chosen: list[str]) -> list[str]:
+    """Pages on the list that nothing in this build stands behind yet."""
+    try:
+        from puffpai import build_abilities as ba
+    except Exception:
+        return []
+    out: list[str] = []
+    for sid in chosen:
+        try:
+            backing = ba.page_row(sid)
+        except Exception:
+            backing = None
+        if backing is not None and backing.get("status") == ba.NOT_IN_THIS_BUILD:
+            out.append(f"{_label(sid)}: this page is only a name for now. "
+                       f"Nothing in this build works with it yet; it can be "
+                       f"added later.")
+    return out
+
+
 def _decided(derivation: dict) -> str:
-    surfaces = list(derivation.get("surfaces") or [])
+    surfaces = [str(s) for s in (derivation.get("surfaces") or [])]
     if not surfaces:
-        return "nothing is on the list yet, so your bot loads only what you add"
+        return "no pages yet, so your bot has only what you add"
     sensitive = list(derivation.get("sensitive") or [])
-    line = f"{len(surfaces)} surfaces: {', '.join(surfaces)}"
+    noun = "page" if len(surfaces) == 1 else "pages"
+    line = f"{len(surfaces)} {noun}: {', '.join(_label(s) for s in surfaces)}"
     if sensitive:
-        line += f" ({len(sensitive)} sensitive)"
+        line += f" ({len(sensitive)} private)"
     return line
 
 
@@ -192,10 +239,11 @@ def verify(ctx) -> dict:
                 "evidence": f"{', '.join(unknown)} is not a surface this build "
                             f"knows how to load",
                 "gap": {"skill": "surfaces",
-                        "what": "Your build allows a page it does not have.",
-                        "why": f"{', '.join(unknown)} is on the allowlist and "
-                               f"is not in this build's surface taxonomy.",
-                        "impact": "Nothing loads for it, so the allowlist "
+                        "what": "Your bot's page list names a page this build "
+                                "does not have.",
+                        "why": f"These names on the list are not pages "
+                               f"this build knows: {', '.join(unknown)}.",
+                        "impact": "Nothing shows for them, so the list "
                                   "promises something the build cannot show.",
                         "fix": {"kind": "command", "id": "setup.rerun",
                                 "args": {}}}}

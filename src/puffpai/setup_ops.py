@@ -28,6 +28,7 @@ from typing import Any, Optional
 import requests
 
 from puffpai.config import get_config
+from puffpai.security.lan_guard import no_proxies as _no_proxies  # marked home-network calls never use a proxy
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +295,11 @@ def set_ollama_config(model: str, url: Optional[str] = None,
     allows only a loopback Ollama address.
     """
     cfg = get_config()
-    ollama: dict[str, Any] = {"model": model, "url": url or cfg.ollama.url}
+    ollama: dict[str, Any] = {"url": url or cfg.ollama.url}
+    if model:
+        # No model means none fits this machine; an empty name is not written
+        # over whatever the config already says.
+        ollama["model"] = model
     return write_main_config({"ollama": ollama}, posture)
 
 
@@ -403,7 +408,26 @@ def set_ha_config(url: str, token: str, enabled: bool = True,
     path = ha_token_source.write_ha_config(
         url, token, enabled=bool(enabled), config_dir=get_config().CONFIG_DIR)
     get_config(_force_reload=True)
+    _reload_ha_bridge()
     return path
+
+
+def _reload_ha_bridge() -> None:
+    """Rebuild a running backend's Home Assistant bridge after a save.
+
+    The bridge keeps the address, token and on/off it was built with, so one
+    built before this save would keep talking to the old Home Assistant (or to
+    none) until a restart. Only an existing bridge is rebuilt; a process that
+    never built one (the console wizard) builds nothing here. Never raises.
+    """
+    import sys
+    module = sys.modules.get("puffpai.ha_bridge")
+    if module is None or getattr(module, "_instance", None) is None:
+        return
+    try:
+        module.get_bridge(_force_reload=True)
+    except Exception:  # noqa: BLE001 - the save stands; the next start reads it
+        pass
 
 
 def test_ha_connection(url: str, token: str, timeout: int = 5) -> dict[str, Any]:
@@ -417,25 +441,52 @@ def test_ha_connection(url: str, token: str, timeout: int = 5) -> dict[str, Any]
     base = (url or "").rstrip("/")
     if not base or not token:
         return {"ok": False, "error": "URL and token are both required."}
+    from urllib.parse import urlsplit
+
+    from puffpai.security import lan_http, netaddr
     try:
-        # Home Assistant /api/config on the LAN: the URL the owner entered,
-        # already refused by security.lan_posture if it is not LAN. Registered
-        # non-egress in tests/test_egress_door_registry.py::_NOT_EGRESS_LINES.
-        resp = requests.get(
-            f"{base}/api/config",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=timeout,
-            # Never follow a redirect: the address was judged house-local
-            # above, and a 3xx would let whatever answers there send this
-            # probe (and the candidate token) somewhere that was not judged.
-            allow_redirects=False,
-        )
+        local_name = netaddr.is_local_name(urlsplit(base).hostname or "")
+    except ValueError:
+        local_name = False
+    try:
+        if local_name:
+            # A .local name may also answer with addresses outside the house
+            # (an IPv6 home gives the box a global one): the token goes only
+            # to its answers inside the house (security.netaddr.house_addresses),
+            # never redirected, never through a proxy.
+            resp = lan_http.lan_get(f"{base}/api/config", local_names=True,
+                                    headers={"Authorization": f"Bearer {token}"},
+                                    timeout=timeout, allow_redirects=False)
+        else:
+            # Home Assistant /api/config on the LAN: the URL the owner entered,
+            # already refused by security.lan_posture if it is not LAN. Registered
+            # non-egress in tests/test_egress_door_registry.py::_NOT_EGRESS_LINES.
+            resp = requests.get(
+                f"{base}/api/config",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=timeout,
+                # Never follow a redirect: the address was judged house-local
+                # above, and a 3xx would let whatever answers there send this
+                # probe (and the candidate token) somewhere that was not judged.
+                allow_redirects=False,
+                proxies=_no_proxies(),
+            )
+    except (netaddr.AddressRefused, netaddr.ResolutionError):
+        return {"ok": False, "error": (
+            f"{base} did not answer with an address on your home network, so "
+            f"the token was not sent. Type the IP address of your Home "
+            f"Assistant box instead, for example http://192.168.1.20:8123.")}
     except requests.exceptions.ConnectionError:
-        return {"ok": False, "error": f"Cannot reach Home Assistant at {base}."}
+        return {"ok": False, "error": (
+            f"Nothing answered at {base}. Check that Home Assistant is on and "
+            f"that the address is right.")}
     except requests.exceptions.Timeout:
-        return {"ok": False, "error": "Home Assistant did not respond in time."}
-    except requests.exceptions.RequestException as exc:
-        return {"ok": False, "error": f"Request failed: {exc}"}
+        return {"ok": False, "error": "Home Assistant did not answer in time. "
+                                      "Check that it is on and try again."}
+    except requests.exceptions.RequestException:
+        return {"ok": False, "error": (
+            "That address could not be used. Check it, for example "
+            "http://homeassistant.local:8123.")}
 
     if 300 <= resp.status_code < 400:
         return {"ok": False, "error": (
@@ -443,9 +494,13 @@ def test_ha_connection(url: str, token: str, timeout: int = 5) -> dict[str, Any]
             "so this is not Home Assistant's own address. Enter the address "
             "Home Assistant itself serves, for example http://homeassistant.local:8123.")}
     if resp.status_code in (401, 403):
-        return {"ok": False, "error": "Token rejected (check the long-lived token)."}
+        return {"ok": False, "error": (
+            "Home Assistant did not accept that token. Make a new long-lived "
+            "access token and paste the whole of it.")}
     if not resp.ok:
-        return {"ok": False, "error": f"Home Assistant returned HTTP {resp.status_code}."}
+        return {"ok": False, "error": (
+            f"Something answered at that address, but not as Home Assistant "
+            f"does (code {resp.status_code}). Check the address.")}
     try:
         info = resp.json()
     except ValueError:
@@ -478,10 +533,11 @@ def set_knowledge_config(zim_dir: str, auto_index: bool = True,
 
     This build reads its knowledge sources from ``paths.zim_dirs`` (a list -
     :mod:`puffpai.knowledge.fts_index` derives the FTS shard directory beside
-    the first entry), not from BuildBot's ``knowledge.zim_dir`` scalar. The
-    wizard writes the key this codebase actually reads; ``auto_index`` is kept
-    in the signature and recorded in the manifest, because this build indexes
-    on demand rather than from a config flag.
+    the first entry). The ``knowledge`` section is written as well, with the
+    same folder as ``zim_dir`` and ``data_dir``, for the parts that find and
+    add more after the build (:mod:`puffpai.knowledge.my_data`,
+    :mod:`puffpai.knowledge.find_more`). ``auto_index`` is recorded there and
+    in the manifest; this build's own packs are indexed on demand.
 
     When ``create_dir`` is set and ``zim_dir`` is given, the folder is created
     (best effort) so the user has somewhere to drop packs.
@@ -492,8 +548,12 @@ def set_knowledge_config(zim_dir: str, auto_index: bool = True,
             os.makedirs(zim_dir, exist_ok=True)
         except OSError:
             pass
+    # ``data_dir`` is the one setting (knowledge/my_data.py); ``zim_dir``
+    # carries the same value for older readers.
     return write_main_config({
         "paths": {"zim_dirs": [zim_dir] if zim_dir else []},
+        "knowledge": {"zim_dir": zim_dir, "data_dir": zim_dir,
+                      "auto_index": bool(auto_index)},
     })
 
 
@@ -1034,6 +1094,11 @@ def bridge_options(has_home_assistant: bool = False,
     from puffpai import zone_bridge
     options = zone_bridge.posture_for_environment(
         has_home_assistant, has_external_firewall, has_managed_lan)
+    # This build's setup is the HomeBot preset, which records Moat: with every
+    # outside service off, nothing reaches the internet. That is the setting
+    # a browser that takes ``default`` without asking must record.
+    from puffpai import homebot_preset
+    options["default"] = homebot_preset.BRIDGE_POSTURE
     support = zone3_support()
     options["zone3_support"] = support
     options["edge_options"] = zone_bridge.edge_options(support)
@@ -1175,6 +1240,16 @@ def fetch_source(source_id: str, posture: dict[str, Any], *,
     not read robots.txt, and every other guard still applies.
     """
     from puffpai import source_fetch
+    if size_acknowledged:
+        # Drawbridge's one policy, like every other book download.
+        from puffpai.knowledge import find_more
+        cand = find_more.look(source_id)
+        blocked = find_more.drawbridge_block(cand, via="setup") if cand else None
+        if blocked is not None:
+            return {"ok": False, "status": "refused", "source_id": source_id,
+                    "reason": str(blocked.get("line") or "It did not pass "
+                                  "Drawbridge's checks, so it was not added."),
+                    "drawbridge": blocked}
     return source_fetch.fetch_registry_pack(source_id, posture,
                                             size_acknowledged=size_acknowledged,
                                             dest_dir=dest_dir)

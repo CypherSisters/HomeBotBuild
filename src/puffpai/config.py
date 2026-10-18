@@ -272,7 +272,7 @@ class ModelConfig:
     #   "vosk"    -> Vosk (kept for rollback / no-faster-whisper environments)
     # If "whisper" fails to load it falls back to Vosk automatically.
     stt_engine: str = "whisper"
-    # faster-whisper model + compute. base.en int8 CPU measured on the Orin at
+    # faster-whisper model + compute. base.en int8 CPU measured on a Jetson AGX Orin at
     # ~1.3s/utterance and ~4% WER (small.en ~2% WER but ~3.6s — too slow for a
     # voice turn). GPU is unavailable here: this box's CTranslate2 wheel reports
     # cuda_device_count=0, so keep device="cpu". vosk_model_dir above is the
@@ -330,6 +330,31 @@ class PathConfig:
     vault_data_dir: str = "vault_data"
     chat_history_dir: str = "chat_history"
     feedback_data_path: str = "feedback_data.jsonl"
+
+
+@dataclass
+class KnowledgeConfig:
+    """Knowledge-pack auto-indexing settings and the owner's data folders.
+
+    ``zim_dir`` is the folder PuffPAI watches for ``.zim`` knowledge packs; when
+    ``auto_index`` is on, new packs found there are indexed in the background on
+    startup. Empty ``zim_dir`` disables the watch (manual ``knowledge sync`` still
+    works with an explicit path).
+
+    ``data_dir`` is the owner's one data folder (``knowledge/my_data.py``):
+    downloads and the owner's own files (``<data_dir>/My files``). It is THE
+    setting; ``zim_dir`` is written with the same value for older readers, and
+    is used when ``data_dir`` is empty. ``linked_folders`` are the owner's own
+    folders, read in place (``{id, path, name, added_at}``); ``previous_dirs``
+    are earlier data folders, still read; files over ``max_file_mb`` are
+    skipped.
+    """
+    zim_dir: str = ""
+    auto_index: bool = True
+    data_dir: str = ""
+    linked_folders: list = field(default_factory=list)
+    previous_dirs: list = field(default_factory=list)
+    max_file_mb: int = 25
 
 
 @dataclass
@@ -453,6 +478,22 @@ class MapsConfig:
 
 
 @dataclass
+class HomeConfig:
+    """Where home is, roughly. Unset (``None``) means unset: no default place.
+
+    Written by ``puffpai home set``; see :mod:`puffpai.home_location`, which
+    validates and rounds on every read. Only a rounded position (one decimal,
+    about 11 km), the town label and the IANA time zone are ever stored.
+    """
+    label: str = ""
+    latitude: float | None = None
+    longitude: float | None = None
+    timezone: str = ""
+    source: str = ""
+    set_at: str = ""
+
+
+@dataclass
 class PuffPAIConfig:
     """Root configuration object. All fields have safe defaults."""
     REPO_ROOT: str = ""
@@ -481,6 +522,7 @@ class PuffPAIConfig:
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     agents: AgentsConfig = field(default_factory=AgentsConfig)
     skills: SkillsConfig = field(default_factory=SkillsConfig)
+    knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     web_search_consent: bool = False
     #: The household's town, for the words Puff says ("in Denver"). Empty
     #: means "not set": the code has no default town, and every consumer says
@@ -494,15 +536,33 @@ class PuffPAIConfig:
     #: it) and otherwise reports the position as unknown, never a default.
     latitude: float | None = None
     longitude: float | None = None
+    home: HomeConfig = field(default_factory=HomeConfig)
     _raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
+#: Settings files a fresh install does not have yet (Home Assistant and the
+#: media server are optional). Their absence is not a problem to report.
+_OPTIONAL_CONFIG_FILES = frozenset({"home_assistant_config.json",
+                                    "media_server_config.json"})
+
+
 def _load_json(path: str) -> dict[str, Any]:
-    """Load a JSON file, returning {} on any failure."""
+    """Load a JSON file, returning {} on any failure.
+
+    An optional file (:data:`_OPTIONAL_CONFIG_FILES`) that is absent is
+    quiet: debug, not a warning. A file that is there but cannot be read is
+    still a warning.
+    """
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+    except FileNotFoundError as exc:
+        if os.path.basename(path) in _OPTIONAL_CONFIG_FILES:
+            logger.debug("No %s yet: %s", os.path.basename(path), exc)
+        else:
+            logger.warning("Could not load %s: %s", path, exc)
+        return {}
+    except (json.JSONDecodeError, OSError) as exc:
         logger.warning("Could not load %s: %s", path, exc)
         return {}
 
@@ -849,10 +909,15 @@ def _build_config(repo_root: str | None = None) -> PuffPAIConfig:
         skills=_safe_init(
             SkillsConfig,
             raw["skills"] if isinstance(raw.get("skills"), dict) else {}),
+        knowledge=_safe_init(
+            KnowledgeConfig,
+            raw["knowledge"] if isinstance(raw.get("knowledge"), dict) else {}),
         web_search_consent=web_search_consent,
         location=location,
         latitude=latitude,
         longitude=longitude,
+        home=_safe_init(HomeConfig, raw.get("home") if isinstance(
+            raw.get("home"), dict) else {}),
         _raw=raw,
     )
 

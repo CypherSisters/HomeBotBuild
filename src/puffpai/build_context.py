@@ -12,8 +12,10 @@ This module is the missing block. :func:`system_prompt` composes, in order:
 
 1. the persona - the build's character (:data:`DEFAULT_PERSONA_TEMPLATE` when no
    persona file ships, which is every public build today),
-2. the BUILD CONTEXT block - the bot's name, the owner's goal, the declared apps
-   with their list names, and the CURRENT contents of those lists,
+2. the BUILD CONTEXT block - the bot's name, today's date and time from this
+   machine's clock, the owner's goal, the declared apps with their list names,
+   and a short list of the things this build cannot do (from
+   :mod:`puffpai.build_abilities`, each with how the owner adds it),
 3. the style paragraph the Profile page's personality dropdown selects, and
 4. the owner's own free-text instructions, last, because they are the owner's.
 
@@ -42,6 +44,7 @@ Copyright (c) Cypher Sisters. Apache-2.0 License.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Optional
 
 #: How much of the owner's goal reaches the prompt. A sentence, not an essay:
@@ -260,12 +263,104 @@ def _commands_line(first_list: str) -> str:
     )
 
 
+#: How many "things you cannot do" lines the block carries. A 7B model reads a
+#: short list; a long one is scenery. The owner's goal decides which come first.
+MAX_CANNOT_LINES = 6
+
+_CANNOT_RULE = ("If asked for one of these, say you can't do it yet. Give a "
+                "way to add it only when that same line gives one, word for "
+                "word; never use one line's way for another. Questions you "
+                "can answer from what you already know are fine to answer.")
+
+
+def clock_line(now: Optional[datetime] = None) -> str:
+    """Today's date, the local time and the time zone name, from this machine.
+
+    Without it, "what's in the sky tonight?" leaves the model with no idea
+    what day it is. The clock is the machine's own; nothing is looked up.
+    """
+    moment = now if now is not None else datetime.now().astimezone()
+    if moment.tzinfo is None:
+        moment = moment.astimezone()
+    zone = moment.tzname() or "local time"
+    day = f"{moment:%A} {moment.day} {moment:%B %Y}"
+    return (f"Today is {day}. The time here is {moment:%H:%M} ({zone}), "
+            f"from this computer's clock.")
+
+
+def home_line() -> str:
+    """The owner's home town line, when the routines part provides one.
+
+    ``home_location.context_line()`` belongs to another part of the build; it
+    is town-level only, never an exact place. Absent or failing is no line.
+    """
+    try:
+        import importlib
+        home_location = importlib.import_module("puffpai.home_location")
+        return _plain(home_location.context_line(), 200)
+    except Exception:
+        return ""
+
+
+def cannot_lines(abilities: Optional[list[dict[str, Any]]] = None,
+                 goal: Any = "") -> list[str]:
+    """The short "things you cannot do in this build" list, goal-first.
+
+    ``abilities`` is :func:`puffpai.build_abilities.abilities` output; ``None``
+    reads it live. Never raises: an unreadable list is no lines, not an error in
+    the owner's chat.
+    """
+    try:
+        from puffpai import build_abilities as ba
+        text = str(goal or "")
+        rows = (ba.abilities(goal=text or None) if abilities is None
+                else list(abilities))
+        absent = ba.goal_order(ba.absent(rows), text)
+        return [prompt_line(r) for r in absent[:MAX_CANNOT_LINES]]
+    except Exception:
+        return []
+
+
+def prompt_line(row: dict[str, Any]) -> str:
+    """One "cannot" line for the model, saying on the SAME line whether there
+    is a way to add it.
+
+    Why: with one "To add it: connect Home Assistant" line in view, a 7B
+    model offers that fix for the telescope and for live pictures too. Every line now carries its own answer, including
+    "there is no way to add it yet".
+    """
+    import re as _re
+
+    from puffpai import build_abilities as ba
+    label = _re.sub(r"\s*\([^)]*\)", "", ba.lower_first(str(row.get("label")
+                                                             or "")))
+    how = str(row.get("how_to_add") or "").strip().rstrip(".")
+    status = row.get("status")
+    if status == ba.UNKNOWN:
+        state = "may not work right now, so do not promise it"
+    elif status == ba.NOT_SET_UP:
+        state = "switched off"
+    else:
+        state = "not part of this build"
+    if how:
+        return f"{label} - {state}. Way to add it: {how}."
+    return f"{label} - {state}. There is no way to add it yet."
+
+
 def build_block(bot_name: str, goal: Any = "",
-                apps: Optional[list[dict[str, Any]]] = None) -> str:
+                apps: Optional[list[dict[str, Any]]] = None, *,
+                abilities: Optional[list[dict[str, Any]]] = None,
+                now: Optional[datetime] = None,
+                home: Optional[str] = None) -> str:
     """The BUILD CONTEXT block: who this build is, and what it is holding.
 
     ``apps`` is a list of ``{"id", "name", "lists": {label: [rows]}}`` - the
-    shape :func:`collect_apps` returns. Pure: it reads no disk and raises on
+    shape :func:`collect_apps` returns. ``abilities`` and ``home`` are read
+    live when not given (the build's abilities, the home town line); pass them
+    and the block is pure. ``now`` is the moment of THIS model call: the date,
+    time and time zone line is only written when a caller passes it, because
+    the wizard fingerprints this prompt and a clock would change that
+    fingerprint every minute. The chat path passes it on every call. Raises on
     nothing an owner can type.
     """
     name = _plain(bot_name, 60) or "this assistant"
@@ -274,6 +369,11 @@ def build_block(bot_name: str, goal: Any = "",
         f"You are {name}. This block describes the build you are running on.",
         _DATA_RULE,
     ]
+    if now is not None:
+        lines.append(clock_line(now))
+    home = home_line() if home is None else _plain(home, 200)
+    if home:
+        lines.append(home)
 
     clean_goal = _plain(goal, MAX_GOAL_CHARS)
     if clean_goal:
@@ -305,6 +405,12 @@ def build_block(bot_name: str, goal: Any = "",
         lines.append("The owner has not added any apps or lists yet, so you are "
                      "not keeping anything for them. `puffpai persona new` is "
                      "how they make one.")
+
+    cannot = cannot_lines(abilities, clean_goal)
+    if cannot:
+        lines.append("Things you cannot do in this build:")
+        lines.extend(f"  - {line}" for line in cannot)
+        lines.append(_CANNOT_RULE)
 
     lines.append(_CONTEXT_FOOTER)
     return "\n".join(lines)
@@ -338,7 +444,10 @@ def owner_block(system_prompt_text: Any) -> str:
 def system_prompt(persona: str = "", *, bot_name: str = "", goal: Any = "",
                   apps: Optional[list[dict[str, Any]]] = None,
                   personality: Any = DEFAULT_PERSONALITY,
-                  owner_instructions: Any = "") -> str:
+                  owner_instructions: Any = "",
+                  abilities: Optional[list[dict[str, Any]]] = None,
+                  now: Optional[datetime] = None,
+                  home: Optional[str] = None) -> str:
     """The whole system prompt for one model call, in one string.
 
     Pure and total: every argument is optional, nothing here touches disk, and
@@ -346,7 +455,8 @@ def system_prompt(persona: str = "", *, bot_name: str = "", goal: Any = "",
     state are :func:`collect_apps` and :func:`collect_goal`.
     """
     parts = [str(persona or "").strip(),
-             build_block(bot_name, goal, apps),
+             build_block(bot_name, goal, apps, abilities=abilities, now=now,
+                         home=home),
              personality_block(personality),
              owner_block(owner_instructions),
              lists_block(apps)]
@@ -464,8 +574,13 @@ __all__ = [
     "MAX_LISTS",
     "MAX_OWNER_INSTRUCTIONS",
     "PERSONALITY_STYLES",
+    "MAX_CANNOT_LINES",
     "as_data",
     "build_block",
+    "cannot_lines",
+    "prompt_line",
+    "clock_line",
+    "home_line",
     "collect_apps",
     "collect_goal",
     "owner_block",

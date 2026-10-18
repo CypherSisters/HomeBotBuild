@@ -66,6 +66,7 @@ import {
   type HADeviceOverview,
 } from "../../_lib/services/haService";
 import Blueprint from "./_blueprint/Blueprint";
+import HomeAssistantConnect from "../../_components/HomeAssistantConnect";
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -467,6 +468,13 @@ export default function HomeAssistantPage() {
           />
         </div>
       </SectionTitleLineWithButton>
+
+      {/* ---- Not connected: connect the owner's own Home Assistant right here ---- */}
+      {!loading && !connected && (
+        <div className="mb-4">
+          <HomeAssistantConnect onSaved={fetchAll} />
+        </div>
+      )}
 
       {/* ---- Blueprint | Lists ---- */}
       <div className="mb-4 flex flex-wrap items-center gap-3">

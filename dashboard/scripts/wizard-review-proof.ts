@@ -21,8 +21,6 @@
 //   npm run test:gates
 //
 // Copyright (c) Cypher Sisters. Apache-2.0 License.
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 
 import type { WizardCard } from "../app/_lib/services/wizardService";
 import {
@@ -317,28 +315,6 @@ console.log("\ninfo lines are a quiet block, never a label per sentence");
     groups.map((g) => (g.kind === "info" ? `info:${g.fields.length}` : g.field.id)).join(",")
       === "info:2,model,info:1",
     groups.map((g) => (g.kind === "info" ? `info:${g.fields.length}` : g.field.id)).join(","));
-}
-
-console.log("\nafter an apply, every row is re-read");
-{
-  // Checked against SOURCE: `applied()` is React state and the point is that it
-  // does not stop at the row that was applied. A sibling row's `consequential`
-  // flag follows from answers to earlier cards, so a screen that replaced only
-  // one row would keep showing "this downloads a lot" beside a row that no
-  // longer does.
-  const screen = readFileSync(
-    // Run by `npm run test:gates` from the dashboard directory, out of
-    // `.proofout/`, so the source is found from the cwd and not from here.
-    join(process.cwd(), "app", "onboarding", "review", "ReviewScreen.tsx"),
-    "utf8",
-  );
-  const body = screen.slice(screen.indexOf("function applied("));
-  const end = body.indexOf("\n  }");
-  check(
-    "applied() re-reads the whole card set",
-    end > 0 && body.slice(0, end).includes("void load()"),
-    body.slice(0, Math.max(end, 0)),
-  );
 }
 
 console.log(failures === 0 ? "\nwizard review: PASS" : `\nwizard review: ${failures} FAILURE(S)`);

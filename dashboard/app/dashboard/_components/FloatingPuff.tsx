@@ -153,7 +153,7 @@ export default function FloatingPuff() {
       const line =
         item.mode === "timer"
           ? `${item.desc || "Your timer"} is done!`
-          : `${item.desc || "Alarm"} — it's time!`;
+          : `${item.desc || "Alarm"}: it's time!`;
       // The box scheduler announces ringers through the room speakers; on
       // the kiosk this resolves silently (the red ring + popover still show).
       void withRoomSpeaker("alarm", async () => {
@@ -262,7 +262,7 @@ export default function FloatingPuff() {
       const res = await acceptSuggestion(s.id);
       setAccepting(false);
       if (!isResolved(res.status)) {
-        setSuggestionError("Couldn’t save that — tap to retry.");
+        setSuggestionError("Couldn’t save that. Tap to retry.");
         return;
       }
       resolveSuggestion(s.id);
@@ -289,7 +289,7 @@ export default function FloatingPuff() {
       setSuggestionError(null);
       const res = await dismissSuggestion(s.id);
       if (!isResolved(res.status)) {
-        setSuggestionError("Couldn’t file that — tap to retry.");
+        setSuggestionError("Couldn’t file that. Tap to retry.");
         return;
       }
       resolveSuggestion(s.id);

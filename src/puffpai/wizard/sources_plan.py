@@ -14,7 +14,7 @@ Three rules this module exists to keep:
   byte figure at all and drags the whole estimate's basis to ``unknown``,
   because a total that quietly treats "no idea" as zero is a total that lies.
 * **Paid and keyed rows are listed and never selectable**: this build has
-* nowhere safe to put a key, so the honest thing is
+  nowhere safe to put a key, so the honest thing is
   to name the source, say what it costs, and refuse to pretend it is one click
   away.
 
@@ -35,7 +35,7 @@ HEAVY_BYTES = 2 * 1024 * 1024 * 1024
 
 #: The plain words a paid or keyed row carries on the card, and the status it
 #: is recorded under: recorded, never entered.
-NO_KEY_PATH = "declared, no key path yet"
+NO_KEY_PATH = "needs a sign-up key (not offered yet)"
 KEYED_NOTE = ("costs money / needs a key; this build has nowhere safe to put "
               "the key yet")
 
@@ -129,6 +129,7 @@ def row(entry: dict[str, Any], *, reason: str = "",
         "bytes": size_bytes(entry.get("size_mb")),
         "size_label": size_label(entry.get("size_mb")),
         "source_url": str(entry.get("source_url") or ""),
+        "kiwix_book": str(entry.get("kiwix_book") or ""),
         "matched_terms": [str(t) for t in (matched_terms or [])],
         "reason": reason,
         "selected_by": [str(p) for p in (selected_by or [])],
@@ -139,23 +140,27 @@ def row(entry: dict[str, Any], *, reason: str = "",
 
 
 def option_label(item: dict[str, Any]) -> str:
-    """The one line an owner reads before choosing a source."""
-    parts = [item["label"], item["size_label"], item["license"] or "license unstated"]
-    parts.append("commercial use ok" if item["commercial_use"]
-                 else "not for commercial use")
-    parts.append("a live source, not a shelf of documents"
-                 if item["form"] == "live_source" else "documents")
+    """The one line an owner reads before choosing a source. Plain words."""
+    use = ("free to use, even in something you sell" if item["commercial_use"]
+           else "personal use only")
+    license_words = (f"{item['license']}, {use}" if item["license"]
+                     else "license not known")
+    parts = [item["label"], item["size_label"] + " to download", license_words]
+    if item["form"] == "live_source":
+        parts.append("a web page, not something it can learn from")
     return " - ".join(p for p in parts if p)
 
 
 def plan_rows(goal: str, packs: list[str], *,
-              registry: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+              registry: Optional[dict[str, Any]] = None,
+              terms: Any = (), age: Any = None,
+              use_library: Optional[bool] = None) -> dict[str, Any]:
     """The deterministic half of Sources: registry search plus the pack picks.
 
     Two inputs, both the owner's: the goal they typed, matched against the
     registry by today's code (which cites the word that matched), and the
     ``pack:*`` ids they chose in the interview, mapped onto registry rows by
-    :data:`build_sources.PACK_SOURCE_IDS`.
+    :func:`build_sources.pack_source_ids` (a data table in the catalog index).
 
     ``offered`` stays exactly what today's sourcing step recorded - the search
     result, in search order - because the build manifest and
@@ -165,7 +170,22 @@ def plan_rows(goal: str, packs: list[str], *,
     from puffpai import source_registry
     from puffpai.knowledge import build_sources
 
+    if use_library is None:
+        # A caller that hands in its own registry (a test fixture) gets exactly
+        # that registry and nothing from the wider library.
+        use_library = registry is None
+    terms = [str(t) for t in (terms or ())]
     result = source_registry.search_summary(goal, registry)
+    if terms:
+        # The model's search words find more on our own list too; they are
+        # searched exactly like the owner's words and cite what matched.
+        known = {str(c.get("id")) for c in result.get("candidates") or []}
+        extra = [c for c in source_registry.search(" ".join(terms), registry)
+                 if str(c.get("id")) not in known]
+        if extra:
+            result = dict(result)
+            result["candidates"] = list(result.get("candidates") or []) + extra
+            result["message"] = None
     items: list[dict[str, Any]] = []
     seen: dict[str, dict[str, Any]] = {}
     offered: list[str] = []
@@ -183,7 +203,7 @@ def plan_rows(goal: str, packs: list[str], *,
 
     unmapped: list[str] = []
     for pack in packs:
-        mapped = build_sources.PACK_SOURCE_IDS.get(pack)
+        mapped = build_sources.pack_source_ids(pack)
         if not mapped:
             unmapped.append(pack)
             continue
@@ -194,6 +214,8 @@ def plan_rows(goal: str, packs: list[str], *,
                     known["selected_by"].append(pack)
                 continue
             entry = source_registry.get_source(source_id, registry)
+            if entry is None and use_library:
+                entry = _library_entry(source_id)
             if entry is None:
                 continue
             item = row(entry,
@@ -203,9 +225,27 @@ def plan_rows(goal: str, packs: list[str], *,
             items.append(item)
             seen[item["id"]] = item
 
+    taken = set(seen)
+    for source_id in seen:
+        entry = (source_registry.get_source(source_id, registry)
+                 or (_library_entry(source_id) if use_library else None) or {})
+        if entry.get("kiwix_book"):
+            taken.add("book:" + str(entry["kiwix_book"]))
+    library = library_rows(goal, terms, age=age, skip=taken) if use_library else []
+    for item in library:
+        offered.append(item["id"])
+        items.append(item)
+        seen[item["id"]] = item
+    message = result.get("message")
+    if use_library and not result.get("candidates") and _has_subject(goal, terms):
+        # Our own list had nothing. Either the library did (and the "nothing on
+        # our list" line would read as "nothing anywhere"), or neither did and
+        # the card's own wording, which names both, is the true one.
+        message = None
+
     return {
         "goal": str(result.get("goal") or ""),
-        "message": result.get("message"),
+        "message": message,
         "note": result.get("note"),
         "items": items,
         "offered": offered,
@@ -213,16 +253,208 @@ def plan_rows(goal: str, packs: list[str], *,
     }
 
 
-def default_selection(items: list[dict[str, Any]]) -> list[str]:
-    """What the card proposes: every fetchable row a pack picked, and no more.
+def _library_entry(source_id: str) -> Optional[dict[str, Any]]:
+    """A downloadable Kiwix book as a registry-shaped entry, from the saved list."""
+    from puffpai.catalogs import knowledge_resolver
+
+    cand = knowledge_resolver.candidate_by_id(source_id)
+    if not cand or not cand.get("fetchable") or not str(cand["id"]).startswith("kiwix:"):
+        return None
+    size = cand.get("size_bytes")
+    return {
+        "id": cand["id"], "label": cand["name"], "kind": "zim",
+        "domain": "library", "what_it_is": cand.get("what_it_is") or "",
+        "license": cand.get("license") or "", "license_url": cand.get("license_url") or "",
+        "commercial_use": cand.get("commercial_ok") is True,
+        "size_mb": (size / MB) if isinstance(size, int) and size > 0 else None,
+        "source_url": "", "kiwix_book": cand.get("book") or "",
+    }
+
+
+def _has_subject(goal: str, terms: Any) -> bool:
+    from puffpai.catalogs import goal_words
+    return bool(goal_words.goal_terms(goal, extra=[str(t) for t in (terms or ())]))
+
+
+#: How many books from the wider library the plan lists, at most.
+LIBRARY_ROWS = 8
+
+
+def library_rows(goal: str, terms: Any = (), *, age: Any = None,
+                 skip: Optional[set[str]] = None) -> list[dict[str, Any]]:
+    """Downloadable books from the Kiwix library for this goal, as plan rows.
+
+    Offline: the shipped dated list is searched, never the network. Only books
+    with a known license are listed - a book nobody can download here is not a
+    choice. Only Kiwix books are plan rows: the Wikipedia topic book, Project
+    Gutenberg and OpenStax reach the summary through
+    :func:`knowledge_resolver.proposal_items` (apply ``knowledge.add``), whose
+    ticks :func:`knowledge_default_on` decides. Rows carry the book id (``kiwix:...``); the owner's yes on the
+    card is what later writes it into the build's overlay so it can be fetched.
+    """
+    from puffpai.catalogs import knowledge_resolver
+
+    from puffpai.catalogs import goal_words
+
+    found = knowledge_resolver.find(goal, terms or (), age=age, live=False,
+                                    limit=LIBRARY_ROWS * 2)
+    shelves = knowledge_resolver.shelf_words(goal, goal_words.goal_terms(goal))
+    rows: list[dict[str, Any]] = []
+    for cand in found.get("candidates") or []:
+        if not str(cand.get("id") or "").startswith("kiwix:") or not cand.get("fetchable"):
+            continue
+        # A general encyclopedia is listed for every goal; anything else must
+        # fit the goal as the owner typed it, not share one stray word with it.
+        if not cand.get("general") and not knowledge_resolver.fits_goal(
+                cand, goal, shelves):
+            continue
+        if skip and (cand["id"] in skip or "book:" + str(cand.get("book")) in skip):
+            continue
+        size = cand.get("size_bytes")
+        entry = {
+            "id": cand["id"], "label": cand["name"], "kind": "zim",
+            "domain": "library", "what_it_is": cand.get("what_it_is") or "",
+            "license": cand.get("license") or "", "license_url": cand.get("license_url") or "",
+            "commercial_use": cand.get("commercial_ok") is True,
+            "size_mb": (size / MB) if isinstance(size, int) and size > 0 else None,
+            "source_url": "",
+        }
+        item = row(entry, reason=str(cand.get("reason") or ""),
+                   matched_terms=list(cand.get("match_terms") or []))
+        item["from_library"] = True
+        item["audience"] = cand.get("audience") or "general"
+        rows.append(item)
+        if len(rows) >= LIBRARY_ROWS:
+            break
+    return rows
+
+
+#: The one book the plan may tick on its own: the best match for the goal,
+#: if it is no bigger than this and its size is known.
+DEFAULT_ON_BYTES = 500 * MB
+
+
+def goal_match(item: dict[str, Any], goal: str) -> bool:
+    """Did this row match a word of the owner's goal (or the goal's shelf),
+    not only a word the model suggested?"""
+    from puffpai.catalogs import goal_words, knowledge_resolver
+    words = goal_words.goal_terms(goal)
+    words = words + knowledge_resolver.shelf_words(goal, words)
+    return any(goal_words.term_hits_word(term, str(hit).lower())
+               or goal_words.term_hits_word(str(hit).lower(), term)
+               for term in words for hit in item.get("matched_terms") or ())
+
+
+def about_subject(item: dict[str, Any], goal: str) -> bool:
+    """Is a library pack about the bot's subject? Its name, or a catalog word
+    it matched on, names the word that tells the subject apart, or the
+    library shelf the subject sits on ("Arts & Crafts Q&A" for knitting).
+    "TED ideas" is not about a wedding planner, though the owner's sentence said
+    "ideas". True when the goal names no subject."""
+    from puffpai.catalogs import goal_words, knowledge_resolver
+    name = str(item.get("label") or item.get("name") or "")
+    matched = " ".join(str(t) for t in item.get("matched_terms")
+                       or item.get("match_terms") or ())
+    text = f"{name} {matched}"
+    shelves = knowledge_resolver.shelf_words(goal, goal_words.goal_terms(goal))
+    return (goal_words.mentions_subject(text, goal_words.subject_marks(goal))
+            or any(goal_words.mentions_subject(text, [shelf]) for shelf in shelves))
+
+
+def default_selection(items: list[dict[str, Any]], goal: str = "") -> list[str]:
+    """What the card proposes: every fetchable row a pack picked, and the
+    single best match for the goal when it is small.
 
     A row the owner's interview chose is a row they already said they wanted.
-    A row the search merely matched is a suggestion, and suggestions start
-    unticked - the wizard is not allowed to enrol somebody in 55 GB because
-    their goal contained the word "reference".
+    Other matches are suggestions and start unticked - the wizard is not
+    allowed to enrol somebody in 55 GB because their goal contained the word
+    "reference" - except ONE: the first row that matched the owner's own goal
+    words and is at most :data:`DEFAULT_ON_BYTES` with a known size. Without
+    it, a bot "that knows every dinosaur" ships knowing no dinosaurs.
     """
-    return [item["id"] for item in items
-            if item["selectable"] and item["selected_by"]]
+    picked = [item["id"] for item in items
+              if item["selectable"] and item["selected_by"]]
+    if picked or not goal:
+        return picked
+    for item in items:
+        size = item.get("bytes")
+        if (item["selectable"] and isinstance(size, int)
+                and 0 < size <= DEFAULT_ON_BYTES and goal_match(item, goal)
+                and about_subject(item, goal)):
+            return [item["id"]]
+    return []
+
+
+#: A Wikipedia topic book this small (its most, when its exact size is not
+#: known until the articles are found) may start ticked.
+TOPIC_BOOK_DEFAULT_BYTES = 50 * MB
+#: Library books (curated or Kiwix) that may start ticked in one summary.
+LIBRARY_DEFAULT_ITEMS = 2
+
+
+def _goal_score(cand: dict[str, Any], goal: str) -> int:
+    """How strongly a candidate's NAME matches the owner's own goal words.
+
+    The same code score every library uses (a title word counts 3); a shelf
+    word or a model's word does not count here, so "better" means "more about
+    what the owner typed".
+    """
+    from puffpai.catalogs import goal_words, knowledge_resolver
+    words = goal_words.goal_terms(goal)
+    name = " ".join(cand.get("words") or []) or str(cand.get("name") or "")
+    score, _matched = knowledge_resolver.score_entry({"title": name}, words)
+    return score
+
+
+def knowledge_default_on(cands: list[dict[str, Any]], goal: str = "") -> set[str]:
+    """Which knowledge candidates start ticked on the summary, in list order.
+
+    * A library book (our list or Kiwix) of known size up to
+      :data:`knowledge_resolver.DEFAULT_ON_MAX_BYTES`: at most
+      :data:`LIBRARY_DEFAULT_ITEMS` of them, and only when its name matches
+      the owner's own goal words (a general or off-subject book waits for
+      the owner's pick).
+    * The first Wikipedia topic book (English, or Simple English for a young
+      builder) when it is at most :data:`TOPIC_BOOK_DEFAULT_BYTES` and no
+      ticked book listed before it matches the owner's own words better.
+    * A Project Gutenberg book or an OpenStax textbook: never on its own. They
+      are listed for the owner to pick; a book "free for personal use only"
+      is never ticked for them.
+
+    A candidate that cannot be fetched is never ticked.
+    """
+    from puffpai.catalogs import knowledge_resolver
+
+    ticked: set[str] = set()
+    library = 0
+    best_ticked = 0
+    topic_seen = False
+    for cand in cands:
+        if not cand.get("fetchable"):
+            continue
+        tier = knowledge_resolver.tier_of(cand)
+        size = cand.get("size_bytes")
+        if tier in ("curated", "kiwix"):
+            # Only a book whose name is about the owner's goal starts ticked: "TED
+            # ideas" for a wedding bot waits for the owner's pick.
+            if goal and (_goal_score(cand, goal) <= 0 or not about_subject(cand, goal)):
+                continue
+            if (library < LIBRARY_DEFAULT_ITEMS and isinstance(size, int)
+                    and 0 < size <= knowledge_resolver.DEFAULT_ON_MAX_BYTES):
+                ticked.add(str(cand["id"]))
+                library += 1
+                if not cand.get("general"):
+                    best_ticked = max(best_ticked, _goal_score(cand, goal))
+            continue
+        if tier == "wikipedia_topic":
+            if topic_seen:
+                continue
+            topic_seen = True
+            most = size if isinstance(size, int) and size > 0 else cand.get("size_ceiling")
+            if (isinstance(most, int) and 0 < most <= TOPIC_BOOK_DEFAULT_BYTES
+                    and _goal_score(cand, goal) > best_ticked):
+                ticked.add(str(cand["id"]))
+    return ticked
 
 
 def total_bytes(items: list[dict[str, Any]],
@@ -298,6 +530,8 @@ def tool_needs(goal: str, items: list[dict[str, Any]],
 __all__ = [
     "HEAVY_BYTES", "KEYED_NOTE", "NO_KEY_PATH",
     "size_bytes", "size_label", "form_of", "needs_key", "costs_money",
-    "why_not_fetchable", "row", "option_label", "plan_rows",
+    "why_not_fetchable", "row", "option_label", "plan_rows", "library_rows",
+    "LIBRARY_ROWS",
     "default_selection", "total_bytes", "tool_needs",
+    "knowledge_default_on", "TOPIC_BOOK_DEFAULT_BYTES",
 ]

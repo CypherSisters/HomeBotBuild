@@ -157,7 +157,9 @@ def installed_catalog(catalog: Optional[dict[str, Any]] = None) -> dict[str, Any
 
     try:
         from puffpai import app_registry
-        manifests = app_registry.load_manifests()
+        # Off first apps too: the wizard suggests them, and the owner's Yes turns
+        # them on (puffpai.first_apps).
+        manifests = app_registry.load_manifests(include_off=True)
     except Exception:  # pragma: no cover - defensive; the scan is quiet already
         return cat
 
@@ -322,22 +324,40 @@ SCAFFOLD_QUESTION = "Want a place to keep lists for this?"
 MAX_SUGGESTED_LISTS = 3
 
 
-def suggested_lists(goal: str) -> list[str]:
-    """List names to suggest for a goal, taken from the owner's own nouns.
+#: Where a goal ASKS for a list: "a planting list", "a list of my seeds",
+#: "a log of oil changes", "keep track of my harvests". The word caught is the
+#: one tied to the list, never any other word of the sentence.
+_LIST_ASKS = (
+    re.compile(r"\b([a-z0-9]+)\s+(?:list|lists|log|logs|tracker|inventory)\b"),
+    re.compile(r"\b(?:list|lists|log|logs|inventory|track)\s+of\s+"
+               r"(?:my\s+|our\s+|the\s+|all\s+|every\s+)?([a-z0-9]+)"),
+    re.compile(r"\bkeep\s+track\s+of\s+(?:my\s+|our\s+|the\s+)?([a-z0-9]+)"),
+)
 
-    Strictly their words: the content tokens of the goal, in the order they typed
-    them, filtered to things that can legally be a list name. Nothing is
-    pluralised and nothing is invented - suggesting a list called "harvests" to
-    somebody who said "harvest" is a small lie about what they asked for, and
-    :func:`puffpai.persona_scaffold.parse_lists` already refuses to guess a name
-    for the same reason. An all-filler goal suggests nothing.
+
+def suggested_lists(goal: str) -> list[str]:
+    """List names to suggest for a goal: only lists the owner asked for.
+
+    A goal that never asks for a list suggests none. Splitting "a bot for my
+    2014 Honda Civic" into lists called 2014, honda and civic made the bot's
+    own subject words into list names, and ordinary questions about the car
+    were then answered "Which list - honda, civic or 2014?". So only the word tied to a list is taken ("a planting list",
+    "a log of oil changes" -> oil, "keep track of my harvests").
+
+    Strictly their words, in the order they typed them, filtered to things that
+    can legally be a list name. Nothing is pluralised and nothing is invented.
     """
     from puffpai import persona_scaffold
 
     clean = _sanitize_goal(goal or "")
     content = _content_tokens(clean)
+    lower = clean.lower()
+    asked: list[tuple[int, str]] = []
+    for pattern in _LIST_ASKS:
+        for match in pattern.finditer(lower):
+            asked.append((match.start(1), match.group(1)))
     out: list[str] = []
-    for word in re.findall(r"[a-z0-9]+", clean.lower()):
+    for _at, word in sorted(asked):
         if word not in content or word in out:
             continue
         if len(word) < 4 or len(word) > persona_scaffold.MAX_LIST_KEY_LEN:

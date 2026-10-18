@@ -5,8 +5,8 @@
   "version": "1.0.0",
   "author": "puffpai",
   "license": "Apache-2.0",
-  "label": "Where you meet it",
-  "description": "Which surfaces this build loads, and where the bot itself appears.",
+  "label": "Pages your bot will have",
+  "description": "Which pages your bot has, and why each one is there.",
   "reads": [
     "persona",
     "tools",

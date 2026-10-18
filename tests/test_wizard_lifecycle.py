@@ -229,4 +229,12 @@ def test_discover_is_scheduled_as_one_card_where_its_steps_used_to_be():
     assert "discover.card" in entries
     assert "discover.census" not in entries and "discover.ollama" not in entries
     card_at = entries.index("discover.card")
-    assert entries.index("secure.posture") < card_at < entries.index("brain.card")
+    # This computer is checked first and shown on its own screen
+    # (what it has, the thinking model that fits), then the goal and the name
+    # are asked; the posture and the brain are applied after the one summary,
+    # from what the owner approved.
+    assert card_at == 0
+    assert card_at < entries.index("runner.first_look") < entries.index(
+        "purpose.goal") < entries.index("purpose.identity")
+    assert card_at < entries.index("runner.summary") < entries.index(
+        "secure.posture") < entries.index("brain.card")

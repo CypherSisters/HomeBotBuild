@@ -12,13 +12,13 @@
   },
   "bridge": {
     "allows": {
-      "actions": "Every action asks, every session. Nothing is remembered as pre-approved.",
-      "consent": "Asked every time. Approval never carries over to the next session.",
-      "egress": "Every outbound call asks, even through a door you opened before.",
-      "lan_devices": "Allowed, but each reach asks you first."
+      "actions": "Nothing reaches the internet unless you switched that service on yourself.",
+      "consent": "You switch each outside service on yourself, one at a time, and you can switch it off again at any time.",
+      "egress": "Only the outside services you switched on. A setting in a file cannot switch one on for you, and anything else that tries to reach the internet is stopped.",
+      "lan_devices": "Your home network works as usual: Home Assistant, your media server, your phones and your other devices at home."
     },
     "chosen_by": "default",
-    "costs": "You will answer a lot of prompts. Good when the box is shared, when you are still learning what it does, or when you simply want to watch it work for a while.",
+    "costs": "A new outside service does nothing until you switch it on. Good when you want to know exactly what reaches the internet, and to choose each one yourself.",
     "edge": {
       "contacted": false,
       "declared": true,
@@ -46,13 +46,13 @@
       "managed_lan": false
     },
     "label": "Moat",
-    "note": "Moat fits an island build, so nothing was changed.",
+    "note": "Moat fits an enumerated build, so nothing was changed.",
     "posture": "moat",
     "reconciled": false,
     "requested_posture": "moat",
-    "run_egress": "island",
+    "run_egress": "enumerated",
     "strictness": 2,
-    "summary": "Every outbound call and every action asks you first, every session."
+    "summary": "Only the outside services you switched on reach the internet. Your home network still works."
   },
   "build": {
     "based_on": "homebotbuild",
@@ -136,7 +136,7 @@
     }
   },
   "interview": {
-    "goal": "a bot that helps a beginner learn the night sky and space with a small telescope",
+    "goal": "",
     "matched": []
   },
   "knowledge": {
@@ -151,38 +151,47 @@
     "zim_dir": "<data>/knowledge_packs"
   },
   "persona": {
-    "goal": "a bot that helps a beginner learn the night sky and space with a small telescope",
+    "goal": "Run our household: the calendar, meals, reminders, the lights, and answering the family's questions offline.",
     "id": "homebot",
     "name": "HomeBot",
-    "note": "No place of its own was made; this records what the owner said it is for. `puffpai setup --scaffold` makes one.",
     "pack": "homebot",
     "scaffolded": false
   },
   "posture": {
     "build_network": "offline",
     "build_network_source": "stated",
-    "combination": "No internet during the build, but your home network is fair game afterwards - Home Assistant, a media server, local devices.",
+    "combination": "Built from what is already on this computer, then it uses only the outside services you said yes to. Bring the brain and the books over some other way, such as a USB stick.",
     "egress_switches": {
       "air_quality": false,
+      "archive_books": false,
+      "brave_search": false,
       "connectivity_probe": false,
       "embedding_model_download": false,
       "geocode": false,
       "geoip": false,
+      "github": false,
+      "gutenberg_books": false,
       "knowledge_pack_downloads": false,
       "map_data_updates": false,
+      "marginalia_search": false,
       "model_pull": false,
       "news_rss": false,
+      "openstax_books": false,
       "page_reader": false,
       "radio_browser": false,
+      "result_pictures": false,
       "spotify": false,
+      "toolsmith_cloud": false,
       "tunein": false,
       "tv_free_channels": false,
       "weather": false,
       "web_fetch": false,
-      "web_search": false
+      "web_search": false,
+      "wikibooks_books": false,
+      "wikipedia_books": false
     },
     "enabled_switches": [],
-    "run_egress": "island",
+    "run_egress": "enumerated",
     "run_egress_source": "defaulted"
   },
   "provenance": {
@@ -199,15 +208,45 @@
   },
   "surfaces": {
     "allowlist": [
+      "comms.calendar",
+      "comms.timers",
+      "daily.fitness",
+      "daily.games",
+      "daily.kitchen",
+      "daily.notes",
+      "house.cameras",
+      "house.climate",
+      "house.lights",
+      "house.sensors",
       "instruments.telescope",
-      "knowledge.library"
+      "knowledge.library",
+      "knowledge.maps",
+      "knowledge.medical",
+      "media.audio",
+      "media.books",
+      "media.video"
     ],
-    "derived_from_goal": true,
+    "derived_from_goal": false,
     "note": "Surfaces outside this list are not loaded at all - not hidden, not loaded. This is a proposal: add or remove anything before you accept it.",
-    "owner_edited": false,
+    "owner_edited": true,
     "reasons": {
-      "instruments.telescope": "Telescope and sky feeds, because you asked about 'night sky' and that comes with Science and astronomy Q&A (Stack Exchange).",
-      "knowledge.library": "Offline reference library, because you asked about 'night sky' and that comes with Science and astronomy Q&A (Stack Exchange)."
+      "comms.calendar": "comms.calendar, because you added it by hand.",
+      "comms.timers": "comms.timers, because you added it by hand.",
+      "daily.fitness": "daily.fitness, because you added it by hand.",
+      "daily.games": "daily.games, because you added it by hand.",
+      "daily.kitchen": "daily.kitchen, because you added it by hand.",
+      "daily.notes": "daily.notes, because you added it by hand.",
+      "house.cameras": "house.cameras, because you added it by hand.",
+      "house.climate": "house.climate, because you added it by hand.",
+      "house.lights": "house.lights, because you added it by hand.",
+      "house.sensors": "house.sensors, because you added it by hand.",
+      "instruments.telescope": "instruments.telescope, because you added it by hand.",
+      "knowledge.library": "knowledge.library, because you added it by hand.",
+      "knowledge.maps": "knowledge.maps, because you added it by hand.",
+      "knowledge.medical": "knowledge.medical, because you added it by hand.",
+      "media.audio": "media.audio, because you added it by hand.",
+      "media.books": "media.books, because you added it by hand.",
+      "media.video": "media.video, because you added it by hand."
     },
     "sensitive": []
   },

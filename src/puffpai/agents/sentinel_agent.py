@@ -228,6 +228,8 @@ class SentinelAgent(BaseAgent):
             v = self.review(envelope, target="sentinel")
             return {"ok": True, "allowed": v.allowed, "verdict": v.verdict,
                     "reason": v.reason}
+        if intent == "check_addition":
+            return self._check_addition(envelope)
         try:
             if intent == "block_device":
                 return self._block_device(envelope, p)
@@ -236,6 +238,34 @@ class SentinelAgent(BaseAgent):
         except FirewallPolicyError as exc:
             return {"ok": False, "error": f"sentinel: {exc}"}
         return {"ok": False, "error": f"sentinel: unknown intent {intent!r}"}
+
+    # ── Drawbridge's check of one addition ──────────────────────────
+    def _check_addition(self, envelope: Envelope) -> dict:
+        """Check one addition with :func:`puffpai.drawbridge.check_addition`.
+
+        The envelope itself is reviewed first, the same way the bus reviews
+        every state change (a check writes to the checks record), and the
+        review is audited. A denied envelope is not checked. The draft rides
+        in ``payload["draft"]``; nothing about it is written to the audit
+        ledger except the verdict and its reason codes.
+        """
+        v = self.review(envelope, target="sentinel")
+        if not v.allowed:
+            return {"ok": False, "denied": True, "verdict": v.verdict,
+                    "reason": v.reason}
+        draft = (envelope.payload or {}).get("draft")
+        from puffpai import drawbridge
+        result = drawbridge.check_addition(draft, by="drawbridge")
+        self._audit.log(
+            action="drawbridge_check_addition",
+            user=envelope.requester,
+            result=result["verdict"],
+            details=f"{envelope.origin_agent}:{result.get('kind') or 'unknown'}",
+            extra={"reasons": result.get("reasons"),
+                   "draft_sha": result.get("draft_sha"),
+                   "envelope": envelope.audit_view()},
+        )
+        return {"ok": True, **result}
 
     # ── firewall actuation via the loopback Node-RED flow ───────────
     def _block_device(self, envelope: Envelope, p: dict) -> dict:
@@ -404,14 +434,21 @@ class SentinelAgent(BaseAgent):
         self._protected_ips = found
         return found
 
-    @staticmethod
-    def _own_ipv4() -> str | None:
-        """This host's default-route source address. Sends no packets."""
+    @classmethod
+    def _own_ipv4(cls) -> str | None:
+        """This host's address on the home network. Sends no packets.
+
+        A UDP connect only picks the route and the source address. It aims at
+        the default gateway, or at a private address when the gateway is not
+        known, so the Bridge (which refuses every internet address at Moat)
+        lets it through.
+        """
+        target = cls._default_gateway() or "10.255.255.255"
         sock = None
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # lan-egress: route lookup only, no packet sent
             sock.settimeout(0.5)
-            sock.connect(("192.0.2.1", 9))  # TEST-NET-1, never routed
+            sock.connect((target, 9))  # lan-egress: the gateway or a private address, to read the source address; nothing is sent
             return sock.getsockname()[0]
         except Exception as exc:
             logger.debug("own-address detection failed: %s", exc)

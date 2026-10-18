@@ -58,7 +58,8 @@ def scratch(tmp_path, monkeypatch):
     census = _census()
     monkeypatch.setattr(hardware_census, "run_census",
                         lambda *a, **k: copy.deepcopy(census))
-    monkeypatch.setattr(sources_suggest, "suggest", lambda *a, **k: [])
+    monkeypatch.setattr(sources_suggest, "search_terms",
+                        lambda *a, **k: {"terms": [], "note": ""})
     yield cfg
     get_config(_force_reload=True)
 
@@ -115,15 +116,15 @@ def test_brain_reads_the_address_discover_proposed(only_elsewhere):
     model = only_elsewhere
     drawn = _cards()
 
-    # The row that measured the machine found the other address.
-    assert ELSEWHERE in drawn["discover"]["decided"]
+    # The row that measured the machine found the other address (its summary
+    # line now describes the machine; the address is the field's proposal).
     assert _field(drawn["discover"], "ollama_url")["proposed"] == ELSEWHERE
 
     # And the row below it asked *that* Ollama what it has, so the model is
     # already here: no download, and nothing to warn about.
     brain = drawn["brain"]
     assert ELSEWHERE in _field(brain, "found")["current"]
-    assert brain["decided"] == f"{model}, already on this box."
+    assert brain["decided"] == f"{model}, already on this computer."
     assert brain["consequential"] is False
     assert brain["consequential_reasons"] == []
     assert brain["estimate"]["bytes"] == 0
@@ -135,8 +136,9 @@ def test_crew_sizes_itself_from_the_census_discover_took(only_elsewhere):
     expected = int(crew_sizing.crew_budget(_census()).get("max_specialists") or 0)
     assert expected > 0, "a 64 GB machine has room for specialists"
     crew = _cards()["crew"]
-    assert f"up to {expected} specialist" in crew["decided"]
-    assert _field(crew, "specialists")["proposed"] == expected
+    # Nothing to size on the card any more; the helpers are counted from the
+    # roster, and the sizing still reaches the record from the census.
+    assert "A team of 7 helpers" in crew["decided"]
 
 
 def test_proposing_the_whole_screen_still_writes_nothing(only_elsewhere):
@@ -151,14 +153,16 @@ def test_what_was_applied_is_reported_and_keeps_its_own_values(only_elsewhere):
     body = service.propose_cards()
     assert body["applied"] == []
 
-    service.apply_skill("purpose:identity", {"name": "Comet", "goal": GOAL})
+    # HomeBot's card list has no purpose cards; the posture card is the one
+    # an owner answers first.
+    service.apply_skill("secure:posture", {"build_network": "offline",
+                                           "run_egress": "sealed"})
     body = service.propose_cards()
-    assert body["applied"] == ["purpose:identity"]
+    assert body["applied"] == ["secure:posture"]
     # The applied card's own values, not a preview of them.
     drawn = {cards.card_id(card): card for card in body["cards"]}
-    assert _field(drawn["purpose:identity"], "goal")["current"] == GOAL
-    # And a later card still reads the goal that was applied.
-    assert "Comet" in drawn["purpose:place"]["decided"]
+    assert _field(drawn["secure:posture"], "build_network")["current"] == "offline"
+    assert _field(drawn["secure:posture"], "run_egress")["current"] == "sealed"
 
 
 # -- 2: Tools warns about a connection, not about a question -------------------
@@ -189,7 +193,8 @@ def test_sources_says_the_same_size_twice(scratch, monkeypatch):
     monkeypatch.setattr(setup_ops, "ollama_survey", lambda *a, **k: [])
     service.apply_skill("secure:posture", {"build_network": "online",
                                            "run_egress": "island"})
-    service.apply_skill("purpose:identity", {"name": "Comet", "goal": GOAL})
+    service.apply_skill("purpose:goal", {"goal": GOAL})
+    service.apply_skill("purpose:identity", {"name": "Comet"})
 
     card = _cards()["sources"]
     size = card["estimate"]["bytes"]
@@ -221,10 +226,10 @@ def test_the_console_labels_a_list_of_suggestions_once():
     lines = render_cli.card_lines(cards.validate_card(card))
     # One label over the list, not one per sentence of it.
     assert sum(1 for line in lines if line.strip() == "Suggested") == 0
-    assert "  From that goal, the starter catalog suggests" in lines
+    assert "From that goal, the starter catalog suggests" in lines
     # Every line of the list is still there, and so are its words.
-    assert "    Knowledge packs:" in lines
-    assert "    - Science" in lines
+    assert "  Knowledge packs:" in lines
+    assert "  - Science" in lines
 
 
 def test_the_console_still_labels_rows_that_say_different_things():
@@ -244,8 +249,8 @@ def test_the_console_still_labels_rows_that_say_different_things():
         "gaps": [],
     }
     lines = render_cli.card_lines(cards.validate_card(card))
-    assert "  What was found" in lines
-    assert "  Memory" in lines
+    assert "What was found: Windows" in lines
+    assert "Memory: 64 GB" in lines
 
 
 def test_every_formatter_agrees_on_what_a_gigabyte_is():

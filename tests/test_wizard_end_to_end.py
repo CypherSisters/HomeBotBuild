@@ -41,7 +41,9 @@ GOAL = ("knows everything about space, space facts, current space events, "
 PIN = "Telescope-Stargazer-9042"
 
 #: What a recovery code looks like when it is shown. Used only to type it back.
-_CODE_RE = re.compile(r"^[A-Z0-9]{4}(?:-[A-Z0-9]{4})+$")
+#: HomeBot's vault shows groups of four (ABCD-EFGH-...), six of them; a
+#: pairing code (Q9FH-YYX3) is only two groups and must not be taken for it.
+_CODE_RE = re.compile(r"^[A-Z0-9]{4}(?:-[A-Z0-9]{4}){3,}$")
 
 
 class Face:
@@ -71,8 +73,10 @@ class Face:
 def _answers(card: dict, **_kw) -> dict:
     """What the owner types, by card. Everything else is "as you proposed"."""
     card_id = cards.card_id(card)
+    if card_id == "purpose:goal":
+        return {"goal": GOAL}
     if card_id == "purpose:identity":
-        return {"name": NAME, "goal": GOAL}
+        return {"name": NAME}
     if card_id == "purpose:place":
         # Yes to a place of its own, and the suggested id is accepted by not
         # typing one -- the path that would give a bot named Stargazer the id
@@ -100,7 +104,8 @@ def built(tmp_path, monkeypatch):
     # No Ollama, no suggester, no network of any kind.
     monkeypatch.setattr(setup_ops, "list_models", lambda *a, **k: [])
     monkeypatch.setattr(setup_ops, "ollama_survey", lambda *a, **k: [])
-    monkeypatch.setattr(sources_suggest, "suggest", lambda *a, **k: [])
+    monkeypatch.setattr(sources_suggest, "search_terms",
+                        lambda *a, **k: {"terms": [], "note": ""})
 
     args = types.SimpleNamespace(yes=False)
     face = Face()

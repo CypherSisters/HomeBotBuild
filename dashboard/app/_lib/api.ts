@@ -26,6 +26,8 @@
 // path allowlist and the cross-site check — and would send X-Vault-Token to
 // whatever host was configured. Same-origin-relative is the only safe value, so
 // it is the only value.
+import { vaultFetch } from './vaultSession';
+
 const API_URL = '/api/pai';
 
 // Removing the code that WROTE the key does not remove the copies it already
@@ -92,7 +94,7 @@ export async function apiGetRaw<T = any>(
 }
 
 export async function apiPost<T = any>(endpoint: string, body?: any): Promise<T> {
-  const res = await fetch(`${API_URL}${endpoint}`, {
+  const res = await vaultFetch(`${API_URL}${endpoint}`, {
     method: 'POST',
     headers: getHeaders(),
     body: body ? JSON.stringify(body) : undefined,
@@ -115,7 +117,7 @@ export async function apiPostRaw<T = any>(
   endpoint: string,
   body?: any
 ): Promise<{ status: number; ok: boolean; data: T | null }> {
-  const res = await fetch(`${API_URL}${endpoint}`, {
+  const res = await vaultFetch(`${API_URL}${endpoint}`, {
     method: 'POST',
     headers: getHeaders(),
     body: body ? JSON.stringify(body) : undefined,
@@ -125,7 +127,7 @@ export async function apiPostRaw<T = any>(
 }
 
 export async function apiPut<T = any>(endpoint: string, body?: any): Promise<T> {
-  const res = await fetch(`${API_URL}${endpoint}`, {
+  const res = await vaultFetch(`${API_URL}${endpoint}`, {
     method: 'PUT',
     headers: getHeaders(),
     body: body ? JSON.stringify(body) : undefined,
@@ -142,7 +144,7 @@ export async function apiPut<T = any>(endpoint: string, body?: any): Promise<T> 
 // the owner saying they mean THAT one. Optional, so every existing caller is
 // unchanged and still sends none.
 export async function apiDelete<T = any>(endpoint: string, body?: any): Promise<T> {
-  const res = await fetch(`${API_URL}${endpoint}`, {
+  const res = await vaultFetch(`${API_URL}${endpoint}`, {
     method: 'DELETE',
     headers: getHeaders(),
     body: body === undefined ? undefined : JSON.stringify(body),

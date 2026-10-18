@@ -33,7 +33,7 @@ from puffpai import cli
 from puffpai.config import get_config
 from puffpai.wizard import host
 
-GOOD_PIN = "9182736455"
+GOOD_PIN = "8316047295"
 
 
 @pytest.fixture
@@ -111,7 +111,7 @@ def test_a_hidden_pin_read_uses_the_plain_reader_with_no_tty(monkeypatch):
     actually is. The assertion is unchanged: no tty, no getpass.
     """
     monkeypatch.setattr(cli, "_stdin_is_tty", lambda: False)
-    monkeypatch.setattr("builtins.input", lambda prompt="": " 9182736455 ")
+    monkeypatch.setattr("builtins.input", lambda prompt="": " 8316047295 ")
     monkeypatch.setattr(getpass, "getpass",
                         lambda prompt="": pytest.fail("getpass with no tty"))
     # This tree hands back the line as typed (BuildBot's reader stripped it);

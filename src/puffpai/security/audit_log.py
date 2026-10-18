@@ -19,6 +19,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from puffpai.web_search import key_safe_data, key_safe_text
+
 # NOTE: this file is src/puffpai/security/audit_log.py, so three parents up is
 # <repo>/src, NOT the repo root. <repo>/src/security_logs is inside the
 # read-only code tree on the appliance, while the systemd unit grants write
@@ -105,21 +107,25 @@ class AuditLog:
 
     def log(self, action: str, user: str = "system", result: str = "success",
             details: str = "", extra: dict | None = None) -> dict:
-        """Append a security event to the audit log."""
+        """Append a security event to the audit log.
+
+        No field ever keeps a key or a password, or a piece of one: each is
+        checked WHOLE before it is cut (``web_search.key_safe_text``), and
+        ``extra`` is checked string by string, key names too, and kept as
+        valid JSON of at most 2,000 characters (``web_search.key_safe_data``).
+        A caller hands over the whole text; cutting it first would let a key
+        that straddles the cut through.
+        """
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "epoch": time.time(),
-            "action": str(action)[:100],
-            "user": str(user)[:100],
-            "result": str(result)[:50],
-            "details": str(details)[:500],
+            "action": key_safe_text(action, 100),
+            "user": key_safe_text(user, 100),
+            "result": key_safe_text(result, 50),
+            "details": key_safe_text(details, 500),
         }
         if extra:
-            try:
-                sanitized = json.loads(json.dumps(extra, default=str)[:2000])
-                entry["extra"] = sanitized
-            except (TypeError, json.JSONDecodeError):
-                entry["extra"] = {"raw": str(extra)[:200]}
+            entry["extra"] = key_safe_data(extra, max_json=2000)
 
         with self._lock:
             self._rotate_if_needed()

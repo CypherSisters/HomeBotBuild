@@ -13,17 +13,15 @@ product, because every prompt in the household goes to the brain. Same for
 Node-RED, the media servers and the AdGuard control API (which carries the
 household's AdGuard password).
 
-BuildBot has the same module. Two things are deliberately different here.
+Two things here are deliberate.
 
-**It does not re-implement address classification.** BuildBot's copy carried
-its own ``ipaddress`` logic. This build already has
+**It does not re-implement address classification.** This build already has
 :mod:`puffpai.security.netaddr` - the module the Toolsmith's SSRF gate and
 :mod:`puffpai.security.lan_http` run on - so every literal is judged there and
 every name is resolved with its resolver. One vocabulary, one place to fix.
 
 **Link-local and the odd reserved ranges are PUBLIC here, not private.**
-BuildBot folded ``is_link_local`` and ``is_reserved`` in with RFC 1918.
-``netaddr`` calls ``169.254.0.0/16`` what it is - the cloud-metadata shape - and
+They are not folded in with RFC 1918. ``netaddr`` calls ``169.254.0.0/16`` what it is - the cloud-metadata shape - and
 refuses it under every posture, and this module keeps that verdict. The
 restrictive direction is the safe one for a check that decides whether a
 credential may be sent somewhere.
@@ -76,11 +74,25 @@ What "refuse" means, per surface
 * **``/system/status``** publishes what was found, so a neutralisation is
   visible rather than silent.
 
+The Bridge on top
+-----------------
+The Bridge (:mod:`puffpai.zone_bridge`) decides what reaches the internet; at
+every Bridge setting the home network still works, so a home-network address
+for any service here is judged by the run posture alone. Only when the home
+network may not be reached at all
+(:func:`puffpai.security.bridge_guard.home_network_allowed` is False: a build
+that keeps everything on this computer) must the brain (Ollama) and the books
+(Kiwix), which have no switch of their own, be on this computer: a
+home-network address for either is then a violation, refused on the write
+path and neutralised at load like any other. The dashboard hand-off address
+is not something the bot reaches and is not judged by the Bridge.
+
 Copyright (c) 2026 Cypher Sisters. Apache-2.0 License.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import socket
@@ -103,6 +115,15 @@ _HOUSE_SUFFIXES = (".local", ".lan", ".home.arpa", ".internal", ".localdomain",
                    ".home", ".intranet", ".private")
 
 _LOOPBACK_NAMES = ("localhost", "localhost.localdomain", "ip6-localhost")
+
+#: Cloud providers' instance-data services. They sit in link-local (and, for
+#: one IPv6 form, unique-local) space, but they are a cloud machine's own
+#: service, never a device in a house. A configured service URL (which carries
+#: a password or every prompt) may not point at one under any posture. Only
+#: :func:`check_url` applies this; the classifier is unchanged.
+_CLOUD_METADATA = frozenset(__import__("ipaddress").ip_address(a) for a in (
+    "169.254.169.254", "169.254.170.2", "fd00:ec2::254",
+))
 
 #: Classification results.
 LOOPBACK = "loopback"
@@ -215,6 +236,19 @@ SERVICES: tuple[LanService, ...] = (
         id="calibre_web", config_path="media_server.calibre_web_url",
         stakes="What the household is reading.",
         enable_section="media_server"),
+    LanService(
+        id="pihole", config_path="zone3.pihole_url",
+        stakes="The Pi-hole admin password, and every DNS query the "
+               "household makes.",
+        enable_section="zone3"),
+    LanService(
+        id="valhalla", config_path="maps.valhalla_url",
+        stakes="The home point and every trip anybody asks directions for.",
+        safe_default="http://127.0.0.1:8002"),
+    LanService(
+        id="photon", config_path="maps.photon_url",
+        stakes="Every place name anybody looks up, and the home point.",
+        safe_default="http://127.0.0.1:2322"),
     # Two the wizard can write that this build has no config section for. They
     # are listed so the write path judges them under their own name and stakes
     # rather than falling back to a bare service id; _urls_from_config finds
@@ -244,6 +278,93 @@ def service_ids() -> tuple[str, ...]:
 
 # ── address + name classification ────────────────────────────────────────────
 
+#: IPv6 ranges that carry an IPv4 address inside them: NAT64 (RFC 6052 well
+#: known prefix, and the local-use /48 of RFC 8215), 6to4 (RFC 3056), Teredo
+#: (RFC 4380), IPv4-compatible (::a.b.c.d, RFC 4291 2.5.5.1) and IPv4-
+#: translated (::ffff:0:a.b.c.d, RFC 2765). ``ipaddress`` reports most of
+#: them as private or reserved, so without this an internet address wrapped
+#: in one reads as a home-network address.
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+_NAT64_LOCAL = ipaddress.ip_network("64:ff9b:1::/48")
+_SIX_TO_FOUR = ipaddress.ip_network("2002::/16")
+_TEREDO = ipaddress.ip_network("2001::/32")
+_V4_COMPATIBLE = ipaddress.ip_network("::/96")
+_V4_TRANSLATED = ipaddress.ip_network("::ffff:0:0:0/96")
+
+
+def _embedded_ipv4(addr: Any) -> Optional[list]:
+    """The IPv4 address(es) an IPv6 address carries, or None if it carries none."""
+    if not isinstance(addr, ipaddress.IPv6Address):
+        return None
+    value = int(addr)
+    if addr.ipv4_mapped is not None:
+        return [addr.ipv4_mapped]
+    if addr in _NAT64 or addr in _V4_TRANSLATED:
+        return [ipaddress.IPv4Address(value & 0xFFFFFFFF)]
+    if addr in _NAT64_LOCAL:
+        # The local-use /48 (RFC 8215) may be used with ANY prefix length
+        # RFC 6052 allows from /48 on, and the address does not say which.
+        # ``64:ff9b:1::808:808`` is 0.0.0.0 read as a /48 but 8.8.8.8 read
+        # as a /96, so reading only one layout can judge it loopback.
+        # So every layout is read and the worst verdict wins:
+        #   /48: bits 48-63 and 72-87 (bits 64-71 are the zero "u" octet),
+        #   /56: bits 56-63 and 72-95,
+        #   /64: bits 72-103,
+        #   /96: bits 96-127.
+        return [
+            ipaddress.IPv4Address((((value >> 64) & 0xFFFF) << 16)
+                                  | ((value >> 40) & 0xFFFF)),
+            ipaddress.IPv4Address((((value >> 64) & 0xFF) << 24)
+                                  | ((value >> 32) & 0xFFFFFF)),
+            ipaddress.IPv4Address((value >> 24) & 0xFFFFFFFF),
+            ipaddress.IPv4Address(value & 0xFFFFFFFF),
+        ]
+    if addr in _SIX_TO_FOUR:
+        return [addr.sixtofour]
+    if addr in _TEREDO:
+        server, client = addr.teredo
+        return [server, client]
+    if addr in _V4_COMPATIBLE and value > 1:  # not :: and not ::1
+        return [ipaddress.IPv4Address(value & 0xFFFFFFFF)]
+    return None
+
+
+def _numeric_ipv4(text: str) -> Optional[Any]:
+    """The IPv4 address a C resolver reads *text* as, else None.
+
+    glibc's inet_aton (which getaddrinfo uses on Linux) accepts more than
+    the dotted-quad: ``0xa9fea9fe`` and ``2852039166`` are both
+    169.254.169.254, and ``0177.1`` is 127.0.0.1. ipaddress refuses those
+    spellings, so without this they read as LAN names or domains and the
+    address check was decided by spelling. 1 to 4 parts, each decimal, 0x
+    hex or 0-led octal; the last part fills the remaining bytes.
+    """
+    parts = str(text).split(".")
+    if not 1 <= len(parts) <= 4:
+        return None
+    values = []
+    for part in parts:
+        # Character sets checked by hand: int() would also take "_", "+"
+        # and surrounding spaces, which no resolver does.
+        if part[:2].lower() == "0x":
+            digits, base, allowed = part[2:], 16, "0123456789abcdefABCDEF"
+        elif len(part) > 1 and part[0] == "0":
+            digits, base, allowed = part[1:], 8, "01234567"
+        else:
+            digits, base, allowed = part, 10, "0123456789"
+        if not digits or any(c not in allowed for c in digits):
+            return None
+        values.append(int(digits, base))
+    *head, last = values
+    if any(v > 0xFF for v in head) or last >= 1 << (8 * (4 - len(head))):
+        return None
+    value = 0
+    for v in head:
+        value = (value << 8) | v
+    value = (value << (8 * (4 - len(head)))) | last
+    return ipaddress.IPv4Address(value)
+
+
 def _classify_address(addr_text: str) -> str:
     """Classify one literal address. Returns '' for a non-address.
 
@@ -254,10 +375,26 @@ def _classify_address(addr_text: str) -> str:
     try:
         address_class = netaddr.classify(addr_text)
     except netaddr.UnparseableAddress:
-        return ""
-    if address_class is None:
-        return PUBLIC                      # globally routable, positively
-    return _FROM_NETADDR.get(address_class, PUBLIC)
+        # A spelling a C resolver still reads as IPv4 ("0xa9fea9fe",
+        # "2852039166", "0177.1") is judged as the address it dials.
+        numeric = _numeric_ipv4(addr_text)
+        if numeric is None:
+            return ""
+        return _classify_address(str(numeric))
+    verdict = (PUBLIC if address_class is None
+               else _FROM_NETADDR.get(address_class, PUBLIC))
+    inner = _embedded_ipv4(netaddr.parse(addr_text))
+    if inner:
+        # An IPv6 address that carries an IPv4 one (NAT64, 6to4, Teredo,
+        # IPv4-compatible or -translated) is judged by what it carries too,
+        # and the worse verdict wins: ``64:ff9b:1::808:808`` is 8.8.8.8, even
+        # though ipaddress calls the wrapper private.
+        verdicts = [verdict] + [_classify_address(str(v)) for v in inner]
+        for worst in (PUBLIC, PRIVATE, LOOPBACK):
+            if worst in verdicts:
+                return worst
+        return PUBLIC
+    return verdict
 
 
 def host_of(url: str) -> str:
@@ -327,7 +464,8 @@ def _resolve(host: str, port: int) -> list[str]:
 
 
 def classify_host_resolving(host: str, *, timeout: float = RESOLVE_TIMEOUT,
-                            resolver=None, port: int = 0) -> tuple[str, str]:
+                            resolver=None, port: int = 0,
+                            local_names: bool = False) -> tuple[str, str]:
     """Resolve *host* and classify **every** address it answers with.
 
     Returns ``(classification, detail)``. The worst answer wins: a name that
@@ -341,6 +479,12 @@ def classify_host_resolving(host: str, *, timeout: float = RESOLVE_TIMEOUT,
     *resolver* takes ``(host, port)`` - the same shape
     :mod:`puffpai.security.netaddr` and :mod:`puffpai.security.egress_doors`
     use, so one stub serves all three in a test.
+
+    *local_names*: a ``.local`` name (multicast DNS) with at least one answer
+    inside the house (private, unique-local or loopback) is judged by those
+    answers alone, because the caller connects only to them
+    (:func:`puffpai.security.netaddr.house_addresses`). Without one inside
+    answer the worst answer still wins.
     """
     host = (host or "").strip().rstrip(".").lower()
     if not host:
@@ -364,6 +508,11 @@ def classify_host_resolving(host: str, *, timeout: float = RESOLVE_TIMEOUT,
         return UNRESOLVABLE, f"{host} resolves to nothing"
 
     seen = {addr: (_classify_address(addr) or PUBLIC) for addr in addresses}
+    if local_names and netaddr.is_local_name(host):
+        inside = {addr: kind for addr, kind in seen.items()
+                  if kind in (PRIVATE, LOOPBACK) and netaddr.is_house_answer(addr)}
+        if inside:
+            seen = inside
     if PUBLIC in seen.values():
         offenders = sorted(a for a, k in seen.items() if k == PUBLIC)
         return PUBLIC, f"{host} resolves to {', '.join(offenders)}"
@@ -502,7 +651,7 @@ def _message(svc_path: str, url: str, host: str, posture: str, detail: str,
     where = detail if detail and detail != host else host
     if posture == "sealed":
         rule = ("This build's run posture is 'sealed', which allows nothing "
-                "but this machine itself - 127.0.0.1, ::1 or localhost. "
+                "but this machine itself: 127.0.0.1, ::1 or localhost. "
                 "Home Assistant, Ollama or a media server on any OTHER host, "
                 "even one inside your house, needs the 'island' posture "
                 "instead.")
@@ -519,14 +668,87 @@ def _message(svc_path: str, url: str, host: str, posture: str, detail: str,
             f"network. {rule} {stakes} {fix}")
 
 
+#: Services whose ``.local`` name is judged by its answers inside the house
+#: alone (an IPv6 home also gives the device a global address). Their callers
+#: connect only to those answers: the Home Assistant test pins to them
+#: (``lan_http`` with ``local_names``) and every marked home-network call is
+#: refused an outside address at connect time (``lan_guard``).
+LOCAL_NAME_SERVICES = frozenset({"home_assistant"})
+
+
+#: When the home network may not be reached, these must be on this computer:
+#: they have no switch of their own, so nothing the owner switched on can
+#: speak for them.
+BRIDGE_LOCAL_ONLY = frozenset({"ollama", "kiwix"})
+
+
+def _bridge_level(bridge_level: Optional[str],
+                  config_dir: str = "") -> str:
+    """The Bridge level to judge with: the one given, else the one in force."""
+    if bridge_level:
+        return str(bridge_level)
+    try:
+        from puffpai.security import bridge_guard
+        return bridge_guard.reach_level(config_dir or None)
+    except Exception:
+        return "switched_on"
+
+
+def _home_allowed(home_network: Optional[bool], config_dir: str = "") -> bool:
+    """Whether the home network may be reached: the answer given, else the
+    Bridge in force. Fails closed (False)."""
+    if home_network is not None:
+        return bool(home_network)
+    try:
+        from puffpai.security import bridge_guard
+        return bridge_guard.home_network_allowed(config_dir or None)
+    except Exception:
+        return False
+
+
+def _bridge_violation(service_id: str, url: str, host: str, level: str,
+                      resolve: bool, resolver, timeout: float,
+                      home_network: bool = False,
+                      ) -> Optional[PostureViolation]:
+    """The Bridge's own verdict on one configured URL, or None."""
+    if level not in ("switched_on", "sealed") or service_id not in BRIDGE_LOCAL_ONLY:
+        return None
+    if home_network:
+        return None
+    kind = classify_host(host)
+    detail = host
+    if kind != LOOPBACK and resolve:
+        resolved, why = classify_host_resolving(host, timeout=timeout,
+                                                resolver=resolver)
+        if resolved == LOOPBACK:
+            kind, detail = LOOPBACK, why
+    if kind == LOOPBACK:
+        return None
+    svc = _BY_ID.get(service_id)
+    path = svc.config_path if svc else service_id
+    what = "brain" if service_id == "ollama" else "books"
+    return PostureViolation(
+        service_id, url, f"bridge {level}", kind,
+        f"{path} is set to {url}, which is not on this computer. With your "
+        f"Bridge setting, your bot's {what} must be on this computer. Point "
+        f"it at localhost, or choose a different Bridge setting in Setup.",
+        detail=detail)
+
+
 def check_url(service_id: str, url: str, posture: str, *, resolve: bool = False,
-              resolver=None, timeout: float = RESOLVE_TIMEOUT
+              resolver=None, timeout: float = RESOLVE_TIMEOUT,
+              bridge_level: Optional[str] = None,
+              home_network: Optional[bool] = None,
               ) -> Optional[PostureViolation]:
     """Judge one configured URL against *posture*. Returns a violation or None.
 
     An empty URL is "not configured" and is never a violation. An
     :data:`UNRESOLVABLE` name is a warning, not a violation: a service that is
     switched off must not read as a posture breach.
+
+    The Bridge is judged too (*bridge_level* and *home_network*, else the
+    ones in force): when the home network may not be reached, the brain and
+    the books must be on this computer.
     """
     url = (url or "").strip()
     if not url:
@@ -542,6 +764,57 @@ def check_url(service_id: str, url: str, posture: str, *, resolve: bool = False,
             f"{path} is set to {url!r}, which has no host in it. Nothing can "
             f"check where that points, so it is refused.")
 
+    found = _check_url_posture(service_id, url, posture, host, path, stakes,
+                               resolve=resolve, resolver=resolver,
+                               timeout=timeout)
+    if found is not None:
+        return found
+    metadata = _cloud_metadata_address(host, resolve, resolver, timeout)
+    if metadata:
+        return PostureViolation(
+            service_id, url, posture, PUBLIC,
+            f"{path} is set to {url}, and {metadata} is a cloud provider's "
+            f"machine-data service, not a device in your home. Nothing is "
+            f"sent there. Point it at the address of the device on your own "
+            f"network.", detail=metadata)
+    return _bridge_violation(service_id, url, host,
+                             _bridge_level(bridge_level), resolve, resolver,
+                             timeout, home_network=_home_allowed(home_network))
+
+
+def _cloud_metadata_address(host: str, resolve: bool, resolver,
+                            timeout: float) -> str:
+    """The cloud instance-data address *host* is or resolves to, else ''."""
+    def _hit(text: str) -> bool:
+        try:
+            addr = ipaddress.ip_address(str(text).split("%", 1)[0])
+        except ValueError:
+            addr = _numeric_ipv4(text)
+            if addr is None:
+                return False
+        return addr in _CLOUD_METADATA or any(
+            inner in _CLOUD_METADATA for inner in (_embedded_ipv4(addr) or []))
+    if _hit(host):
+        return host
+    if (not resolve or _classify_address(host)
+            or classify_host(host) in (LOOPBACK, UNPARSEABLE)):
+        return ""
+    try:
+        # Resolvers here take (host, port), the same shape as
+        # classify_host_resolving's.
+        addresses = (resolver or _resolver_override or _resolve)(host, 0)
+    except (OSError, netaddr.ResolutionError):
+        return ""
+    for addr in addresses or []:
+        if _hit(addr):
+            return str(addr)
+    return ""
+
+
+def _check_url_posture(service_id: str, url: str, posture: str, host: str,
+                       path: str, stakes: str, *, resolve: bool, resolver,
+                       timeout: float) -> Optional[PostureViolation]:
+    """The run setting's verdict on one URL (the part before the Bridge)."""
     by_name = classify_host(host)
     if resolve:
         port = 0
@@ -549,8 +822,9 @@ def check_url(service_id: str, url: str, posture: str, *, resolve: bool = False,
             port = urlsplit(url).port or 0
         except ValueError:
             port = 0
-        kind, detail = classify_host_resolving(host, timeout=timeout,
-                                               resolver=resolver, port=port)
+        kind, detail = classify_host_resolving(
+            host, timeout=timeout, resolver=resolver, port=port,
+            local_names=service_id in LOCAL_NAME_SERVICES)
         if kind == UNRESOLVABLE:
             # Resolving may only ever make the verdict WORSE, never better. A
             # name that looks like a registered domain and answers nothing is
@@ -611,13 +885,19 @@ def _urls_from_config(cfg: Any) -> list[tuple[str, str]]:
 
 
 def check_config(cfg: Any, posture: str, *, resolve: bool = False,
-                 resolver=None, timeout: float = RESOLVE_TIMEOUT
+                 resolver=None, timeout: float = RESOLVE_TIMEOUT,
+                 bridge_level: Optional[str] = None,
+                 home_network: Optional[bool] = None,
                  ) -> list[PostureViolation]:
     """Every LAN-service violation on this config object, in table order."""
+    config_dir = getattr(cfg, "CONFIG_DIR", "") or ""
+    level = _bridge_level(bridge_level, config_dir)
+    home = _home_allowed(home_network, config_dir)
     found = []
     for service_id, url in _urls_from_config(cfg):
         violation = check_url(service_id, url, posture, resolve=resolve,
-                              resolver=resolver, timeout=timeout)
+                              resolver=resolver, timeout=timeout,
+                              bridge_level=level, home_network=home)
         if violation is not None:
             found.append(violation)
     return found

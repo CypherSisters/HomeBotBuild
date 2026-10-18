@@ -274,6 +274,35 @@ read the project's own LICENSE rather than trust a summary here.
 
 ---
 
+## Catalog snapshots and word lists
+
+Files in `config/catalog_snapshots/` and `config/wordlists/`. This build reads
+them on this computer to decide where to look and what fits a goal; none is
+sent anywhere. Each `<name>.vec.npz` beside a snapshot holds meaning vectors
+this build computed from that snapshot's own names, descriptions and tags with
+the pinned reading helper (all-MiniLM-L6-v2); it is derived data of the file
+it sits beside and carries no text. Licences below were read from each
+source when its snapshot was taken; "to confirm" says why one could not be.
+
+| File | Source | Licence (as read) | Attribution | What was derived |
+|---|---|---|---|---|
+| `awesome_selfhosted_2026-09-27.json.gz` | https://github.com/awesome-selfhosted/awesome-selfhosted-data at commit `c10a71ae91ccc513dc4329578896810c499c4b21` | CC BY-SA 3.0 (the repository's LICENSE: "Creative Commons Attribution-ShareAlike 3.0 Unported") | Data from awesome-selfhosted-data by the awesome-selfhosted contributors | Name, description, tags, licences, platforms, addresses, stars and last change of each entry, reshaped to one JSON file. This derived snapshot is shared under the same licence, CC BY-SA 3.0, with this attribution (also in the file's header). |
+| `hacs_2026-09-27.json.gz` | https://github.com/hacs/default at commit `94ae363e31684d0be81e97045e33a404e1ec5128` and https://data-v2.hacs.xyz/ (integration, plugin, theme) | hacs/default: MIT (its LICENSE, Copyright (c) 2019 HACS). data-v2.hacs.xyz: to confirm (no terms stated; its descriptions are each project's own GitHub description) | HACS | Full name, name, description, topics, stars and last change of each listed add-on. Look-only rows. |
+| `apis_guru_2026-09-23.json.gz` | https://api.apis.guru/v2/list.json (APIs.guru openapi-directory) | CC0 1.0 (the openapi-directory LICENSE) | APIs.guru | Names, descriptions and addresses of API definitions. |
+| `public_apis_2026-09-23.json` | https://github.com/public-apis/public-apis (README.md) | MIT (the repository's LICENSE, Copyright (c) 2022 public-apis) | public-apis contributors | Rows of the README's tables (name, description, auth, HTTPS, CORS, link). |
+| `ha_integrations_2026-09-23.json` | https://github.com/home-assistant/core (homeassistant/generated/integrations.json) | Apache-2.0 (the repository's LICENSE.md) | Home Assistant authors | Integration names, brands, domains and how each connects. |
+| `mcp_registry_2026-09-23.json.gz` | https://registry.modelcontextprotocol.io/v0/servers | to confirm: the registry's code is moving from MIT to Apache-2.0 (its LICENSE); no terms are stated for the published server listings | Model Context Protocol registry | Server names, descriptions and addresses. Look-only rows. |
+| `kiwix_opds_eng_2026-09-23.json` | https://opds.library.kiwix.org/catalog/v2/entries?lang=eng | to confirm: the OPDS catalog states no licence for its listings | Kiwix | Listings only: names, titles, sizes, download descriptions. No book content. |
+| `gutenberg_catalog_en_2026-09-24.json.gz` | https://www.gutenberg.org/cache/epub/feeds/pg_catalog.csv | to confirm: Project Gutenberg's offline catalogs page asks people to use these files in their own tools instead of crawling, but names no licence for the catalog | Project Gutenberg | English book ids, titles, authors and subjects (literature, class P, left out). |
+| `openstax_books_2026-09-24.json` | https://openstax.org/apps/cms/api/v2/pages/?type=books.Book | to confirm: the books are under the Creative Commons licence each one names (kept per book in the file); the listing's own terms page needs a browser with JavaScript and could not be read | OpenStax, Rice University | Book titles, subjects, states, licence names and descriptions. |
+| `looks_tweakcn_2026-09-24.json` | https://tweakcn.com/r/themes/registry.json | Apache-2.0 (https://github.com/jnsahaj/tweakcn) | tweakcn | Colour numbers, corner radius, monospace flag (see "Look lists" above). |
+| `looks_shadcn_2026-09-24.json` | https://ui.shadcn.com/r/styles/new-york-v4/registry.json | MIT (https://github.com/shadcn-ui/ui) | shadcn/ui | Colour numbers, corner radius, monospace flag (see "Look lists" above). |
+| `config/wordlists/en_US.dic` | en_US Hunspell dictionary 2020.12.07, SCOWL size 60, http://wordlist.aspell.net | SCOWL's own licence (read from its Copyright file and README): permission to use, copy, modify, distribute and sell for any purpose without fee, keeping the copyright and permission notice; parts from Ispell under Geoff Kuenning's BSD licence and other listed sources | Kevin Atkinson and the SCOWL contributors | Used unchanged, to tell ordinary words from names on this computer. |
+| `config/where_to_look.json`, the `licence_words` part | the licence texts kept verbatim in `tests/fixtures/recorded_web/license_*.txt`: Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0), GNU GPL 2.0 and 3.0, LGPL 2.1 and 3.0, AGPL 3.0 (https://www.gnu.org/licenses/), Mozilla Public License 2.0 (https://www.mozilla.org/MPL/2.0/), SIL Open Font License 1.1 (https://openfontlicense.org), CC0 1.0 and the Creative Commons 4.0 licences (https://creativecommons.org/licenses/) | each licence text's own terms for copying it (the FSF texts: verbatim copies may be distributed; Creative Commons: its legal code is dedicated under CC0) | the publishers named | Each text as lowercase words in order, built by `python -m puffpai.catalogs.snapshot_build_code licence`, used only to recognise a project's licence file; never shown or sent |
+| `config/wordlists/NOTICE.txt` | written for this project from the dictionary's README | the notice reproduces SCOWL's copyright and permission text verbatim, as that licence requires | as above | The licence notice for `en_US.dic`. |
+
+---
+
 ## Notes
 
 - **Python table** is the full transitive closure actually resolved by

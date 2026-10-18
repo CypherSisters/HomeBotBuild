@@ -232,8 +232,8 @@ export default function SkillsPage() {
           How this works.{" "}
         </span>
         Each skill runs in a sandbox with no files of yours, no Home Assistant and no
-        passwords. It reaches only the hosts you approved, through a door that is shut
-        otherwise. You see the code before anything is installed.
+        passwords. It reaches only the hosts you approved, through a Bridge switch that is
+        off otherwise. You see the code before anything is installed.
       </p>
 
       {banner && (

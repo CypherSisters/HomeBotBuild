@@ -31,7 +31,21 @@ _TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 #: appended to a command line.
 _PATH_RE = re.compile(r"^[A-Za-z0-9 ._:\\/-]{1,200}$")
 
-_TYPES = {"token": _TOKEN_RE, "path": _PATH_RE}
+#: A knowledge source id: a registry id or a Kiwix book id such as
+#: ``kiwix:vikidia_en_all:nopic``. Same characters as a token, longer.
+_SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$")
+
+#: An Ollama model name with its tag, optionally under a namespace
+#: (``library/llama3.2:3b``). Still no spaces, quotes or shell characters.
+_MODEL_RE = re.compile(r"^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,60}/){0,2}"
+                       r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}:[A-Za-z0-9._-]{1,40}$")
+
+#: A web address for an Ollama that is not on the default port: scheme, host
+#: and port, nothing else.
+_URL_RE = re.compile(r"^https?://[A-Za-z0-9._-]{1,120}(?::\d{1,5})?/?$")
+
+_TYPES = {"token": _TOKEN_RE, "path": _PATH_RE, "source_id": _SOURCE_ID_RE,
+          "model": _MODEL_RE, "url": _URL_RE}
 
 
 class FixError(ValueError):
@@ -39,8 +53,9 @@ class FixError(ValueError):
 
 
 def _render_fetch_source(args: dict[str, str]) -> str:
-    return (f"puffpai setup --yes --fetch-source {args['source_id']} "
-            f"--accept-source-size")
+    # Shows the size and license and asks for a yes; it does not re-run the
+    # whole wizard the way `setup --yes --fetch-source` did.
+    return f"puffpai sources add {args['source_id']}"
 
 
 def _render_knowledge_sync(args: dict[str, str]) -> str:
@@ -51,12 +66,32 @@ def _render_persona_rename(args: dict[str, str]) -> str:
     return f"puffpai persona edit {args['persona_id']} --rename-id {args['new_id']}"
 
 
+def _render_model_pull(args: dict[str, str]) -> str:
+    return f"ollama pull {args['model']}"
+
+
+def _render_model_pull_at(args: dict[str, str]) -> str:
+    # Named, because a plain ``ollama pull`` would download into whatever
+    # Ollama that command reaches by default -- not the one this build uses.
+    return (f"ollama pull {args['model']}    (on the Ollama at "
+            f"{args['url']})")
+
+
+def _render_apps_drafts(args: dict[str, str]) -> str:
+    return "puffpai apps drafts"
+
+
 def _render_setup_rerun(args: dict[str, str]) -> str:
     return "puffpai setup"
 
 
+def _render_outside_on(args: dict[str, str]) -> str:
+    return f"puffpai outside on {args['service']}"
+
+
 def _render_setup_scaffold(args: dict[str, str]) -> str:
-    return "puffpai setup --scaffold"
+    # --own-place is --scaffold under the name an owner is shown (plain words).
+    return "puffpai setup --own-place"
 
 
 #: id -> (required arg name -> type, renderer, what it does in plain words).
@@ -65,9 +100,9 @@ def _render_setup_scaffold(args: dict[str, str]) -> str:
 #: failure this registry exists to make unrepeatable.
 COMMANDS: dict[str, dict[str, Any]] = {
     "source.fetch": {
-        "args": {"source_id": "token"},
+        "args": {"source_id": "source_id"},
         "render": _render_fetch_source,
-        "what": "Fetch one vetted source and accept its size.",
+        "what": "Download one book after you see its size and say yes.",
     },
     "knowledge.sync": {
         "args": {},
@@ -79,10 +114,30 @@ COMMANDS: dict[str, dict[str, Any]] = {
         "render": _render_persona_rename,
         "what": "Give the bot an id that is not already used for something.",
     },
+    "model.pull": {
+        "args": {"model": "model"},
+        "render": _render_model_pull,
+        "what": "Download the brain this build is set to use.",
+    },
+    "model.pull_at": {
+        "args": {"model": "model", "url": "url"},
+        "render": _render_model_pull_at,
+        "what": "Download the brain into the Ollama this build uses.",
+    },
+    "apps.drafts": {
+        "args": {},
+        "render": _render_apps_drafts,
+        "what": "See the live cards your bot made that are waiting for you.",
+    },
     "setup.rerun": {
         "args": {},
         "render": _render_setup_rerun,
         "what": "Run the wizard again and answer the step that did not finish.",
+    },
+    "outside.on": {
+        "args": {"service": "token"},
+        "render": _render_outside_on,
+        "what": "Switch on one outside service after you read what it sends.",
     },
     "setup.scaffold": {
         "args": {},
@@ -102,6 +157,9 @@ def validate_fix(fix: Any) -> dict[str, Any]:
     if not isinstance(fix, dict):
         raise FixError("A fix is an object, never a line of text.")
     kind = fix.get("kind")
+    if kind == "none":
+        # Said plainly rather than pointing at a command that changes nothing.
+        return {"kind": "none"}
     if kind == "card":
         skill_id = fix.get("id")
         if not isinstance(skill_id, str) or not _TOKEN_RE.match(skill_id):
@@ -141,6 +199,8 @@ def validate_fix(fix: Any) -> dict[str, Any]:
 def render(fix: Any) -> str:
     """The line the owner reads. Raises :class:`FixError` rather than guessing."""
     clean = validate_fix(fix)
+    if clean["kind"] == "none":
+        return ""
     if clean["kind"] == "card":
         return f"Open the '{clean['id']}' step again."
     spec = COMMANDS[clean["id"]]

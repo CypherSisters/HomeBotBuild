@@ -286,7 +286,7 @@ class Scheduler:
         first_seen = dict(state.get("first_seen") or {})
         seen_keys = set()
 
-        fired: list[dict] = []
+        fired: list[tuple] = []
         missed: list[dict] = []
         silent: list[dict] = []
         resolved: list[dict] = []
@@ -348,6 +348,10 @@ class Scheduler:
                 if token in recent:
                     continue
                 late = (now_ms - int(due)) / 1000.0
+                # An occurrence may say how late it may still run
+                # (``late_ok_seconds``); never less than the grace.
+                late_ok = max(self.grace_seconds,
+                              int(occ.get("late_ok_seconds") or 0))
                 quiet = False
                 if late <= self.grace_seconds:
                     # The ordinary case: a tick lands a few seconds after the
@@ -365,6 +369,8 @@ class Scheduler:
                         # due before the item was known is recorded and
                         # logged, and never spoken.
                         status, quiet = STATUS_MISSED, True
+                    elif late <= late_ok:
+                        status = STATUS_FIRED
                     else:
                         status = (STATUS_MISSED if was_absent
                                   else STATUS_FIRED)
@@ -374,15 +380,20 @@ class Scheduler:
                     logger.warning("scheduler: could not mark %s: %s", token, exc)
                     continue
                 occ["status"] = status
-                if quiet:
+                if quiet or (status == STATUS_MISSED
+                             and occ.get("announce_missed") is False):
                     occ["announced"] = False
                     silent.append(occ)
                     logger.info(
-                        "scheduler: %s (%s) came due before the item was "
-                        "known; recorded as missed, not announced",
+                        "scheduler: %s (%s) recorded as missed, not announced",
                         occ.get("id"), occ.get("kind"))
+                elif status == STATUS_MISSED:
+                    missed.append(occ)
                 else:
-                    (missed if status == STATUS_MISSED else fired).append(occ)
+                    # The engine's own clock, so the work says the same
+                    # "now" the engine decided on (and tests can drive it).
+                    occ["now_ms"] = now_ms
+                    fired.append((source, occ))
                 recent.append(token)
                 dirty = True
 
@@ -402,14 +413,26 @@ class Scheduler:
         state["first_seen"] = first_seen
         self._save_state()
 
-        for occ in fired:
+        ran: list[dict] = []
+        for source, occ in fired:
             logger.info("scheduler: firing %s (%s)", occ.get("id"), occ.get("kind"))
-            self._say(occ.get("sentence") or "")
+            # A source with its own ``run(occ)`` does the work itself (a
+            # routine runs through the agent bus); any other is spoken.
+            runner = getattr(source, "run", None)
+            if callable(runner):
+                try:
+                    occ["result"] = runner(occ)
+                except Exception as exc:
+                    logger.warning("scheduler: %s failed: %s", occ.get("id"), exc)
+                    occ["result"] = {"ok": False, "error": str(exc)}
+            else:
+                self._say(occ.get("sentence") or "")
+            ran.append(occ)
         if missed:
             logger.info("scheduler: %d occurrence(s) missed while offline", len(missed))
             self._say(missed_sentence(missed))
 
-        return {"fired": fired, "missed": missed, "resolved": resolved,
+        return {"fired": ran, "missed": missed, "resolved": resolved,
                 "silent": silent}
 
     # ── thread plumbing ────────────────────────────────────────────────────

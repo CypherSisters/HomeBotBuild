@@ -29,19 +29,31 @@ import {
   type InstalledApp,
 } from "@/app/_lib/services/installedAppsService";
 import { onBuildChanged } from "@/app/_lib/services/buildEvents";
-import { listApps } from "../_lib/appsIndex";
+import { getFront, type FrontApp } from "@/app/_lib/services/frontService";
+import { appsToList } from "../_lib/appsIndex";
+import AppLink from "../_lib/AppLink";
 
 export default function AppsIndex() {
   // null = the box has not answered (or cannot). listApps() then shows the
   // built-ins, so the FIRST paint is already correct and there is no spinner:
   // the only thing the answer can add is extra apps and better blurbs.
   const [installed, setInstalled] = useState<InstalledApp[] | null>(null);
+  // What Toolsmith added (GET /front `apps`). Null until it answers, and a
+  // failed answer changes nothing: the list fails open.
+  const [added, setAdded] = useState<FrontApp[] | null>(null);
 
   const load = useCallback(() => {
     let cancelled = false;
     getInstalledApps().then((apps) => {
       if (!cancelled) setInstalled(apps);
     });
+    getFront()
+      .then((front) => {
+        if (!cancelled) setAdded(front.apps ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setAdded(null);
+      });
     return () => {
       cancelled = true;
     };
@@ -53,7 +65,7 @@ export default function AppsIndex() {
   // mounted and holding the list it fetched. Refetch when it says so.
   useEffect(() => onBuildChanged(() => void load()), [load]);
 
-  const apps = listApps(installed);
+  const apps = appsToList(installed, null, added);
 
   return (
     <SectionMain>
@@ -64,8 +76,8 @@ export default function AppsIndex() {
       </SectionTitleLineWithButton>
 
       <p className="mb-5 text-sm text-gray-600 dark:text-slate-400">
-        Each one keeps its own data on this box. They start empty — an app is
-        worth something once there is something in it.
+        Each one keeps its own data on this box. Some come with example
+        entries of their own; the app&apos;s page says so and can clear them.
       </p>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -103,7 +115,8 @@ export default function AppsIndex() {
         </Link>
 
         {apps.map((app) => (
-          <Link key={app.id} href={app.href} className="block">
+          // an app's own page is always a full page load (see AppLink)
+          <AppLink key={app.id} href={app.href} className="block">
             <CardBox className="h-full transition hover:scale-[1.01]" isHoverable>
               <div className="flex items-start gap-3 p-4">
                 {app.icon && (
@@ -148,7 +161,7 @@ export default function AppsIndex() {
                 />
               </div>
             </CardBox>
-          </Link>
+          </AppLink>
         ))}
       </div>
     </SectionMain>

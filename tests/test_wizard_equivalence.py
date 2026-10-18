@@ -71,13 +71,19 @@ def test_the_run_log_records_all_twelve_and_is_honest_about_four(
         state = json.load(handle)
 
     from puffpai.wizard.runner import SKILL_ORDER
+    from puffpai.wizard import host
     assert list(state["skills"]) == list(SKILL_ORDER)
     outcomes = {k: v["outcome"] for k, v in state["skills"].items()}
     # The four that wrap nothing yet say so in the record, and say it nowhere
     # else: an owner is not shown a gap they cannot act on.
     assert state["sections"]["prove"]["verdict"] in ("pass", "gap", "fail")
+    # HomeBot's schedule leaves out the goal, the name and the page list
+    # (homebot_preset.DROPPED_ENTRIES): a skill with no step on it is
+    # recorded as not run, every other one finishes.
+    walked = {step.skill for step in host.setup_schedule() if step.skill}
     for skill in SKILL_ORDER:
-        assert outcomes[skill] == "done", f"{skill} did not finish"
+        want = "done" if skill in walked else "not_run"
+        assert outcomes[skill] == want, f"{skill}: {outcomes[skill]}"
     assert state["refusals"] == []
 
     # No step failed, and every gap this run records is one of the four honest
@@ -100,8 +106,11 @@ def test_the_run_log_records_all_twelve_and_is_honest_about_four(
         # A source checkout has no installed launchers, so the closing screen's
         # own check says what is not on this machine.
         ("handoff", "setup.rerun"),
-        # An offline box with no model: brain says so rather than pretending.
+        # An offline box with no model: brain says so rather than pretending,
+        # and names the real download command (not "run the wizard again").
         ("brain", "setup.rerun"),
+        ("brain", "model.pull"),
+        ("brain", "model.pull_at"),
     }
     for gap in state["gaps"]:
         assert (gap["skill"], gap["fix"]["id"]) in allowed, gap
@@ -126,7 +135,7 @@ def test_the_manifest_sections_come_from_the_packages_that_own_them(
     # answers to HomeBot. The persona section keeps the owner's answer, which is
     # "" when nobody was asked. So: equal whenever a name was given, and the
     # shipped default when one was not -- and never some third name.
-    recorded = sections["persona"]["bot_name"]
+    recorded = (sections.get("persona") or {}).get("bot_name", "")
     assert manifest["build"]["name"] == (
         recorded or setup_ops.HOMEBOT_DEFAULTS["bot_name"])
 
@@ -177,8 +186,10 @@ def test_both_renderers_cover_the_same_skills(tmp_path, monkeypatch):
     get_config(_force_reload=True)
     offered = service.propose_cards()
 
+    # The schedule both faces walk: HomeBot's (wizard.host.setup_schedule).
+    from puffpai.wizard import host
     scheduled = [f"{step.skill}:{part}" if part else step.skill
-                 for step in runner.SCHEDULE
+                 for step in host.setup_schedule()
                  for part in [runner.lifecycle_part(step.part)]
                  if part is not None and step.skill]
     # Same ids, same order, from the one schedule.
@@ -190,14 +201,19 @@ def test_both_renderers_cover_the_same_skills(tmp_path, monkeypatch):
     # says in so many words that it has none.
     named = {cards.split_card_id(card_id)[0] for card_id in offered["order"]}
     plain = {row["skill"] for row in offered["not_converted"]}
-    assert named | plain == set(runner.SKILL_ORDER)
+    walked = {step.skill for step in host.setup_schedule() if step.skill}
+    # Every skill HomeBot walks has a card or a plain "no card" row; no card
+    # belongs to a skill it does not walk.
+    assert walked <= named | plain
+    assert named <= walked
     assert not named & plain
     for row in offered["not_converted"]:
         assert row["title"], row
 
 
 def test_the_only_skill_without_a_card_is_prove():
-    """Prove asks the owner nothing, so it has nothing to put on a card."""
+    """Prove asks the owner nothing, so it has nothing to put on a card. The
+    engine's Assemble step asks nothing either, so it has no card of its own."""
     scheduled = {step.skill for step in runner.SCHEDULE
                  if runner.lifecycle_part(step.part) is not None}
-    assert set(runner.SKILL_ORDER) - scheduled == {"prove"}
+    assert set(runner.SKILL_ORDER) - scheduled == {"assemble", "prove"}

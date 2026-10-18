@@ -68,6 +68,7 @@ import type {
   EgressEvent,
   EgressLedgerRecord,
 } from "@/app/_interfaces/api";
+import EngineSwitches from "./EngineSwitches";
 
 const FREDOKA = "var(--font-fredoka), sans-serif";
 const NUNITO = "var(--font-nunito), sans-serif";
@@ -107,6 +108,15 @@ const DOOR_LABELS: Record<string, string> = {
   tv_free_channels: "Free TV channels",
   connectivity_probe: "Connectivity probe",
   spotify: "Spotify",
+  // The names refusals point at ("Settings, Bridge switches, <name>"):
+  // src/puffpai/outside_services.SWITCH_NAMES.
+  wikipedia_books: "Wikipedia books",
+  gutenberg_books: "Project Gutenberg books",
+  openstax_books: "OpenStax textbooks",
+  wikibooks_books: "Wikibooks",
+  archive_books: "Internet Archive books",
+  github: "GitHub",
+  toolsmith_cloud: "Toolsmith's cloud model",
 };
 
 function doorLabel(door: { id: string }): string {
@@ -159,7 +169,7 @@ function lockReason(door: EgressDoor): string | undefined {
       : "Set by the operator in the unit file. The switch cannot change it.";
   }
   if (door.writable === false) {
-    return "Not a control: the appliance reports this door cannot be set here.";
+    return "Not a control: the appliance reports this switch cannot be set here.";
   }
   return undefined;
 }
@@ -178,8 +188,8 @@ function stateChip(door: EgressDoor): StateChip {
     };
   }
   return door.open
-    ? { text: "Open", fg: "var(--mint)", bg: "rgba(126,231,178,.16)" }
-    : { text: "Shut", fg: "var(--text3)", bg: "var(--chip)" };
+    ? { text: "On", fg: "var(--mint)", bg: "rgba(126,231,178,.16)" }
+    : { text: "Off", fg: "var(--text3)", bg: "var(--chip)" };
 }
 
 /* ── The switch ─────────────────────────────────────────────── */
@@ -376,7 +386,7 @@ function DoorRow({
               color: "var(--text)",
             }}
           >
-            {door.open ? "Shut this door?" : "Open this door?"}
+            {door.open ? "Turn this switch off?" : "Turn this switch on?"}
           </div>
           <div
             style={{
@@ -415,7 +425,7 @@ function DoorRow({
                 fontSize: 14,
               }}
             >
-              {door.open ? "Shut it" : "Open it"}
+              {door.open ? "Turn it off" : "Turn it on"}
             </button>
             <button
               type="button"
@@ -705,11 +715,11 @@ export default function EgressDoorsCard() {
             color: "var(--text)",
           }}
         >
-          Egress doors
+          Bridge switches
         </div>
         {doors && doors.length > 0 && (
           <div style={microLabel}>
-            {openCount} open / {doors.length}
+            {openCount} on / {doors.length}
             {unenforced > 0 ? ` · ${unenforced} unenforced` : ""}
           </div>
         )}
@@ -724,9 +734,9 @@ export default function EgressDoorsCard() {
           color: "var(--text2)",
         }}
       >
-        Every way out of this house, listed — including the ones nothing here
-        stops. Shut is the default; a shut door is refused before a socket
-        opens.
+        Every way out of this house, listed, including the ones nothing here
+        stops. Off is the default; a request behind a switch that is off is
+        refused before anything is sent.
       </div>
 
       {!doors && (
@@ -743,8 +753,8 @@ export default function EgressDoorsCard() {
           }}
         >
           {loading
-            ? "Reading the door registry…"
-            : "Door registry unavailable — the appliance did not report egress_doors."}
+            ? "Reading the switches..."
+            : "The switches could not be read. Your bot did not list them."}
         </div>
       )}
 
@@ -761,6 +771,10 @@ export default function EgressDoorsCard() {
           onCancel={() => setConfirmId(null)}
         />
       ))}
+
+      {/* The engine's own switches (Code downloads, Code search, the book
+          library...): every refusal points here by name. */}
+      <EngineSwitches shownAbove={(doors ?? []).map((d) => d.id)} />
 
       {doors && doors.length > 0 && (
         <>
@@ -793,9 +807,9 @@ export default function EgressDoorsCard() {
             }}
           >
             Your switches are kept on the box and survive a restart. Every
-            decision is recorded in security_logs/ — the last {LEDGER_LIMIT} are
-            shown. Opening a door takes effect at once; nothing is sent until
-            something asks.
+            decision is recorded in security_logs/; the last {LEDGER_LIMIT} are
+            shown. Turning a switch on takes effect at once; nothing is sent
+            until something asks.
           </div>
         </>
       )}

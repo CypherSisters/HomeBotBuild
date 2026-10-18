@@ -809,7 +809,7 @@ class TestRadioDoor:
         """"Hey Puff, play some jazz radio" with the switch off."""
         monkeypatch.setenv("PUFFPAI_DATA_DIR", str(tmp_path))
         reply = mh.tool_radio_play("jazz")
-        assert "radio-browser door" in reply
+        assert "radio-browser switch" in reply
         assert "off" in reply
         # The failure mode this replaces: blaming the catalog for a shut door.
         assert "No internet radio station matched" not in reply

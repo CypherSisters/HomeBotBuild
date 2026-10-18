@@ -8,6 +8,9 @@ Optional: Node.js + DiceBear + resvg for styled avatars.
 
 Generated PNGs are cached in assets/avatars/ so generation only happens
 once per unique seed/style combination.
+
+Node is started only by full path from :mod:`puffpai.security.host_programs`;
+no trusted node means the PIL avatar, never a node found by name.
 """
 
 import os
@@ -18,6 +21,9 @@ import logging
 import subprocess
 
 from PIL import Image, ImageDraw, ImageFont
+
+from puffpai import procflags
+from puffpai.security import host_programs
 
 logger = logging.getLogger(__name__)
 
@@ -168,11 +174,17 @@ class AvatarGenerator:
     def _from_dicebear(self, seed: str, style: str, size: int) -> Image.Image:
         """Call generate_avatar.js which outputs base64-encoded PNG via resvg."""
         try:
+            node = host_programs.path('node')
             script = os.path.join(_AVATAR_DIR, 'generate_avatar.js')
+            if not node or not os.path.isfile(script):
+                return generate_avatar_pil(seed, size)
+            # The script finds its own parts next to itself, so it runs from
+            # host_programs' fixed working folder like every other program.
             result = subprocess.run(
-                ['node', script, style, seed, 'b6e3f4', str(size)],
+                [node, script, style, seed, 'b6e3f4', str(size)],
                 capture_output=True, text=True, timeout=15,
-                cwd=_AVATAR_DIR,
+                **host_programs.run_kwargs(),
+                **procflags.hidden(),
             )
             if result.returncode != 0:
                 logger.warning("DiceBear Node error: %s", result.stderr.strip())
@@ -188,12 +200,18 @@ class AvatarGenerator:
     # ── Checks ─────────────────────────────────────────────────────────────────
 
     def _check_node(self) -> bool:
-        """Lazy-check if Node.js is available."""
+        """Lazy-check if the trusted Node.js (full path only) is available."""
         if self._node_ok is None:
             try:
+                node = host_programs.path('node')
+                if not node:
+                    self._node_ok = False
+                    return False
                 r = subprocess.run(
-                    ['node', '--version'],
+                    [node, '--version'],
                     capture_output=True, text=True, timeout=5,
+                    **host_programs.run_kwargs(),
+                    **procflags.hidden(),
                 )
                 self._node_ok = r.returncode == 0
             except Exception:

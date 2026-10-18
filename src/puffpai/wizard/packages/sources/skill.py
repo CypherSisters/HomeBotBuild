@@ -9,15 +9,16 @@ What the plan carries:
 
 * the deterministic registry search over the goal - the matcher, which cites
   the word that matched - plus the ``pack:*`` ids the owner chose in the
-  interview, mapped onto registry rows by ``build_sources.PACK_SOURCE_IDS``;
+  interview, mapped onto downloads by ``build_sources.pack_source_ids`` (a data
+  table);
 * paid and keyed rows **listed and unselectable**: they exist, they cost money
-* or need a key, and this build has nowhere
+  or need a key, and this build has nowhere
   safe to put a key, so they are recorded as ``declared, no key path yet`` and
   gapped rather than half-offered;
-* on an online build only, model suggestions from outside the registry as
-  ``info`` rows labelled "not vetted: check the
-  license yourself", dropped unless their hostname is registrable, never
-  fetchable from here;
+* books from the wider Kiwix library (the dated list that ships with this
+  build, searched offline), each citing the catalog words that matched; the
+  local model may suggest extra search WORDS for that search, never a website,
+  a URL or an id;
 * the **tool needs** this kind of bot implies, as plain catalog ids, for the
   Tools skill to resolve later.
 
@@ -31,6 +32,11 @@ from puffpai.wizard import sources_plan, sources_suggest
 
 #: The words that go on the card, unchanged, every time.
 PLAN_NOTE = "This is a plan, nothing is downloaded yet."
+
+#: When neither BuildBot's list nor the library had anything.
+NOTHING_FOUND = ("Nothing in HomeBot's list or the Kiwix library matched that. "
+                 "After the build you can look again with `puffpai sources search "
+                 "<words>`, or add your own files.")
 
 
 def _interview(ctx) -> dict:
@@ -112,22 +118,34 @@ def _suggest_client(ctx):
     return sources_suggest.default_client(url, model)
 
 
-def _suggestions(ctx, goal: str, online: bool) -> tuple[list[dict], str]:
-    """Unvetted suggestions for *goal*, asking the model at most once.
+def _search_words(ctx, goal: str) -> tuple[list[str], str]:
+    """Extra search words for *goal* from the local model, asked at most once.
 
-    Propose stays side-effect free and stays quiet: no call offline, none
-    without a goal, and none at all when this same goal was already answered -
-    the answer is cached in the applied ``sources`` section, which is the only
-    place it is ever written.
+    Propose stays side-effect free and quiet: no call without a goal, and none
+    when this same goal was already answered - the words are cached in the
+    applied ``sources`` section, the only place they are written. The model
+    runs on this computer, so nothing leaves it.
     """
     goal = str(goal or "").strip()
-    cached = ctx.applied("suggested", default=None)
+    cached = ctx.applied("search_terms", default=None)
     if (goal and isinstance(cached, list)
-            and str(ctx.applied("suggested_for", default="") or "") == goal):
-        return [row for row in cached if isinstance(row, dict)], ""
-    detail = sources_suggest.suggest_detail(
-        goal, online=online, client=_suggest_client(ctx))
-    return detail["rows"], detail["note"]
+            and str(ctx.applied("search_terms_for", default="") or "") == goal):
+        return [str(t) for t in cached], ""
+    detail = sources_suggest.search_terms(goal, client=_suggest_client(ctx))
+    return detail["terms"], detail["note"]
+
+
+def _builder_age(interview: dict):
+    """The builder's age or age band, if the interview recorded one.
+
+    Only changes the ORDER books are listed in (a young builder sees books
+    written for children first). Nothing is hidden because of it.
+    """
+    for key in ("builder_age", "age", "age_band", "builder_age_band"):
+        value = interview.get(key)
+        if value not in (None, ""):
+            return value
+    return None
 
 
 def propose(ctx) -> dict:
@@ -152,11 +170,14 @@ def propose(ctx) -> dict:
         return {"card": _skipped_card(skipped), "plan": _empty_plan(goal, skipped),
                 "items": [], "selected": [], "suggested": [], "tool_needs": []}
 
-    plan = sources_plan.plan_rows(goal, packs)
+    terms, terms_note = _search_words(ctx, goal)
+    plan = sources_plan.plan_rows(goal, packs, terms=terms,
+                                  age=_builder_age(interview))
+    plan["search_terms"] = terms
     items = plan["items"]
     fetchable = [item for item in items if item["selectable"]]
     blocked = [item for item in items if not item["selectable"]]
-    recommended = sources_plan.default_selection(items)
+    recommended = sources_plan.default_selection(items, goal)
     # The propose rule (CONVERTING.md): what was applied is what the card shows
     # as chosen; the registry's default selection stays the recommendation.
     # Otherwise a re-drawn card shows the first proposal again, and an owner who
@@ -165,15 +186,20 @@ def propose(ctx) -> dict:
     known = {item["id"] for item in fetchable}
     selected = ([str(s) for s in applied if str(s) in known]
                 if isinstance(applied, list) else recommended)
-    online = str(posture.get("build_network") or "") == "online"
-    suggested, suggest_note = _suggestions(ctx, goal, online)
+    jobs_decide = not isinstance(applied, list) and _jobs_want_no_books(ctx)
+    if jobs_decide:
+        # The plan is drawn from the owner's jobs and none is about learning, so the
+        # plan offers no book: this record says the same (not "3 book(s)
+        # found, 1 chosen (about 257 MB)" here while the plan says "What it
+        # will know: Nothing here yet").
+        selected = []
     needs = sources_plan.tool_needs(goal, items, selected)
 
     total, all_known = sources_plan.total_bytes(items, selected)
     fields: list[dict[str, Any]] = [
         {"id": "plan_note", "kind": "info", "label": "What this step does",
-         "current": PLAN_NOTE + " Choosing a source records what you want; the "
-                    "next step decides what is fetched now."},
+         "current": PLAN_NOTE + " Ticking a book only notes that you want it; "
+                    "nothing downloads until the next step."},
     ]
     if fetchable:
         fields.append({
@@ -186,14 +212,13 @@ def propose(ctx) -> dict:
                         if i in {item["id"] for item in fetchable[:40]}],
             "proposed": [i for i in recommended
                          if i in {item["id"] for item in fetchable[:40]}],
-            "help": "Sizes and licenses are the registry's own. "
+            "help": "Sizes and licenses come from the library's own list. "
                     + PLAN_NOTE,
         })
     else:
         fields.append({
             "id": "nothing_matched", "kind": "info", "label": "Nothing matched",
-            "current": str(plan.get("message") or
-                           "No vetted source on our list covers that yet."),
+            "current": str(plan.get("message") or NOTHING_FOUND),
         })
 
     for number, item in enumerate(blocked[:6], 1):
@@ -203,40 +228,38 @@ def propose(ctx) -> dict:
             "current": f"{item['why_not']}. It is listed so you know it "
                        f"exists: {item['what_it_is'] or item['source_url']}",
         })
-    # The suggestions block exists only when there is something in it; a build
-    # that asked and got nothing gets one quiet line instead, never an error.
-    for number, item in enumerate(suggested[:sources_suggest.MAX_SUGGESTIONS], 1):
+    from puffpai.catalogs import goal_words
+    looked_for = goal_words.goal_terms(goal, extra=terms)
+    if looked_for:
         fields.append({
-            "id": f"suggested_{number}", "kind": "info",
-            "label": f"{item['label']} - {sources_suggest.UNVETTED_NOTE}",
-            "current": f"{item['host']} - {item['why']} Nothing is fetched from "
-                       f"here: add it yourself if you want it.",
+            "id": "search_words", "kind": "info", "label": "Words I looked for",
+            "current": ", ".join(looked_for)
+                       + (" (some suggested by your bot's own model)" if terms else ""),
         })
-    if suggest_note and not suggested:
-        fields.append({
-            "id": "suggestions_note", "kind": "info",
-            "label": "Sources beyond our list", "current": suggest_note,
-        })
+    elif terms_note:
+        fields.append({"id": "search_words", "kind": "info",
+                       "label": "Words I looked for", "current": terms_note})
     if needs:
         fields.append({
             "id": "tool_needs", "kind": "info",
             "label": "What a bot like this will need to reach for",
-            "current": ", ".join(need["id"] for need in needs[:12]),
+            "current": ", ".join(need["label"] for need in needs[:12]),
             "help": "The next-but-one step says which of these this build "
                     "actually has.",
         })
     for pack in plan.get("unmapped_packs") or ():
         fields.append({
             "id": f"unmapped_{len(fields)}", "kind": "info",
-            "label": f"{pack} has no vetted download",
-            "current": "Put the pack in the knowledge folder yourself and it "
-                       "is indexed from there.",
+            "label": f"{_pack_words(pack)} has no download on HomeBot's list",
+            "current": "Put the file in the knowledge folder yourself and it "
+                       "is learned from there.",
         })
 
     card = {
         "skill": "sources", "section": "sources",
         "title": "What it learns from",
-        "decided": _decided(items, selected, total, all_known),
+        "decided": (NO_LEARN_JOB if jobs_decide
+                    else _decided(items, selected, total, all_known)),
         "status": "gap" if blocked else "ready",
         "consequential": total > sources_plan.HEAVY_BYTES,
         "consequential_reasons": (["heavy_bytes"]
@@ -247,16 +270,39 @@ def propose(ctx) -> dict:
         "gaps": [_keyed_gap(item) for item in blocked[:6]],
     }
     return {"card": card, "plan": plan, "items": items, "selected": selected,
-            "suggested": suggested, "tool_needs": needs, "blocked": blocked}
+            "search_terms": terms, "tool_needs": needs, "blocked": blocked}
+
+
+#: The record when the owner's jobs decide and none of them is about learning.
+NO_LEARN_JOB = "No book is added: none of your jobs is about learning something."
+
+
+def _jobs_want_no_books(ctx) -> bool:
+    """Is the plan drawn from the owner's jobs, with none of the ticked ones a
+    "learn about" job (the plan then offers no book, proposal.skipped_with_needs)?"""
+    try:
+        from puffpai.wizard import proposal
+        if not proposal.needs_active(ctx.shared):
+            return False
+        jobs = [j for j in (proposal.needs_of(ctx.shared) or {}).get("jobs") or ()
+                if isinstance(j, dict) and j.get("ticked")]
+    except Exception:  # noqa: BLE001 - unknown: the record stays as it was
+        return False
+    return bool(jobs) and not any(j.get("learn") is True for j in jobs)
+
+
+def _pack_words(pack: str) -> str:
+    """``pack:stackexchange_science`` -> ``Stackexchange Science``. No raw ids on a card."""
+    return str(pack).split(":", 1)[-1].replace("_", " ").title()
 
 
 def _decided(items: list[dict], selected: list[str], total: int,
              all_known: bool) -> str:
     if not items:
-        return "Nothing vetted matched this goal. " + PLAN_NOTE
+        return "Nothing matched this goal. " + PLAN_NOTE
     size = (sources_plan.size_label(total / sources_plan.MB) if all_known
             else "size not known for all of them")
-    return (f"{len(items)} vetted source(s) found, {len(selected)} in the plan "
+    return (f"{len(items)} book(s) found, {len(selected)} chosen "
             f"({size}). " + PLAN_NOTE)
 
 
@@ -353,10 +399,10 @@ def apply(ctx, answers: dict) -> dict:
         "unavailable": [{"id": item["id"], "label": item["label"],
                          "status": sources_plan.NO_KEY_PATH,
                          "why": item["why_not"]} for item in blocked],
-        "suggested": list(proposal.get("suggested") or []),
-        # The cache key, and the whole cache: the goal these suggestions were
-        # for. A re-drawn card for the same goal asks the model nothing.
-        "suggested_for": str(plan.get("goal") or "").strip(),
+        "search_terms": list(proposal.get("search_terms") or []),
+        # The cache key, and the whole cache: the goal these words were for. A
+        # re-drawn card for the same goal asks the model nothing.
+        "search_terms_for": str(plan.get("goal") or "").strip(),
         "tool_needs": list(proposal.get("tool_needs") or []),
         "bytes": total,
         "bytes_known": all_known,
@@ -374,7 +420,7 @@ def apply(ctx, answers: dict) -> dict:
 def verify(ctx) -> dict:
     """Observe the registry on disk: does every planned id still resolve?
 
-    Spec C.4's verify, and it reads the shipped file rather than the proposal:
+    It reads the shipped file rather than the proposal:
     a plan naming a row that is not in this build's registry cannot be carried
     out, and saying so here is cheaper than a failed download later.
     """
@@ -398,6 +444,8 @@ def verify(ctx) -> dict:
         for source_id in selected:
             entry = source_registry.get_source(source_id, registry)
             if entry is None:
+                if _library_book_ok(source_id):
+                    continue
                 missing.append(source_id)
             elif not entry.get("license"):
                 unlicensed.append(source_id)
@@ -410,15 +458,25 @@ def verify(ctx) -> dict:
                                  f"this build's registry"),
             "gap": {
                 "skill": "sources",
-                "what": "A source in the plan is not in this build's vetted "
-                        "registry.",
-                "why": note or (f"{bad} does not resolve to a licensed row in "
-                                f"config/source_registry.json."),
+                "what": "A book in the plan is not on HomeBot's list or in the "
+                        "Kiwix library.",
+                "why": note or (f"{bad} is not a downloadable book with a known "
+                                f"license."),
                 "impact": "Nothing will be downloaded for it, and your bot will "
                           "not know that subject.",
                 "fix": {"kind": "command", "id": "setup.rerun", "args": {}},
             },
         }
     return {"status": "pass",
-            "evidence": f"{len(selected)} planned source(s) resolve in the "
-                        f"registry, each with a license"}
+            "evidence": f"{len(selected)} planned book(s) are listed, each with "
+                        f"a license"}
+
+
+def _library_book_ok(source_id: str) -> bool:
+    """A Kiwix book id the saved library list has, with a known license."""
+    from puffpai.catalogs import kiwix_opds, knowledge_resolver
+
+    if kiwix_opds.split_book_id(source_id) is None:
+        return False
+    cand = knowledge_resolver.candidate_by_id(source_id)
+    return bool(cand and cand.get("fetchable"))

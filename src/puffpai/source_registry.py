@@ -9,10 +9,12 @@ that did not come out of here.
 
 Four rules hold this module honest:
 
-* **The registry is the allowlist.** There is no discovery, no crawl, no
-  "similar sources" step. If a source is not in the shipped file, this build
-  cannot reach it, and the only way to change that is to edit a first-party
-  config that a human reviewed.
+* **The registry is the allowlist.** There is no crawl and no "similar
+  sources" step here. A source is fetchable only if it is a row in the shipped
+  file or in this build's owner overlay (``source_registry.local.json`` in the
+  state dir). The overlay holds only Kiwix books the owner said yes to - found
+  through :mod:`puffpai.catalogs` - and a row there can name a book, never an
+  address, so it adds books without widening where this build may connect.
 * **License or silence.** A row without a ``license`` is dropped at load and the
   drop is recorded as a config-health defect naming the id. An unlicensed source
   is never proposed, never counted, and never fetchable - the filter lives below
@@ -68,9 +70,10 @@ _FALLBACK_REGISTRY: dict[str, Any] = {
             "license": "CC-BY-SA-4.0",
             "license_url": "https://en.wikipedia.org/wiki/Wikipedia:Copyrights",
             "commercial_use": True,
-            "source_url": "https://download.kiwix.org/zim/wikipedia_en_all_nopic.zim",
-            "filename": "wikipedia_en_all_nopic.zim",
+            "kiwix_book": "wikipedia_en_all",
+            "kiwix_flavour": "nopic",
             "size_mb": 50250,
+            "pin": "kiwix_meta4",
             "what_it_is": "All of English Wikipedia without images.",
         },
     ],
@@ -102,8 +105,8 @@ def validate_registry(data: Any) -> Optional[str]:
     for index, entry in enumerate(sources):
         if not isinstance(entry, dict) or not entry.get("id"):
             return f"Source {index} has no id."
-        if not entry.get("source_url"):
-            return f"Source '{entry.get('id')}' has no source_url."
+        if not entry.get("source_url") and not entry.get("kiwix_book"):
+            return f"Source '{entry.get('id')}' has no source_url or kiwix_book."
     return None
 
 
@@ -121,14 +124,37 @@ def load_registry(path: Optional[str] = None) -> dict[str, Any]:
             data = json.load(fh)
     except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
         config_health.note_load_failure("source_registry", target, exc, reduced=True)
-        return _FALLBACK_REGISTRY
+        return _with_overlay(_FALLBACK_REGISTRY, path)
     problem = validate_registry(data)
     if problem is None:
-        return data  # type: ignore[no-any-return]
+        return _with_overlay(data, path)
     config_health.record(
         "source_registry", target, config_health.INVALID, problem, reduced=True,
     )
-    return _FALLBACK_REGISTRY
+    return _with_overlay(_FALLBACK_REGISTRY, path)
+
+
+def _with_overlay(registry: dict[str, Any], path: Optional[str]) -> dict[str, Any]:
+    """The shipped rows plus this build's owner-added rows.
+
+    Only for the default registry: a caller that names a registry file (a test,
+    a fixture) gets exactly that file. An owner row never replaces a shipped
+    row with the same id.
+    """
+    if path is not None:
+        return registry
+    try:
+        extra = load_overlay()
+    except Exception:  # noqa: BLE001 - an unreadable overlay adds nothing
+        extra = []
+    if not extra:
+        return registry
+    shipped = {str(r.get("id")) for r in (registry.get("sources") or [])
+               if isinstance(r, dict)}
+    merged = dict(registry)
+    merged["sources"] = list(registry.get("sources") or []) + [
+        r for r in extra if str(r.get("id")) not in shipped]
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +182,8 @@ def entry_problem(entry: Any) -> Optional[str]:
         return "The entry has no license, so it is not offerable."
     if not str(entry.get("license_url") or "").strip():
         return "The entry has no license_url, so its license cannot be checked."
+    if entry.get("kiwix_book") is not None:
+        return _kiwix_row_problem(entry)
     url = str(entry.get("source_url") or "").strip()
     if not url:
         return "The entry has no source_url."
@@ -166,6 +194,143 @@ def entry_problem(entry: Any) -> Optional[str]:
     if str(entry.get("kind") or "") not in KINDS:
         return "The entry has no recognised kind."
     return None
+
+
+def _kiwix_row_problem(entry: dict[str, Any]) -> Optional[str]:
+    """A row that names a Kiwix book instead of an address.
+
+    Such a row reaches exactly two hosts of its own - the Kiwix library's
+    listing and download hosts - plus the mirrors that the book's own ``.meta4``
+    names at download time, and its bytes are checked against the SHA-256 in
+    that ``.meta4``. It may not also carry an address, because then there would
+    be two answers to "where does this come from".
+    """
+    from puffpai.catalogs import kiwix_opds
+
+    if str(entry.get("kind") or "") != "zim":
+        return "A Kiwix book row must be kind zim."
+    if entry.get("source_url"):
+        return "A Kiwix book row names the book, not an address."
+    book = str(entry.get("kiwix_book") or "")
+    flavour = str(entry.get("kiwix_flavour") or "")
+    if not kiwix_opds.BOOK_NAME_RE.match(book):
+        return "The entry's kiwix_book is not a book name the library uses."
+    if not kiwix_opds.FLAVOUR_RE.match(flavour):
+        return "The entry's kiwix_flavour is not one the library uses."
+    return None
+
+
+# ---------------------------------------------------------------------------
+# The owner's own additions - one overlay file per build, in the state dir
+# ---------------------------------------------------------------------------
+
+OVERLAY_SCHEMA = "source_registry_overlay/v1"
+OVERLAY_FILENAME = "source_registry.local.json"
+PROVENANCE_OWNER_ADDED = "owner_added"
+MAX_OVERLAY_ROWS = 200
+
+
+def overlay_path() -> str:
+    """Where this build keeps the sources its owner added after saying yes."""
+    from puffpai.config import get_state_dir
+    return os.path.join(get_state_dir(), OVERLAY_FILENAME)
+
+
+def overlay_row_problem(row: Any) -> Optional[str]:
+    """Why an overlay row is not usable, or None.
+
+    Stricter than a shipped row on purpose. An owner-added row may only name a
+    Kiwix book - never an address - so the overlay file can add books, but it
+    can never widen where this build may connect. Its id must be the book id the
+    catalog gives, so it cannot shadow a shipped row either.
+    """
+    from puffpai.catalogs import kiwix_opds
+
+    if not isinstance(row, dict):
+        return "The row is not an object."
+    if row.get("source_url") or row.get("redirect_hosts") or row.get("sha256"):
+        return "An owner-added row may only name a Kiwix book."
+    parsed = kiwix_opds.split_book_id(row.get("id"))
+    if parsed is None:
+        return "An owner-added row's id must be a Kiwix book id."
+    if (str(row.get("kiwix_book") or ""), str(row.get("kiwix_flavour") or "")) != parsed:
+        return "The row's id and its book do not agree."
+    if str(row.get("provenance") or "") != PROVENANCE_OWNER_ADDED:
+        return "The row does not say the owner added it."
+    return entry_problem(row)
+
+
+def load_overlay(path: Optional[str] = None) -> list[dict[str, Any]]:
+    """Owner-added rows that pass :func:`overlay_row_problem`. Never raises."""
+    target = path or overlay_path()
+    try:
+        with open(target, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return []
+    except (json.JSONDecodeError, OSError) as exc:
+        config_health.note_load_failure("source_registry_overlay", target, exc,
+                                        reduced=True)
+        return []
+    rows = data.get("sources") if isinstance(data, dict) else None
+    out: list[dict[str, Any]] = []
+    for row in (rows or [])[:MAX_OVERLAY_ROWS]:
+        if overlay_row_problem(row) is None:
+            out.append(dict(row))
+    return out
+
+
+def row_from_candidate(candidate: dict[str, Any], *, added_via: str) -> dict[str, Any]:
+    """The overlay row for one fetchable Kiwix candidate. No network, no write."""
+    from puffpai.catalogs import kiwix_opds
+
+    parsed = kiwix_opds.split_book_id(candidate.get("id"))
+    if parsed is None or not candidate.get("fetchable"):
+        raise ValueError("Only a downloadable Kiwix book can be added.")
+    size = candidate.get("size_bytes")
+    return {
+        "id": str(candidate["id"]),
+        "label": str(candidate.get("name") or candidate["id"])[:80],
+        "kind": "zim",
+        "domain": "added",
+        "tags": [str(t) for t in (candidate.get("match_terms") or [])][:12],
+        "license": str(candidate.get("license") or ""),
+        "license_url": str(candidate.get("license_url") or ""),
+        "commercial_use": candidate.get("commercial_ok") is True,
+        "kiwix_book": parsed[0],
+        "kiwix_flavour": parsed[1],
+        "meta4_url": str(candidate.get("meta4_url") or ""),
+        "size_mb": round(int(size) / (1024 * 1024), 1) if isinstance(size, int) else None,
+        "what_it_is": str(candidate.get("what_it_is") or "")[:240],
+        "pin": "kiwix_meta4",
+        "provenance": PROVENANCE_OWNER_ADDED,
+        "added_via": str(added_via or "owner")[:20],
+    }
+
+
+def add_owner_row(row: dict[str, Any], path: Optional[str] = None) -> dict[str, Any]:
+    """Write one owner-added row into the overlay (replacing the same id).
+
+    Call this only after the owner has said yes. Raises ``ValueError`` for a
+    row the overlay would refuse to load, so nothing unusable is ever written.
+    """
+    import datetime
+
+    problem = overlay_row_problem(row)
+    if problem is not None:
+        raise ValueError(problem)
+    target = path or overlay_path()
+    rows = [r for r in load_overlay(target) if r.get("id") != row["id"]]
+    stamped = dict(row)
+    stamped["added_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    rows.append(stamped)
+    os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+    tmp = target + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"schema": OVERLAY_SCHEMA, "sources": rows[-MAX_OVERLAY_ROWS:]},
+                  fh, indent=2, ensure_ascii=True)
+    os.replace(tmp, target)
+    return stamped
 
 
 def offerable_sources(
@@ -261,8 +426,14 @@ def _tokens(text: str) -> set[str]:
 
 
 def _content_tokens(text: str) -> set[str]:
-    """Goal tokens that carry meaning: no stopwords, nothing under three characters."""
-    return {w for w in _tokens(text) if w not in _STOPWORDS and len(w) >= 3}
+    """Goal tokens that carry meaning: no filler, nothing under three characters.
+
+    Camel case and glued endings are split first, so "AstronomyBot" and
+    "astronomybot" both carry "astronomy" and a glued bot name still matches.
+    """
+    from puffpai.catalogs import goal_words
+    return {w for w in goal_words.word_forms(text)
+            if w not in _STOPWORDS and len(w) >= 3}
 
 
 def _tag_hit(tag: str, goal_tokens: set[str]) -> bool:
@@ -328,6 +499,14 @@ def _goal_text(goal_or_tags: Union[str, Sequence[str], None]) -> str:
     return ""
 
 
+def where_from(entry: dict[str, Any]) -> str:
+    """Plain words for where a row's bytes come from."""
+    if entry.get("kiwix_book"):
+        return ("the Kiwix library (download.kiwix.org and the mirrors it lists; "
+                "checked against the library's own fingerprint)")
+    return str(entry.get("source_url") or "")
+
+
 def _candidate(entry: dict[str, Any], score: int, evidence: list[dict[str, Any]]) -> dict[str, Any]:
     """One proposal, carrying the three things that must be shown before a fetch."""
     terms = [str(e["term"]) for e in evidence]
@@ -343,6 +522,8 @@ def _candidate(entry: dict[str, Any], score: int, evidence: list[dict[str, Any]]
         "commercial_use": bool(entry.get("commercial_use", False)),
         "size_mb": entry.get("size_mb"),
         "source_url": entry.get("source_url"),
+        "kiwix_book": entry.get("kiwix_book"),
+        "where_from": where_from(entry),
         "score": score,
         "evidence": evidence,
         "matched_terms": terms,
@@ -474,7 +655,7 @@ def candidate_summary_lines(result: Union[dict[str, Any], list[dict[str, Any]]])
         )
         if cand.get("what_it_is"):
             lines.append(f"      {cand.get('what_it_is')}")
-        lines.append(f"      From: {cand.get('source_url')}")
+        lines.append(f"      From: {cand.get('where_from') or cand.get('source_url')}")
         lines.append(f"      {cand.get('reason')}")
     if note:
         lines.append(str(note))
@@ -492,6 +673,12 @@ __all__ = [
     "get_source",
     "source_for_url",
     "is_registered_url",
+    "overlay_path",
+    "overlay_row_problem",
+    "load_overlay",
+    "row_from_candidate",
+    "add_owner_row",
+    "where_from",
     "search",
     "search_summary",
     "candidate_summary_lines",

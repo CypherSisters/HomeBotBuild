@@ -256,9 +256,13 @@ def box(tmp_path, monkeypatch):
                       force=force)
 
     def ledger_lines():
+        # The decision ledger's lines. The outside-traffic log ("What leaves
+        # your computer") writes its own line per request to the same
+        # overridden file; those carry "service", not "door".
         if not ledger.exists():
             return []
-        return [json.loads(x) for x in ledger.read_text().splitlines() if x]
+        lines = [json.loads(x) for x in ledger.read_text().splitlines() if x]
+        return [x for x in lines if "door" in x]
 
     b.set_switch, b.run, b.ledger_lines = set_switch, run, ledger_lines
     b.live_bytes = (root / "current" / "META.json").read_bytes()
@@ -841,12 +845,12 @@ def test_maps_refresh_has_no_network_path_but_the_bridge():
     "from puffpai.security import netaddr\n",
     "from puffpai.security import egress_doors\negress_doors.egress_get('d', 'u')\n",
     "from puffpai.security import egress_doors\negress_doors._pinned_session(d)\n",
-    # Inline shell or Python through an allowed program (re-verify, 10-11).
+    # Inline shell or Python through an allowed program.
     "import subprocess\nsubprocess.run(['bash', '-c', 'curl https://x'])\n",
     "import subprocess\nsubprocess.run(['bash', '-c', 'exec 3<>/dev/tcp/h/443'])\n",
     "import subprocess, sys\nsubprocess.run([sys.executable, '-c', 'import urllib.request'])\n",
     "run_script(['bash', '-c', 'wget -q x'], env={}, timeout=1, log_fh=None)\n",
-    # Reflection and aliasing around egress_doors (re-verify, 10-11).
+    # Reflection and aliasing around egress_doors.
     "from puffpai.security import egress_doors\ngetattr(egress_doors, '_pinned_session')(d)\n",
     "from puffpai.security import egress_doors\nf = getattr(egress_doors, name)\n",
     "from puffpai.security import egress_doors\nm = egress_doors\nm._pinned_session(d)\n",

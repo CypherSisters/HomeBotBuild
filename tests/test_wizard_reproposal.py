@@ -40,7 +40,8 @@ def scratch(tmp_path, monkeypatch):
     cfg = get_config(_force_reload=True)
     monkeypatch.setattr(setup_ops, "list_models", lambda *a, **k: [])
     monkeypatch.setattr(setup_ops, "ollama_survey", lambda *a, **k: [])
-    monkeypatch.setattr(sources_suggest, "suggest", lambda *a, **k: [])
+    monkeypatch.setattr(sources_suggest, "search_terms",
+                        lambda *a, **k: {"terms": [], "note": ""})
     yield cfg
     get_config(_force_reload=True)
 
@@ -61,23 +62,18 @@ def _field(card: dict, field_id: str) -> dict:
 # -- the propose rule, package by package -------------------------------------
 
 def test_purpose_shows_what_was_applied_and_names_the_place_after_it(scratch):
-    applied = service.apply_skill("purpose:identity",
-                                  {"name": NAME, "goal": GOAL})
-    assert applied["outcome"] == "done"
-    # The card that comes back from the apply, and the card list after it, say
-    # the same thing -- and it is what was just answered.
-    for card in (applied["card"], _card("purpose:identity")):
-        assert _field(card, "name")["current"] == NAME
-        assert _field(card, "goal")["current"] == GOAL
-        assert "no goal given yet" not in card["decided"]
-        assert NAME in card["decided"]
-    # And the id on the second card is derived from them.
-    place = _card("purpose:place")
-    assert _field(place, "id")["current"] == "stargazer"
+    # HomeBot asks no goal and no name: its card list carries no purpose
+    # cards to re-propose, whatever was applied before.
+    service.apply_skill("purpose:goal", {"goal": GOAL})
+    service.apply_skill("purpose:identity", {"name": NAME})
+    order = service.propose_cards()["order"]
+    for card_id in ("purpose:goal", "purpose:identity", "purpose:place"):
+        assert card_id not in order, order
 
 
 def test_sources_shows_the_plan_the_owner_settled(scratch):
-    service.apply_skill("purpose:identity", {"name": NAME, "goal": GOAL})
+    service.apply_skill("purpose:goal", {"goal": GOAL})
+    service.apply_skill("purpose:identity", {"name": NAME})
     service.apply_skill("secure:posture", {"build_network": "online",
                                            "run_egress": "island"})
     first = _card("sources")
@@ -93,6 +89,8 @@ def test_sources_shows_the_plan_the_owner_settled(scratch):
 
 
 def test_crew_shows_the_ceiling_the_owner_chose(scratch):
+    """The card asks nothing on its own, but a figure the owner lowered is
+    shown back to them."""
     service.apply_skill("discover", {})
     service.apply_skill("crew", {"specialists": 1})
     card = _card("crew")
@@ -100,14 +98,25 @@ def test_crew_shows_the_ceiling_the_owner_chose(scratch):
     assert "up to 1 specialist" in card["decided"]
 
 
+def test_crew_asks_nothing_and_counts_its_helpers(scratch):
+    """Applied with no answer, the card keeps the fitted figure and says how
+    many helpers work inside; the specialists figure is the only field that
+    takes an answer."""
+    service.apply_skill("discover", {})
+    applied = service.apply_skill("crew", {})
+    assert applied["outcome"] == "done"
+    card = _card("crew")
+    assert {f["kind"] for f in card["fields"]
+            if f["id"] != "specialists"} == {"info"}
+    assert "as you chose" not in card["decided"]
+    assert "helpers works inside" in card["decided"]
+
+
 def test_surfaces_shows_the_allowlist_the_owner_edited(scratch):
-    service.apply_skill("purpose:identity", {"name": NAME, "goal": GOAL})
-    first = _card("surfaces")
-    options = [opt["value"] for opt in _field(first, "allowlist")["options"]]
-    keep = options[:1]
-    service.apply_skill("surfaces", {"allowlist": keep})
-    again = _card("surfaces")
-    assert _field(again, "allowlist")["current"] == keep
+    # HomeBot turns every page on, so there is no page-list card to edit.
+    service.apply_skill("purpose:goal", {"goal": GOAL})
+    order = service.propose_cards()["order"]
+    assert "surfaces" not in order, order
 
 
 def test_discover_shows_the_address_that_was_applied(scratch):
@@ -181,7 +190,8 @@ def test_the_tools_card_offers_the_hub_over_http_and_then_asks_for_the_token(
 def test_run_rest_writes_the_manifest_and_proves_the_build(scratch):
     from puffpai import build_context, prove
 
-    service.apply_skill("purpose:identity", {"name": NAME, "goal": GOAL})
+    service.apply_skill("purpose:goal", {"goal": GOAL})
+    service.apply_skill("purpose:identity", {"name": NAME})
     result = service.run_rest([])
     assert result["refusals"] == []
 
@@ -217,7 +227,8 @@ def test_run_rest_does_not_call_a_build_finished_while_the_vault_waits(scratch):
 
 
 def test_run_rest_prints_nothing_and_shows_no_face(scratch, capsys):
-    service.apply_skill("purpose:identity", {"name": NAME, "goal": GOAL})
+    service.apply_skill("purpose:goal", {"goal": GOAL})
+    service.apply_skill("purpose:identity", {"name": NAME})
     capsys.readouterr()
     service.run_rest([])
     out = capsys.readouterr()
@@ -225,4 +236,4 @@ def test_run_rest_prints_nothing_and_shows_no_face(scratch, capsys):
     # No face means no vault, and the card says where the PIN can be set.
     vault = _card("secure:vault")
     assert vault["status"] == "needs_you"
-    assert "step-by-step setup" in vault["decided"]
+    assert "next screen" in vault["decided"]

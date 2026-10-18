@@ -51,6 +51,25 @@ def _data_dir():
     return _data_dir_cache
 
 
+#: The shipped default stores directory, under the name the build engine's
+#: modules read (``security.owner_folders`` lists it as owner data).
+_DATA_DIR = _DEFAULT_DATA_DIR
+
+
+def _state_data_dir() -> str:
+    """The stores directory in use (see :func:`_data_dir`)."""
+    return _data_dir()
+
+
+def data_dir_for(app_id: str) -> str:
+    """Which stores directory one app's document lives in.
+
+    Every app, shipped or added by the owner, keeps its document in the one
+    stores directory :func:`_data_dir` resolves, so a household's data is in
+    one place."""
+    return _data_dir()
+
+
 def _grocery_vendor():
     """The household's grocery vendor as ``(store_name, search_url_template)``.
 
@@ -261,7 +280,9 @@ class AppData:
         """
         try:
             from puffpai import app_registry
-            manifests = app_registry.load_manifests()
+            # Off first apps too: the data layer keeps every app's document
+            # where it is (puffpai.first_apps).
+            manifests = app_registry.load_manifests(include_off=True)
         except Exception as exc:  # pragma: no cover - defensive
             print(f"[AppData] app manifests unreadable, using built-in apps: {exc}")
             return

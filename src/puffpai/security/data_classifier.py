@@ -5,220 +5,409 @@ Automatically classifies data into security zones.
 Given a file path, determines which zone it belongs to.
 Given data content, detects PII and routes to the Vault zone.
 Critical for the personal knowledge pipeline.
+
+Ingestion and chat use this module to decide where a piece of content belongs:
+content that carries personally identifiable information (PII) is routed to the
+encrypted **vault** (Zone 1); everything else goes to the general
+**intelligence** zone (Zone 2). Chat also uses :meth:`DataClassifier.redact_pii`
+so that saved chat history never keeps the raw value.
+
+The detectors cover validated SSNs, Luhn-checked card numbers, street
+addresses, dates of birth, labeled names and health disclosures, plus school
+names, "my name is ..." full names, exact GPS coordinates, passwords typed as
+"password is ...", vehicle identification numbers, licence plates, passport and
+driver's licence numbers, bank account numbers and the last four digits of a
+card or account. Every detector is written for precision first; each one lists
+what it deliberately does NOT catch, because a detector that fires on ordinary
+talk breaks chat, and one that claims more than it catches is a lie.
+
+Also covered: international phone numbers written with a leading
+"+" ("+44 20 7946 0958"), and national ones with a leading 0 when a phone word
+is near; "I'm / I am <First Last>" introductions and the common "my name is"
+forms in Spanish, French, German, Italian and Portuguese; a street address
+followed by a direction ("NW") and the city, state and ZIP; a city with its
+state and ZIP ("Columbus, OH 43215"); a UK or Canadian postcode after a town
+or a postcode word; and a ZIP typed after "zip code".
+
+Known false-negative classes (declared, not hidden): first names alone,
+free-text family relations without a cue, city or town names alone, ages alone
+("I'm 10"), a licence plate or id number typed with no word naming it, a
+national phone number with no "+" and no phone word, a ZIP alone with no word
+naming it, and most other things in a language other than English.
+
+Public interface (stable; callers depend on it):
+
+* :class:`DataZone` (from :mod:`puffpai.security.zones`).
+* :class:`PIIDetection` - result of a scan (``has_pii``, ``pii_types``,
+  ``severity``, ``summary()``, ``items()``).
+* :class:`DataClassifier` - ``classify_file(path)``, ``scan_for_pii(text)``,
+  ``scan_structured_document(app, doc)``, ``redact_pii(text)``,
+  ``classify_content(text)``, ``should_encrypt(path)`` and ``route(text)``.
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 from .zones import DataZone, ZONE_CLASSIFICATIONS, get_zone_for_file
 
+# ── email / phone ───────────────────────────────────────────────────────────
 
 _EMAIL_PATTERN = re.compile(
-    r'\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b'
+    r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"
 )
-_PHONE_PATTERN = re.compile(
-    r'(?<!\d)'
-    r'(?:\+?1?[\s\-.]?\(?\d{3}\)?[\s\-.]?\d{3}[\s\-.]?\d{4}'
-    r'|\(\d{3}\)\s*\d{3}[\-.]?\d{4})'
-    r'(?!\d)'
+# A phone number WITH separators or brackets ("555-867-5309", "(415) 555-0132",
+# "+1 415 555 0132", "555-0132" is too short and is not matched).
+_PHONE_SEPARATED = re.compile(
+    r"(?<![\d\-/.])"
+    r"(?:\+?\d{1,3}[\s.\-])?"
+    r"(?:\(\d{3}\)\s*|\d{3}[\s.\-])"
+    r"\d{3}[\s.\-]\d{4}"
+    r"(?![\d\-/])(?!\.\d)"
 )
-# SSN candidate: XXX-XX-XXXX or XXX XX XXXX with a *consistent* separator
-# (backref \2 forces both separators to match). Bare 9-digit runs are
-# intentionally NOT matched — in reference data (phone numbers, IDs, catalog
-# codes) they are indistinguishable from an SSN and drove the bulk of the
-# false positives. The lookaround rejects candidates that sit inside a longer
-# digit / dash / dot / slash run: ZIP+4 like "96813-3213" (which a naive regex
-# mis-parses as 968-13-3213), decimals like "121.775", and frequency lists.
-#
-# The dot must only disqualify a candidate when it is *part of a number*,
-# never when it is sentence punctuation. Spelling the dot as a bare member of
-# the character class would make "my ssn is 123-45-6789.", the single most
-# common way a human writes it, invisible to the detector, while
-# "123-45-6789, ok" is caught. The dot is therefore split
-# out into its own lookaround that also requires an adjacent digit:
-#   trailing  (?!\.\d)  rejects "219-09-9999.5" but accepts ".", "!", "?",
-#                       ")", ",", newline and end-of-string;
-#   leading   (?<!\d\.) rejects "121.775-12-3456" but accepts a bare leading
-#                       dot with no digit in front of it.
-# Digits, dashes and slashes stay unconditionally disqualifying on both sides,
-# so ZIP+4, "123-45-67890" and delimited runs are always rejected.
-# Group 1 = area, group 3 = group, group 4 = serial; validated by _valid_ssn.
-_SSN_CANDIDATE = re.compile(
-    r'(?<![\d\-/])(?<!\d\.)'
-    r'(\d{3})([-\s])(\d{2})\2(\d{4})'
-    r'(?![\d\-/])(?!\.\d)'
+# A bare run of 10 or 11 digits ("8005551234"). On its own this is exactly as
+# likely to be a serial number, an order id or a model number as a phone, so
+# it only counts when a phone word sits just in front of it (see _PHONE_CUE).
+_PHONE_BARE = re.compile(r"(?<![\d\-/.])\+?1?\d{10}(?![\d\-/])(?!\.\d)")
+# An international number: "+" and a country code, then groups of digits
+# separated by spaces, dots, dashes or brackets ("+44 20 7946 0958",
+# "+33 1 42 68 53 00", "+81 3-1234-5678", "+49 (0)30 1234567"). The leading
+# "+" is the cue: it is how a phone number is written, not a serial. The total
+# must be 8 to 15 digits (the international numbering limit).
+_PHONE_INTL = re.compile(
+    r"(?<![\w+])\+\d{1,3}(?:[\s.\-]?\(?\d{1,5}\)?){2,6}(?![\d\-/])"
 )
-# ── SSN spoken aloud: a CUED bare 9-digit run ──────────────────────────────
-#
-# Said aloud, "My Social Security number is 123456789." reaches the brain
-# with no dashes: Whisper emits nine contiguous digits, _SSN_CANDIDATE (which
-# REQUIRES a separator) does not match, and without this pattern the
-# scrub-and-vault path never runs and the raw turn goes to the model. Every
-# voice disclosure of an SSN would be invisible to the detector.
-#
-# The comment at the top of _SSN_CANDIDATE still holds: an UNCUED
-# 9-digit run is indistinguishable from a routing number, an order id or a
-# catalog code, and matching it is the main source of false positives. So
-# this pattern buys back exactly the spoken case and nothing else, by
-# requiring three things at once:
-#   1. the digit run is isolated — same lookarounds as the dashed form, so a
-#      run inside a longer digit/dash/slash sequence or a decimal is rejected:
-#      leading  (?<![\d\-/.]) rejects "1234567890", "12-123456789" and the
-#                             fractional part of ".123456789";
-#      trailing (?![\d\-/])(?!\.\d) rejects "1234567890", "123456789-0" and
-#                             "123456789.5" while still accepting a sentence
-#                             that ends in "." (the sentence-dot rule above);
-#   2. an SSN CUE appears in the _SSN_CUE_WINDOW characters immediately
-#      BEFORE the run (see _SSN_CUE_RE). Before only — a cue that follows the
-#      number does not vouch for it. That is a deliberate simplification: it
-#      keeps the rule one-directional and easy to reason about, and "123456789
-#      is my ssn" is not how the disclosure is usually phrased;
-#   3. _valid_ssn passes, exactly as for the dashed form (area != 000/666/9xx,
-#      group != 00, serial != 0000).
-# Groups are numbered to MATCH the dashed pattern's consumer contract:
-# group 1 = area, group 3 = group, group 4 = serial. Group 2 is an empty
-# non-capturing placeholder standing in for the dashed form's separator
-# backreference, so scan_for_pii can validate both patterns with one call.
-_SSN_BARE_CANDIDATE = re.compile(
-    r'(?<![\d\-/.])'
-    r'(\d{3})()(\d{2})(\d{4})'
-    r'(?![\d\-/])(?!\.\d)'
+# A national number with a trunk 0 and separators ("020 7946 0958",
+# "07700 900123", "030 12345678"): too close to other digit runs to take on
+# its shape alone, so a phone word must be near (see _PHONE_CUE).
+_PHONE_TRUNK = re.compile(
+    r"(?<![\d\-/.+])0\d{2,4}[\s.\-]\d{3,4}(?:[\s.\-]?\d{3,4})?(?![\d\-/])"
 )
-#: The cue that makes a bare 9-digit run an SSN candidate. "social" alone is
-#: included because speech-to-text routinely clips "social security number"
-#: down to "social" ("what's my social"); it is still a much stronger signal
-#: than no cue at all, and _valid_ssn remains the second gate.
-_SSN_CUE_RE = re.compile(
-    r'\b(?:ssn|social security(?: number)?|social)\b',
+_PHONE_CUE = re.compile(
+    r"\b(?:phone|cell|mobile|call|text|txt|tel|telephone|number|num|reach|"
+    r"contact|dial)\b",
     re.IGNORECASE,
 )
-#: How far back the cue may sit. Long enough for the observed phrasings
-#: ("My Social Security number is ", "SSN: "), short enough that a cue in an
-#: earlier clause cannot vouch for an unrelated number later in the line.
+# A device / order word in front of ANY digit run vetoes the phone reading,
+# whether or not it has separators: "serial 800-555-1234" is a serial.
+_NOT_A_PHONE_CUE = re.compile(
+    r"\b(?:serial|s/n|sn|model|part|order|invoice|tracking|sku|isbn|"
+    r"firmware|version|build|ticket|case|account|confirmation|catalog|"
+    r"catalogue|item|product|device\s+id|id)\b",
+    re.IGNORECASE,
+)
+_CUE_WINDOW = 30
+#: How far after a national number a phone word may sit ("(mobile)").
+_AFTER_CUE_WINDOW = 16
+
+# ── SSN (with the SSA validation rules) ──────────────────────────────────────
+
+# XXX-XX-XXXX or XXX XX XXXX with a consistent separator; bare 9-digit runs
+# only when an SSN word is right in front (the spoken form). Candidates inside a
+# longer digit / dash / slash / decimal run are rejected (ZIP+4, decimals).
+_SSN_CANDIDATE = re.compile(
+    r"(?<![\d\-/])(?<!\d\.)"
+    r"(\d{3})([-\s])(\d{2})\2(\d{4})"
+    r"(?![\d\-/])(?!\.\d)"
+)
+_SSN_BARE_CANDIDATE = re.compile(
+    r"(?<![\d\-/.])"
+    r"(\d{3})()(\d{2})(\d{4})"
+    r"(?![\d\-/])(?!\.\d)"
+)
+_SSN_CUE_RE = re.compile(
+    r"\b(?:ssn|social security(?: number)?|social)\b", re.IGNORECASE,
+)
 _SSN_CUE_WINDOW = 60
 
 
-def _cued_bare_ssns(text: str) -> list:
-    """Bare 9-digit runs that are BOTH cued and structurally valid.
+def _valid_ssn(area: str, group: str, serial: str) -> bool:
+    """SSA structural rules: no area 000/666/9xx, no group 00, no serial 0000."""
+    a, g, s = int(area), int(group), int(serial)
+    if a == 0 or a == 666 or a >= 900:
+        return False
+    return g != 0 and s != 0
 
-    The spoken-SSN half of the detector; see the comment on
-    _SSN_BARE_CANDIDATE. Returns the matched digit runs in order of
-    appearance, so the caller's redaction and vaulting order is unchanged.
-    """
+
+def _cued_bare_ssns(text: str) -> list[str]:
     found = []
     for match in _SSN_BARE_CANDIDATE.finditer(text):
         window = text[max(0, match.start() - _SSN_CUE_WINDOW):match.start()]
         if not _SSN_CUE_RE.search(window):
             continue
-        if not _valid_ssn(match.group(1), match.group(3), match.group(4)):
-            continue
-        found.append(match.group(0))
+        if _valid_ssn(match.group(1), match.group(3), match.group(4)):
+            found.append(match.group(0))
     return found
 
+# ── street address ──────────────────────────────────────────────────────────
 
-# Leading (?<![\d.]) guard: the street number must not be preceded by a digit
-# or a decimal point, so a frequency like "162.475 ... St. Thomas" no longer
-# yields the fake address "475 ... St".
+_STREET_SUFFIX = (
+    r"(?:St|Street|Ave|Avenue|Blvd|Boulevard|Dr|Drive|Ln|Lane|Ct|Court|Rd|"
+    r"Road|Way|Pl|Place|Ter|Terrace|Cir|Circle|Pkwy|Parkway|Hwy|Highway)"
+)
+# Number, one to three name words, a street word, then optionally a unit and a
+# "City, ST 12345" tail. Case-insensitive so a child's "42 maple street" is
+# caught; the name words are then checked against _NOT_STREET_WORDS so ordinary
+# talk ("5 miles down the road", "2 dogs on my drive") is not an address.
 _ADDRESS_PATTERN = re.compile(
-    r'(?<![\d.])'
-    r'\b\d{1,5}\s+(?:[NSEW]\.?\s+)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+'
-    r'(?:St\.?|Street|Ave\.?|Avenue|Blvd\.?|Boulevard|Dr\.?|Drive|'
-    r'Ln\.?|Lane|Ct\.?|Court|Rd\.?|Road|Way|Pl\.?|Place)\b',
+    r"(?<![\d.])\b(\d{1,6})\s+"
+    r"((?:[NSEW]\.?\s+)?(?:[A-Za-z][A-Za-z'\-]*\s+){1,3}?)"
+    r"(" + _STREET_SUFFIX + r")\b\.?"
+    r"(?:,?\s+(?:apt|apartment|unit|suite|#)\.?\s*[A-Za-z0-9\-]+)?"
+    r"(?-i:(?:,?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2},?\s+[A-Z]{2}"
+    r"(?:\s+\d{5}(?:-\d{4})?)?))?",
     re.IGNORECASE,
 )
-# Credit-card *candidate* shapes (Visa / MasterCard / Amex grouping). Every
-# candidate is Luhn-validated in scan_for_pii before it counts as a card, so a
-# 13-19 digit number that fails the checksum (random grouped digits) does not
-# fire "critical".
+# A direction after the street word ("... Avenue NW") and then the city.
+_ADDRESS_WITH_DIRECTION = re.compile(
+    r"(?<![\d.])\b(\d{1,6})\s+"
+    r"((?:[NSEW]\.?\s+)?(?:[A-Za-z][A-Za-z'\-]*\s+){1,3}?)"
+    r"(" + _STREET_SUFFIX + r")\b\.?"
+    r"(?-i:\s+(?:N|S|E|W|NE|NW|SE|SW)\b\.?)"
+    r"(?-i:(?:,?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2},?\s+[A-Z]{2}"
+    r"(?:\s+\d{5}(?:-\d{4})?)?))?",
+    re.IGNORECASE,
+)
+_US_STATES = frozenset("""
+AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT
+NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC PR
+""".split())
+# "Columbus, OH 43215", "Columbus OH 43215-1234", "Washington DC 20500".
+_CITY_STATE_ZIP = re.compile(
+    r"(?-i:\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}),?\s+([A-Z]{2})\s+"
+    r"(\d{5}(?:-\d{4})?))\b"
+)
+# UK ("SW1A 1AA", "M1 1AE") and Canadian ("K1A 0B1") postcodes. The shape is
+# distinctive, but part numbers can share it, so a town or a postcode word
+# must sit just in front.
+_POSTCODE = (r"(?:[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}"
+             r"|[A-Z]\d[A-Z]\s?\d[A-Z]\d)")
+_TOWN_POSTCODE = re.compile(
+    r"(?-i:\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}),?\s+(" + _POSTCODE + r"))\b"
+)
+_POSTCODE_CUED = re.compile(
+    r"\b(?:zip(?:\s*code)?|post\s*code|postal\s+code)\s*(?:is|was|=|:)?\s*"
+    r"(\d{5}(?:-\d{4})?|(?-i:" + _POSTCODE + r"))(?![\w-])",
+    re.IGNORECASE,
+)
+_NOT_TOWN_WORDS = frozenset({"The", "A", "An", "My", "Our", "Your", "Model",
+                             "Part", "Order", "Serial", "Item", "Room",
+                             "Flight", "Route", "Apollo", "Version", "Build"})
+
+_NOT_STREET_WORDS = frozenset({
+    "the", "a", "an", "my", "our", "your", "his", "her", "their", "its", "this",
+    "that", "on", "in", "at", "of", "to", "up", "down", "by", "for", "from",
+    "and", "or", "with", "into", "onto", "across", "along", "over", "near",
+    "miles", "mile", "km", "kilometers", "kilometres", "feet", "foot", "ft",
+    "meters", "metres", "yards", "blocks", "block", "minutes", "minute", "mins",
+    "hours", "hour", "seconds", "degrees", "times", "days", "weeks", "years",
+    "is", "was", "are", "were", "be", "no", "any", "every", "some", "each",
+    "other", "same", "long", "whole", "wrong", "right", "first", "last",
+    "cars", "dogs", "cats", "kids", "people", "steps", "lights", "trees",
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+})
+
+# ── card numbers (Luhn-validated) ────────────────────────────────────────────
+
 _CREDIT_CARD_PATTERN = re.compile(
-    r'\b(?:4\d{3}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}'
-    r'|5[1-5]\d{2}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}'
-    r'|3[47]\d{2}[\s\-]?\d{6}[\s\-]?\d{5})\b'
+    r"\b(?:4\d{3}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}"
+    r"|5[1-5]\d{2}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}"
+    r"|3[47]\d{2}[\s\-]?\d{6}[\s\-]?\d{5})\b"
 )
-# Labeled name: the trigger word is anchored with \b so substrings like
-# "pageName=" do not fire "name", and the captured name is matched
-# case-sensitively via (?-i:...) so it must be Title-Case (e.g. "Jane Doe")
-# rather than a run of lowercase or ALL-CAPS words from prose/URLs.
+
+
+def _luhn_ok(digits: str) -> bool:
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        d = ord(ch) - 48
+        if i % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
+
+# ── names ───────────────────────────────────────────────────────────────────
+
+# "name: Jane Doe" / "patient = Jane Doe", and the spoken forms
+# "my name is Leo Marlow", "my mom's name is Jane Doe", "call me Leo Marlow".
+# Two or more Title-case words are required: a first name alone is how the bot
+# greets someone, and redacting it would break ordinary conversation.
+_TITLE_NAME = r"(?-i:([A-Z][a-z]+(?:[ \-][A-Z][a-z]+){1,2}))"
 _LABELED_NAME_PATTERN = re.compile(
-    r'\b(?:name|patient|client|user|owner|contact)\s*[:=]\s*'
-    r'(?-i:([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+))',
+    r"\b(?:name|patient|client|user|owner|contact)\s*[:=]\s*" + _TITLE_NAME,
+    re.IGNORECASE,
+)
+_SPOKEN_NAME_PATTERN = re.compile(
+    r"\b(?:name\s+is|name's|named|call\s+me|i\s+am\s+called|"
+    # The same in a few other languages: Spanish, French, German, Italian,
+    # Portuguese. Still two Title-case words after it.
+    r"mi\s+nombre\s+es|me\s+llamo|je\s+m['’]appelle|mon\s+nom\s+est|"
+    r"ich\s+hei(?:ß|ss)e|mein\s+name\s+ist|mi\s+chiamo|"
+    r"meu\s+nome\s+(?:é|e))\s+" + _TITLE_NAME,
+    re.IGNORECASE,
+)
+# "I'm Jordan Blake", "I am Jordan Blake". Two Title-case words are still
+# required, and the first must not be an everyday word that happens to be
+# capitalised ("I'm Very Happy", "I am New Here").
+_INTRO_NAME_PATTERN = re.compile(
+    r"(?:^|(?<=[\s,.;:!?(\"']))(?:i['’]m|im|i\s+am)\s+" + _TITLE_NAME,
+    re.IGNORECASE,
+)
+_NOT_NAME_WORDS = frozenset({
+    "Very", "So", "Not", "Just", "Really", "Going", "Here", "Back", "From",
+    "In", "At", "The", "A", "An", "Happy", "Sorry", "Good", "Fine", "Okay",
+    "Ok", "Done", "Ready", "Sure", "New", "Still", "Also", "Looking",
+    "Trying", "Feeling", "Thinking", "Working", "Getting", "Using",
+    "Planning", "Always", "Never", "Only", "Glad", "Tired", "Excited",
+    "Interested", "Curious", "Home", "Out", "Off", "On", "Too", "All",
+    "Pretty", "Kind", "Big", "Huge", "Totally", "Almost", "About", "Over",
+    "Your", "Their", "His", "Her", "My", "Our", "Its", "This", "That",
+})
+
+# ── dates of birth ──────────────────────────────────────────────────────────
+
+_MONTH_NAME = (
+    r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|"
+    r"Nov(?:ember)?|Dec(?:ember)?)"
+)
+_DATE_FORMS = (
+    r"(?:"
+    r"\d{4}-\d{1,2}-\d{1,2}"
+    r"|\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}"
+    r"|" + _MONTH_NAME + r"\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?"
+    r"|\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?" + _MONTH_NAME + r"(?:,?\s+\d{4})?"
+    r")"
+)
+# A date only counts when a birth word sits just in front of it, so launch
+# dates and deadlines are never birthdays. A birthday with no year
+# ("my birthday is March 3") still counts: for a child it is enough to find them.
+_DOB_PATTERN = re.compile(
+    r"(?:\b(?:DOB|date\s+of\s+birth|birth\s*date|birthday|born)[^\n\d]{0,20}?"
+    r"|\bb\.\s*)(" + _DATE_FORMS + r")",
     re.IGNORECASE,
 )
 
-# ── health.condition (free text) ────────────────────────────────────────────
-#
-# The eighth detector, and the first one that is about a CLASS rather than a
-# FORMAT. It exists because of a measured gap: "add my insulin to the meds
-# list" and "I did a workout, she's 15" return `[] none` from every one of the
-# seven format detectors, so without it a medication typed into the chat box
-# is persisted to chat history in the clear. An SSN is caught; the household's
-# health would not be.
-#
-# DESIGN: high precision, declared false negatives. The trigger is not the
-# health word — it is a health word standing in a POSSESSIVE or FIRST-PERSON
-# construction, i.e. someone disclosing a fact about a person rather than asking
-# about a subject. That single requirement is what keeps "tell me about
-# diabetes" and "what is insulin used for" out of the detector, which matters
-# more than it looks: any detection on a turn suppresses that turn's knowledge
-# retrieval (_pii_scrubbed_this_turn), so a detector that fired on general
-# health questions would quietly break the ability to ASK about health.
-#
-# The lexicon is deliberately short and specific. Broadening it is a decision
-# about false positives on ordinary conversation ("my anxiety about the
-# deadline"), and the honest place to make that decision is here, in a list, not
-# inside a regex someone has to reverse-engineer.
-#
-# ONLY health terms themselves are captured and redacted, never the possessive
-# that proved them, so the shape of the turn survives: "add my insulin to the
-# meds list" becomes "add my [REDACTED-HEALTH] to the [REDACTED-HEALTH] list".
-_HEALTH_TERMS = (
-    # medication / treatment
-    r'medications?|medicines?|meds|prescriptions?|prescribed|dosage|doses?|'
-    r'insulin|inhaler|epipen|antibiotics?|amoxicillin|antidepressants?|'
-    r'chemo(?:therapy)?|dialysis|radiation therapy|'
-    # diagnoses and conditions
-    r'diagnosis|diagnosed|asthma|diabetes|diabetic|epilepsy|seizures?|'
-    r'migraines?|cancer|tumou?r|hiv|lupus|crohn\'?s|celiac|coeliac|'
-    r'depression|anxiety disorder|bipolar|adhd|autism|dementia|alzheimer\'?s|'
-    # clinical readings and events
-    r'blood pressure|blood sugar|a1c|cholesterol|surgery|operation|'
-    r'therapist|psychiatrist|oncologist|cardiologist|'
-    # reproductive / disability status
-    r'pregnan(?:t|cy)|miscarriage|disability|wheelchair'
-)
-# A health term ALONE is not a detection. It counts only when the surrounding
-# clause shows someone DISCLOSING a fact about a person, and that is decided by
-# scanning for terms first and then looking backwards for a cue — deliberately
-# not by one big alternation. An alternation gets this wrong in a way that
-# matters: "add my insulin to the meds list" matches the "add ... to the meds"
-# branch starting at "add", the match consumes the whole clause, and "insulin"
-# — the actual medication — is never offered to the redactor at all. Two
-# passes cannot swallow each other.
-_HEALTH_TERM_RE = re.compile(r'\b(?:' + _HEALTH_TERMS + r')\b', re.IGNORECASE)
+# ── school ──────────────────────────────────────────────────────────────────
 
-#: A possessive or first-person construction: someone is talking about a
-#: person's health, not about a subject. "your" is deliberately ABSENT — in a
-#: user turn "your" addresses the assistant, so it is not a disclosure cue.
-#: The apostrophe in ``Name\'s`` is required so a bare capitalised word cannot
-#: stand in for a possessive.
+# A proper-noun school name: "Lincoln Elementary", "Oak Ridge Middle School",
+# "St. Mary's Academy". The name words must be Title-case, so "high school
+# science" or "middle school" as a phrase does not fire.
+_SCHOOL_PATTERN = re.compile(
+    r"(?-i:\b((?:St\.\s+)?[A-Z][A-Za-z'\.]+(?:\s+[A-Z][A-Za-z'\.]+){0,3})\s+"
+    r"(?:Elementary|Middle|High|Junior\s+High|Primary|Intermediate|Montessori|"
+    r"Academy|Prep|Preparatory)"
+    r"(?:\s+School)?)\b"
+    r"|(?-i:\b((?:St\.\s+)?[A-Z][A-Za-z'\.]+(?:\s+[A-Z][A-Za-z'\.]+){0,3})\s+School)\b"
+)
+# Title-case words that start a sentence or are generic, never a school's name.
+_NOT_SCHOOL_NAMES = frozenset({
+    "The", "A", "An", "My", "Our", "Your", "His", "Her", "Their", "This", "That",
+    "Public", "Private", "Boarding", "Summer", "Sunday", "Night", "Grad",
+    "Graduate", "Law", "Medical", "Art", "Music", "Dance", "Driving", "Old",
+    "New", "Home", "Online", "Charter", "Local", "Every", "Which", "What", "In",
+    "At", "To", "From", "After", "Before", "I", "We", "High", "Middle",
+    "Elementary", "Junior", "Primary", "Grade", "Space", "Flight", "Film",
+})
+
+# ── exact location (GPS) ─────────────────────────────────────────────────────
+
+# A latitude/longitude pair with at least three decimals each (about 100 m).
+# Sky coordinates (right ascension / declination, altitude / azimuth) share the
+# shape, so a sky word just in front vetoes the match.
+_GPS_PATTERN = re.compile(
+    r"(?<![\d.])(-?\d{1,2}\.\d{3,})\s*°?\s*[NS]?\s*[,;\s]\s*"
+    r"(-?\d{1,3}\.\d{3,})\s*°?\s*[EW]?(?![\d.])"
+)
+_SKY_COORD_CUE = re.compile(
+    r"\b(?:ra|dec|right\s+ascension|declination|alt|az|azimuth|altitude|"
+    r"galactic|ecliptic|epoch|j2000|magnitude|mag|redshift)\b",
+    re.IGNORECASE,
+)
+
+# ── passwords typed into chat ────────────────────────────────────────────────
+
+_PASSWORD_PATTERN = re.compile(
+    r"\b(?:password|passcode|passphrase|pass\s*word|wi-?fi\s+(?:key|code)|"
+    r"network\s+key|pin(?:\s+code)?)\s*(?:is|was|=|:)\s*"
+    r"[\"'“]?([^\s\"'”]{4,64})",
+    re.IGNORECASE,
+)
+_NOT_A_PASSWORD = frozenset({
+    "correct", "wrong", "incorrect", "required", "needed", "strong", "weak",
+    "too", "not", "the", "set", "missing", "invalid", "expired", "reset",
+    "changed", "fine", "secure", "safe", "same", "different", "long", "short",
+    "empty", "blank", "case", "what", "wrong.", "correct.", "something",
+    "saved", "hidden", "encrypted", "stored", "private", "secret", "unknown",
+    "forgotten", "lost", "easy", "hard", "good", "bad", "okay",
+})
+
+
+def password_spans(text: str) -> list[tuple[int, int]]:
+    """Where *text* says a password the chat scan files ("password is X").
+
+    ``(start, end)`` of each whole phrase. The pasted-key check
+    (``web_search.looks_like_pasted_key``) leaves these to the chat scan, which
+    files the password where the owner keeps private details, instead of
+    dropping the whole message.
+    """
+    return [(m.start(), m.end()) for m in _PASSWORD_PATTERN.finditer(str(text or ""))
+            if m.group(1).lower().rstrip(".,;!?") not in _NOT_A_PASSWORD]
+
+# ── health disclosures ───────────────────────────────────────────────────────
+
+_HEALTH_TERMS = (
+    r"medications?|medicines?|meds|prescriptions?|prescribed|dosage|doses?|"
+    r"insulin|inhaler|epipen|epi-pen|antibiotics?|amoxicillin|albuterol|"
+    r"antidepressants?|chemo(?:therapy)?|dialysis|radiation therapy|"
+    r"diagnosis|diagnosed|asthma|diabetes|diabetic|epilepsy|seizures?|"
+    r"migraines?|cancer|tumou?r|hiv|lupus|crohn'?s|celiac|coeliac|"
+    r"depression|anxiety disorder|bipolar|adhd|autism|autistic|dementia|"
+    r"alzheimer'?s|allerg(?:y|ies|ic)|eczema|"
+    r"blood pressure|blood sugar|a1c|cholesterol|surgery|operation|"
+    r"therapist|psychiatrist|oncologist|cardiologist|"
+    r"pregnan(?:t|cy)|miscarriage|disability|wheelchair|"
+    # Named conditions (without these, add-more search words keep
+    # "leukemia" and "hiv").
+    r"leuka?emia|lymphoma|melanoma|sclerosis|parkinson'?s|hepatitis|"
+    r"tuberculosis|schizophreni[ac]|ptsd|ocd|anorexi[ac]|bulimi[ac]|"
+    r"addiction|overdose|rehab|suicid(?:e|al)|self[- ]harm|infertility|ivf|"
+    r"heart attack|heart disease|kidney (?:disease|failure)|chronic pain"
+)
+_HEALTH_TERM_RE = re.compile(r"\b(?:" + _HEALTH_TERMS + r")\b", re.IGNORECASE)
+
+
+def health_terms(text: str) -> list[str]:
+    """Every health word in *text*, said about someone or not.
+
+    The chat scan (:func:`_health_disclosures`) only counts a health word said
+    ABOUT a person, so "books about asthma" stays searchable on this computer.
+    Words that could LEAVE the computer (add-more's "look online" words) use
+    this stricter list instead: a health word is never sent.
+    """
+    seen: list[str] = []
+    for match in _HEALTH_TERM_RE.finditer(str(text or "")[:20000]):
+        term = match.group(0)
+        if term.lower() not in (s.lower() for s in seen):
+            seen.append(term)
+    return seen
+# "allergic to peanuts": the allergen is the private part, so the phrase goes.
+_ALLERGY_PHRASE_RE = re.compile(
+    r"\ballergic\s+to\s+[A-Za-z]+(?:\s*(?:,|and|or)\s*[A-Za-z]+){0,3}",
+    re.IGNORECASE,
+)
 _HEALTH_CUE_RE = re.compile(
     r"\b(?:my|our|his|her|their)\b"
-    # (?-i:...) is load-bearing: the enclosing re.IGNORECASE would otherwise
-    # let [A-Z][a-z]+ match a lowercase word, and "what's on the medication
-    # list?" would read as the possessive "What's" and fire on a plain
-    # question. Same trick, same reason, as _LABELED_NAME_PATTERN above.
     r"|(?-i:\b[A-Z][a-z]+)['’]s"
     r"|\b(?:i|we|he|she|they)\s+"
     r"(?:am|is|are|was|were|have|has|had|take|takes|took|started|need|needs|"
-    r"got|gets|get)\b",
+    r"got|gets|get|use|uses)\b"
+    r"|\b(?:i'm|im|i’m|he's|she's|they're|we're)\b",
     re.IGNORECASE,
 )
-#: The household's medication list, named as a destination. On its own this is
-#: a QUESTION ("what's on the medication list?") and must not fire — that is a
-#: legitimate app read, and firing on it would both redact the answer and
-#: suppress the turn's retrieval. Paired with a write verb it is a disclosure.
 _HEALTH_MEDLIST_RE = re.compile(
     r"\b(?:meds?|medications?|medicine)\s+list\b"
     r"|\bto\s+(?:the\s+|my\s+|his\s+|her\s+|their\s+|our\s+)?"
@@ -230,195 +419,426 @@ _HEALTH_WRITE_VERB_RE = re.compile(
     r"recorded|put|note|noted|save|saves|remind)\b",
     re.IGNORECASE,
 )
-#: How far back a cue may sit from the term. Long enough for "my 8pm insulin",
-#: short enough that a cue two clauses away cannot vouch for an unrelated word.
 _HEALTH_CUE_WINDOW = 40
 _SENTENCE_SPLIT_RE = re.compile(r"[.!?\n]")
 
 
-def _health_disclosures(text: str) -> list:
-    """Health terms that appear in a DISCLOSURE, in order of appearance.
-
-    Returns the terms themselves — never the possessive that proved them — so
-    redaction removes the fact and leaves the sentence shape readable:
-    "add my insulin to the meds list" becomes
-    "add my [REDACTED-HEALTH] to the [REDACTED-HEALTH] list".
-    """
-    found = []
-    seen = set()
-    # Cheap precheck so the per-term sentence walk below (which rescans the
-    # text before each match) can only run on text that could possibly need it.
-    # Without it, a long document full of health terms would be quadratic.
+def _health_disclosures(text: str) -> list[str]:
+    """Health terms said ABOUT a person (not questions about a subject)."""
+    found: list[str] = []
+    seen: set[str] = set()
     medlist_possible = bool(_HEALTH_MEDLIST_RE.search(text)
                             and _HEALTH_WRITE_VERB_RE.search(text))
-    for match in _HEALTH_TERM_RE.finditer(text):
-        start = match.start()
-        # The cue must be in the SAME sentence: a window that runs past a
-        # full stop would let "I have asthma. Tell me about insulin" vouch for
-        # the second sentence.
+
+    def _disclosed(start: int, end: int) -> bool:
         window = text[max(0, start - _HEALTH_CUE_WINDOW):start]
         parts = _SENTENCE_SPLIT_RE.split(window)
         window = parts[-1] if parts else window
-        disclosed = bool(_HEALTH_CUE_RE.search(window))
-        if not disclosed and medlist_possible:
-            # Sentence-level fallback: "add amoxicillin to the meds" carries no
-            # possessive, but a write verb aimed at the medication list is an
-            # unambiguous statement about the household's own medications.
-            sentence_start = 0
-            for sep in _SENTENCE_SPLIT_RE.finditer(text[:start]):
-                sentence_start = sep.end()
-            sentence_end = len(text)
-            tail = _SENTENCE_SPLIT_RE.search(text, match.end())
-            if tail:
-                sentence_end = tail.start()
-            sentence = text[sentence_start:sentence_end]
-            disclosed = bool(_HEALTH_MEDLIST_RE.search(sentence)
-                             and _HEALTH_WRITE_VERB_RE.search(sentence))
-        if not disclosed:
+        if _HEALTH_CUE_RE.search(window):
+            return True
+        if not medlist_possible:
+            return False
+        sentence_start = 0
+        for sep in _SENTENCE_SPLIT_RE.finditer(text[:start]):
+            sentence_start = sep.end()
+        tail = _SENTENCE_SPLIT_RE.search(text, end)
+        sentence = text[sentence_start:tail.start() if tail else len(text)]
+        return bool(_HEALTH_MEDLIST_RE.search(sentence)
+                    and _HEALTH_WRITE_VERB_RE.search(sentence))
+
+    covered: list[tuple[int, int]] = []
+    for match in _ALLERGY_PHRASE_RE.finditer(text):
+        if _disclosed(match.start(), match.end()):
+            phrase = match.group(0)
+            covered.append((match.start(), match.end()))
+            if phrase.lower() not in seen:
+                seen.add(phrase.lower())
+                found.append(phrase)
+    for match in _HEALTH_TERM_RE.finditer(text):
+        if any(s <= match.start() < e for s, e in covered):
+            continue
+        if not _disclosed(match.start(), match.end()):
             continue
         term = match.group(0)
-        key = term.lower()
-        if key not in seen:
-            seen.add(key)
+        if term.lower() not in seen:
+            seen.add(term.lower())
             found.append(term)
     return found
 
 
-def _valid_ssn(area: str, group: str, serial: str) -> bool:
-    """Apply SSA structural constraints to an SSN candidate.
+# ── health statements in text that leaves this computer ─────────────────────
+#
+# Toolsmith's cloud screen (security/toolsmith_cloud.clean) must not send
+# "I have diabetes, my dose is 10 units", yet must keep the subject a search
+# needs ("an app to track insulin doses") and every URL, path, repo name and
+# command intact ("cd insulin-tracker"). So it never removes a health word:
+# in a sentence that ties health to a person it removes the person ("my",
+# "I have", "Sam's") and the amounts ("10 units", "twice a day"). Unlike
+# redact_pii, nothing outside that one sentence is touched.
 
-    Rejects area 000 / 666 / 900-999, group 00, and serial 0000 — the ranges
-    the SSA never issues — so that structurally impossible numbers (and the
-    numeric noise that merely looks SSN-shaped) do not fire.
+_DOSE_RE = re.compile(
+    r"\b\d+(?:[.,]\d+)?\s?(?:mg|mcg|ug|µg|g|ml|cc|units?|iu|tablets?|tabs?|"
+    r"pills?|capsules?|puffs?|drops?|injections?|shots?)\b"
+    r"|\b(?:once|twice|three\s+times|four\s+times|\d+\s*(?:x|times))\s+"
+    r"(?:a|per|each)\s+(?:day|night|week|month)\b"
+    r"|\bevery\s+\d+\s+hours?\b",
+    re.IGNORECASE,
+)
+#: "Our app tracks blood sugar" is about software, not a person.
+_PLURAL_CUE_VETO = re.compile(
+    r"^(?:our|their)\s+(?:apps?|projects?|tools?|library|libraries|team|"
+    r"services?|code|software|apis?|users?|community|docs|site|servers?|"
+    r"goal|mission|platform|products?|repo|repository)\b",
+    re.IGNORECASE,
+)
+_SEGMENT_END_RE = re.compile(r"[.!?;](?=\s|$)|\n")
+#: A token holding one of these is a URL, path, repo or code: never edited.
+_CODE_TOKEN_RE = re.compile(
+    r"[/\\_:@=<>{}$|`]|[A-Za-z0-9]-[A-Za-z]|[A-Za-z]-[0-9]|[A-Za-z]\.[A-Za-z]")
+_COMMAND_LINE_RE = re.compile(r"&&|\|\||`|\$\(|\s--?[A-Za-z]")
+_HEALTH_DETAIL_MARK = "[health details kept private]"
+
+
+def _token_is_code(view: str, start: int, end: int) -> bool:
+    lo, hi = start, end
+    while lo > 0 and not view[lo - 1].isspace():
+        lo -= 1
+    while hi < len(view) and not view[hi].isspace():
+        hi += 1
+    token = view[lo:hi].strip("\"'()[],.;!?")
+    return bool(_CODE_TOKEN_RE.search(token))
+
+
+def scrub_health_statements(text: str) -> str:
+    """*text* with the personal part of each health statement taken out.
+
+    A sentence counts when a person word ("my", "I have", "she's", "Sam's";
+    not "our app") and a health word, an allergy or an amount ("500mg",
+    "twice a day") are both in it. In that sentence only, the person words
+    are dropped and the amounts become "[health details kept private]".
+    Health words themselves stay, and so does any token that is a URL, path,
+    repo or command, and any sentence that reads as a command line.
+    Idempotent. Literal ``\\n`` / ``\\t`` / ``\\"`` (JSON text) count as
+    breaks, so a goal sent as JSON is read the same way.
     """
-    a, g, s = int(area), int(group), int(serial)
-    if a == 0 or a == 666 or a >= 900:
-        return False
-    if g == 0:
-        return False
-    if s == 0:
-        return False
-    return True
+    if not text or not isinstance(text, str):
+        return text
+    view = (text.replace("\\n", " \n").replace("\\t", "  ")
+            .replace('\\"', "  "))
+    edits: list[tuple[int, int, str]] = []
+    pos = 0
+    for end_match in list(_SEGMENT_END_RE.finditer(view)) + [None]:
+        seg_end = end_match.start() if end_match else len(view)
+        seg_lo, seg = pos, view[pos:seg_end]
+        pos = end_match.end() if end_match else len(view)
+        if not seg.strip() or _COMMAND_LINE_RE.search(seg):
+            continue
+        cues = [m for m in _HEALTH_CUE_RE.finditer(seg)
+                if not _PLURAL_CUE_VETO.match(seg[m.start():])
+                and not _token_is_code(view, seg_lo + m.start(), seg_lo + m.end())]
+        if not cues:
+            continue
+        doses = [m for m in _DOSE_RE.finditer(seg)
+                 if not _token_is_code(view, seg_lo + m.start(), seg_lo + m.end())]
+        if not (doses or _HEALTH_TERM_RE.search(seg) or _ALLERGY_PHRASE_RE.search(seg)):
+            continue
+        for m in cues:
+            a, b = seg_lo + m.start(), seg_lo + m.end()
+            while b < len(view) and view[b] in " \t":
+                b += 1
+            edits.append((a, b, ""))
+        for m in doses:
+            edits.append((seg_lo + m.start(), seg_lo + m.end(), _HEALTH_DETAIL_MARK))
+    if not edits:
+        return text
+    out, last = [], 0
+    for a, b, new in sorted(edits):
+        if a < last:
+            continue
+        out.append(text[last:a])
+        out.append(new)
+        last = b
+    out.append(text[last:])
+    return "".join(out)
 
 
-def _luhn_ok(digits: str) -> bool:
-    """True if the digit string passes the Luhn (mod-10) checksum."""
-    total = 0
-    for i, ch in enumerate(reversed(digits)):
-        d = ord(ch) - 48
-        if i % 2 == 1:
-            d *= 2
-            if d > 9:
-                d -= 9
-        total += d
-    return total % 10 == 0
-# Month names (full + 3-letter abbreviations), for prose birthdates.
-_MONTH_NAME = (
-    r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|'
-    r'Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|'
-    r'Nov(?:ember)?|Dec(?:ember)?)'
-)
-# Date shapes we treat as a birthdate when a birth-trigger sits nearby.
-# YYYY-MM-DD is listed first so it wins over the looser M/D/Y form.
-_DATE_FORMS = (
-    r'(?:'
-    r'\d{4}-\d{1,2}-\d{1,2}'                                        # YYYY-MM-DD
-    r'|\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}'                             # M/D/YYYY, M-D-YYYY
-    r'|' + _MONTH_NAME + r'\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}'    # Month D, YYYY
-    r'|\d{1,2}(?:st|nd|rd|th)?\s+' + _MONTH_NAME + r'\s+\d{4}'      # D Month YYYY
-    r')'
-)
-# A birth-trigger followed, within a short same-line window, by a date.
-# The window (no newline, no digit) covers separators and connective words
-# like ":", "on", "is/was", so bare dates without a nearby birth word are
-# NOT matched. Full match (trigger through date) is redacted, removing the
-# date. "b." is kept tight (whitespace only) to limit false positives.
-_DOB_PATTERN = re.compile(
-    r'(?:'
-    r'\b(?:DOB|date\s+of\s+birth|birth\s*date|birthday|born)[^\n\d]{0,20}?'
-    r'|\bb\.\s*'
-    r')'
-    + _DATE_FORMS,
+# ── vehicle identification number (VIN) ────────────────────────────────────
+
+# 17 characters, no I, O or Q (ISO 3779). Counted when a VIN word is just in
+# front, OR when the North American check digit (position 9) is right - a
+# random 17-character code passes that by chance about one time in eleven, and
+# it must also mix letters and digits.
+_VIN_CANDIDATE = re.compile(r"(?<![A-Za-z0-9])([A-HJ-NPR-Z0-9]{17})(?![A-Za-z0-9])")
+_VIN_CUE = re.compile(r"\b(?:vin|vehicle\s+identification(?:\s+number)?)\b",
+                      re.IGNORECASE)
+_VIN_VALUES = {
+    **{str(d): d for d in range(10)},
+    "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7, "H": 8,
+    "J": 1, "K": 2, "L": 3, "M": 4, "N": 5, "P": 7, "R": 9,
+    "S": 2, "T": 3, "U": 4, "V": 5, "W": 6, "X": 7, "Y": 8, "Z": 9,
+}
+_VIN_WEIGHTS = (8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2)
+
+
+def _vin_check_ok(vin: str) -> bool:
+    total = sum(_VIN_VALUES[c] * w for c, w in zip(vin, _VIN_WEIGHTS))
+    rem = total % 11
+    return vin[8] == ("X" if rem == 10 else str(rem))
+
+
+def _vins(text: str) -> list[str]:
+    found = []
+    for m in _VIN_CANDIDATE.finditer(text):
+        vin = m.group(1)
+        if not (re.search(r"[A-Z]", vin) and re.search(r"\d", vin)):
+            continue
+        window = text[max(0, m.start() - _CUE_WINDOW):m.start()]
+        if _VIN_CUE.search(window) or _vin_check_ok(vin):
+            found.append(vin)
+    return found
+
+# ── licence plates ───────────────────────────────────────────────────────────
+
+# Only with a plate word in front ("my license plate is 7ABC123", "plate number
+# ABC-1234"). The value must hold a digit: "plate tectonics" and "my plate is
+# empty" are not plates. A plate typed with no plate word is not caught.
+_PLATE_PATTERN = re.compile(
+    r"\b(?:licen[cs]e\s+plate|number\s+plate|plate\s+(?:number|no\.?)|"
+    r"(?:my|our|his|her|their)\s+plate|tag\s+number|registration\s+number|"
+    r"reg\s+number)\s*(?:is|was|=|:|#)?\s*"
+    r"([A-Za-z0-9]{1,4}[\s\-]?[A-Za-z0-9]{1,5})\b",
     re.IGNORECASE,
 )
 
+# ── government id numbers (passport, driver's licence) ──────────────────────
 
+_GOV_ID_PATTERN = re.compile(
+    r"\b(?:passport|driver'?s?\s+licen[cs]e|driving\s+licen[cs]e|"
+    r"licen[cs]e\s+number|state\s+id|id\s+card)"
+    r"\s*(?:number|no\.?|#)?\s*(?:is|was|=|:)?\s*"
+    r"([A-Za-z0-9][A-Za-z0-9\-]{4,15})\b",
+    re.IGNORECASE,
+)
+
+# ── bank account and routing numbers ────────────────────────────────────────
+
+_BANK_ACCOUNT_PATTERN = re.compile(
+    r"\b(?:(?:bank|checking|savings|chequing)\s+account|account\s+number|"
+    r"acct\.?\s*(?:number|no\.?|#)|routing\s+number|aba\s+number|iban)"
+    r"\s*(?:number|no\.?|#)?\s*(?:is|was|=|:)?\s*"
+    r"(\d[\d\s\-]{4,20}\d)\b",
+    re.IGNORECASE,
+)
+
+# ── the last four digits of a card or account ───────────────────────────────
+
+# "card ending in 4321", "account ending 0088", "last four digits of my Visa
+# are 1234". Four digits alone are everywhere (years, times, model numbers), so
+# a money word must sit in the same stretch of text.
+_LAST4_PATTERN = re.compile(
+    r"\b(?:ending(?:\s+in|\s+with)?|ends\s+(?:in|with)|"
+    r"last\s+(?:four|4)(?:\s+digits)?(?:\s+(?:of|on)\s+(?:my|our|the)\s+"
+    r"[A-Za-z]+)?(?:\s+(?:are|is|:))?)\s*[:#]?\s*(\d{4})\b",
+    re.IGNORECASE,
+)
+_MONEY_CUE = re.compile(
+    r"\b(?:card|account|acct|bank|visa|mastercard|amex|discover|debit|credit|"
+    r"checking|savings|chequing)\b",
+    re.IGNORECASE,
+)
+_MONEY_WINDOW = 40
+
+
+def _last_fours(text: str) -> list[str]:
+    found = []
+    for m in _LAST4_PATTERN.finditer(text):
+        window = text[max(0, m.start() - _MONEY_WINDOW):m.end()]
+        if _MONEY_CUE.search(window):
+            found.append(m.group(1))
+    return found
+
+
+def _cued_values(pattern: "re.Pattern[str]", text: str) -> list[str]:
+    """Group 1 of every match that holds at least one digit."""
+    out = []
+    for m in pattern.finditer(text):
+        value = m.group(1).strip()
+        if re.search(r"\d", value):
+            out.append(value)
+    return out
+
+
+#: Internal type id -> plain words a person reads ("your ...").
+PLAIN_WORDS: dict[str, str] = {
+    "email": "email address",
+    "phone": "phone number",
+    "ssn": "Social Security number",
+    "address": "home address",
+    "credit_card": "card number",
+    "name": "full name",
+    "date_of_birth": "birthday",
+    "school": "school name",
+    "location": "exact location",
+    "password": "password",
+    "vin": "vehicle identification number",
+    "license_plate": "licence plate",
+    "government_id": "ID number",
+    "bank_account": "bank account number",
+    "account_last4": "last digits of a card or account",
+    "health.condition": "health details",
+    "child.any": "details about a child",
+}
+
+#: Internal type id -> the marker left in saved text. The vault scrub
+#: (``scrub_and_vault``), the per-turn health scrub (``turn_health``) and the
+#: at-rest gate all recognise this ``[REDACTED-<TYPE>]`` form, so every type
+#: uses it.
+REDACTION_MARKERS: dict[str, str] = {
+    "email": "[REDACTED-EMAIL]",
+    "phone": "[REDACTED-PHONE]",
+    "ssn": "[REDACTED-SSN]",
+    "address": "[REDACTED-ADDRESS]",
+    "credit_card": "[REDACTED-CC]",
+    "name": "[REDACTED-NAME]",
+    "date_of_birth": "[REDACTED-DOB]",
+    "school": "[REDACTED-SCHOOL]",
+    "location": "[REDACTED-LOCATION]",
+    "password": "[REDACTED-PASSWORD]",
+    "vin": "[REDACTED-VIN]",
+    "license_plate": "[REDACTED-PLATE]",
+    "government_id": "[REDACTED-ID]",
+    "bank_account": "[REDACTED-BANK]",
+    "account_last4": "[REDACTED-LAST4]",
+    "health.condition": "[REDACTED-HEALTH]",
+    "child.any": "[REDACTED-CHILD]",
+}
+# Stands in for a marker while scanning; never a character people type.
+_MARKER_FILL = "\x00"
+#: The key detector's mark (``secret_detector.HELD``) is a marker too: text
+#: cleaned for a cloud model runs the key detector first, then this scan, and
+#: "PASSWORD: [held in vault]" must not become "[password kept private] in vault]".
+_KEY_HELD_MARK = "[held in vault]"
+_MARKER_RE = re.compile(
+    "|".join(re.escape(m) for m in sorted(list(REDACTION_MARKERS.values())
+                                          + [_KEY_HELD_MARK], key=len, reverse=True)))
+
+# Replacement order: the most specific shapes first, so a phone number inside
+# an address line or a date inside a DOB sentence is replaced whole.
+_REDACT_ORDER = (
+    "ssn", "credit_card", "bank_account", "government_id", "vin",
+    "date_of_birth", "address", "location", "email", "phone", "password",
+    "license_plate", "account_last4", "name", "school",
+)
+
+
+@dataclass
 class PIIDetection:
-    """Result of scanning content for PII."""
+    """Result of scanning text for PII. Values are kept only in memory."""
 
-    def __init__(self):
-        self.emails = []
-        self.phones = []
-        self.ssns = []
-        self.addresses = []
-        self.credit_cards = []
-        self.names = []
-        self.dates_of_birth = []
-        #: health.condition — free-text disclosures (chat/voice paths), and the
-        #: class name schema-position tagging emits for calendar.meds[] and
-        #: freshtable.familyMembers[].prefs. Same class, two signal sources.
-        self.health_conditions = []
-        #: child.any — populated ONLY by structured signals today
-        #: (fitfam.users{} age < 18, calendar.family[] role "child"). There is
-        #: no free-text minor detector and pretending otherwise would be the
-        #: fail-open this class exists to avoid.
-        self.child_indicators = []
+    emails: list[str] = field(default_factory=list)
+    phones: list[str] = field(default_factory=list)
+    ssns: list[str] = field(default_factory=list)
+    addresses: list[str] = field(default_factory=list)
+    credit_cards: list[str] = field(default_factory=list)
+    names: list[str] = field(default_factory=list)
+    dates_of_birth: list[str] = field(default_factory=list)
+    schools: list[str] = field(default_factory=list)
+    locations: list[str] = field(default_factory=list)
+    passwords: list[str] = field(default_factory=list)
+    vins: list[str] = field(default_factory=list)
+    license_plates: list[str] = field(default_factory=list)
+    government_ids: list[str] = field(default_factory=list)
+    bank_accounts: list[str] = field(default_factory=list)
+    account_last4s: list[str] = field(default_factory=list)
+    #: health.condition: free-text disclosures (chat/voice paths), and the
+    #: class name schema-position tagging emits for calendar.meds[] and
+    #: freshtable.familyMembers[].prefs. Same class, two signal sources.
+    health_conditions: list[str] = field(default_factory=list)
+    #: child.any: populated ONLY by structured signals
+    #: (fitfam.users{} age < 18, calendar.family[] role "child"). There is no
+    #: free-text minor detector and pretending otherwise would be the
+    #: fail-open this class exists to avoid.
+    child_indicators: list[str] = field(default_factory=list)
+
+    def items(self) -> dict[str, list[str]]:
+        """``{type id: [values]}`` for every type found, in a fixed order."""
+        table = {
+            "email": self.emails,
+            "phone": self.phones,
+            "ssn": self.ssns,
+            "address": self.addresses,
+            "credit_card": self.credit_cards,
+            "name": self.names,
+            "date_of_birth": self.dates_of_birth,
+            "school": self.schools,
+            "location": self.locations,
+            "password": self.passwords,
+            "vin": self.vins,
+            "license_plate": self.license_plates,
+            "government_id": self.government_ids,
+            "bank_account": self.bank_accounts,
+            "account_last4": self.account_last4s,
+            "health.condition": self.health_conditions,
+            "child.any": self.child_indicators,
+        }
+        return {k: list(v) for k, v in table.items() if v}
 
     @property
     def has_pii(self) -> bool:
-        return bool(
-            self.emails or self.phones or self.ssns or
-            self.addresses or self.credit_cards or
-            self.names or self.dates_of_birth or
-            self.health_conditions or self.child_indicators
-        )
+        """True if any PII was detected."""
+        return bool(self.items())
+
+    @property
+    def pii_types(self) -> list[str]:
+        """The kinds of PII found, e.g. ``["email", "phone"]``."""
+        return list(self.items().keys())
 
     @property
     def severity(self) -> str:
+        """``"none"``, ``"medium"``, ``"high"`` or ``"critical"``."""
         # child.any is critical: a record about a minor is the one class where
         # the cost of under-classifying is not recoverable by the owner later.
-        if self.ssns or self.credit_cards or self.child_indicators:
+        if (self.ssns or self.credit_cards or self.passwords
+                or self.bank_accounts or self.government_ids
+                or self.child_indicators):
             return "critical"
-        # health.condition sits at high, alongside address and DOB. Structured
-        # health (calendar.meds[]) is P4/critical in app_data_tags because the
-        # schema position is proof; a free-text mention is a weaker signal and
-        # is tiered honestly rather than rounded to match.
-        if self.addresses or self.dates_of_birth or self.health_conditions:
+        if (self.addresses or self.dates_of_birth or self.health_conditions
+                or self.locations or self.schools):
             return "high"
-        if self.emails or self.phones or self.names:
+        if (self.emails or self.phones or self.names or self.vins
+                or self.license_plates or self.account_last4s):
             return "medium"
         return "none"
 
-    @property
-    def pii_types(self) -> list:
-        types = []
-        if self.emails: types.append("email")
-        if self.phones: types.append("phone")
-        if self.ssns: types.append("ssn")
-        if self.addresses: types.append("address")
-        if self.credit_cards: types.append("credit_card")
-        if self.names: types.append("name")
-        if self.dates_of_birth: types.append("date_of_birth")
-        if self.health_conditions: types.append("health.condition")
-        if self.child_indicators: types.append("child.any")
-        return types
-
     def summary(self) -> str:
+        """A short, value-free description of what was found."""
         if not self.has_pii:
             return "No PII detected."
-        parts = []
-        if self.emails: parts.append(f"{len(self.emails)} email(s)")
-        if self.phones: parts.append(f"{len(self.phones)} phone number(s)")
-        if self.ssns: parts.append(f"{len(self.ssns)} SSN(s)")
-        if self.addresses: parts.append(f"{len(self.addresses)} address(es)")
-        if self.credit_cards: parts.append(f"{len(self.credit_cards)} credit card(s)")
-        if self.names: parts.append(f"{len(self.names)} labeled name(s)")
-        if self.dates_of_birth: parts.append(f"{len(self.dates_of_birth)} DOB(s)")
-        if self.health_conditions:
-            parts.append(f"{len(self.health_conditions)} health mention(s)")
-        if self.child_indicators:
-            parts.append(f"{len(self.child_indicators)} child record(s)")
+        parts = [f"{len(v)} {_SUMMARY_WORDS.get(k, k)}"
+                 for k, v in self.items().items()]
         return f"PII detected [{self.severity}]: {', '.join(parts)}"
+
+
+#: How :meth:`PIIDetection.summary` counts each type.
+_SUMMARY_WORDS: dict[str, str] = {
+    "email": "email(s)",
+    "phone": "phone number(s)",
+    "ssn": "SSN(s)",
+    "address": "address(es)",
+    "credit_card": "credit card(s)",
+    "name": "labeled name(s)",
+    "date_of_birth": "DOB(s)",
+    "school": "school name(s)",
+    "location": "exact location(s)",
+    "password": "password(s)",
+    "vin": "VIN(s)",
+    "license_plate": "licence plate(s)",
+    "government_id": "ID number(s)",
+    "bank_account": "bank account(s)",
+    "account_last4": "last-four number(s)",
+    "health.condition": "health mention(s)",
+    "child.any": "child record(s)",
+}
 
 
 class DataClassifier:
@@ -454,17 +874,10 @@ class DataClassifier:
                 return DataZone.VAULT
         return DataZone.INTELLIGENCE
 
-    def classify_content(self, text: str, *, include_health: bool = False):
-        """Classify text content by scanning for PII."""
-        pii = self.scan_for_pii(text, include_health=include_health)
-        if pii.has_pii:
-            return DataZone.VAULT, pii
-        return DataZone.INTELLIGENCE, pii
-
     def scan_structured_document(self, app, doc) -> PIIDetection:
         """Detect ``health.condition`` / ``child.any`` from SCHEMA POSITION.
 
-        The structured half of the two new detectors. Given an app name and its
+        The structured half of the two detectors. Given an app name and its
         document, it reports how many entries sit in positions the taxonomy
         already classifies (``calendar.meds[]``, ``fitfam.users{}`` with an age
         under 18, ``freshtable.familyMembers[].prefs``) WITHOUT reading a single
@@ -472,7 +885,7 @@ class DataClassifier:
         content, so a caller cannot accidentally log or vault household data by
         holding the result.
 
-        This is why the two classes need no NLP for the cases that matter — the
+        This is why the two classes need no NLP for the cases that matter: the
         field name is the evidence. Never raises.
         """
         detection = PIIDetection()
@@ -483,7 +896,7 @@ class DataClassifier:
             return detection
         for cls, count in counts.items():
             # Position markers, not values: "calendar.meds[]#1". A caller that
-            # redacts on these finds nothing to replace, which is correct — a
+            # redacts on these finds nothing to replace, which is correct: a
             # structured document is tagged and vaulted, never string-scrubbed.
             markers = [f"{app}:{cls}#{i + 1}" for i in range(int(count))]
             if cls == app_data_tags.CLS_HEALTH_CONDITION:
@@ -494,93 +907,225 @@ class DataClassifier:
 
     def scan_for_pii(self, text: str, *,
                      include_health: bool = False) -> PIIDetection:
-        """Scan text for personally identifiable information.
+        """Scan ``text`` and return a :class:`PIIDetection`.
 
-        ``include_health`` turns on the free-text ``health.condition`` detector
-        and DEFAULTS OFF. That default is a deliberate scoping decision, not an
-        oversight: the conversational surfaces (chat, voice, log lines) opt in,
-        because a medication mentioned there is retained in chat history for no
-        reason the owner asked for. Document ingest does NOT opt in, because a
-        medical document the owner deliberately uploaded is supposed to be
-        searchable, and redacting its clinical terms would gut the thing they
-        asked the appliance to do. Turning this on globally is therefore a
-        product decision about upload utility, not a security improvement, and
-        it is left to be made explicitly.
+        ``include_health`` turns on the free-text health detector. It defaults
+        OFF because an uploaded medical document is meant to be
+        searchable; the chat paths turn it on, because a medicine mentioned in
+        chat has no reason to sit in saved chat history.
         """
-        detection = PIIDetection()
         if not text or not isinstance(text, str):
-            return detection
+            return PIIDetection()
+        if len(text) <= _SCAN_CHUNK:
+            return self._scan_chunk(text, include_health)
+        # A big file is scanned whole, one bounded chunk at a time. Chunks
+        # overlap so a value cut by one boundary is seen whole in the next.
+        # Each chunk keeps only what starts in the part it owns (the middle
+        # of each overlap is the line), so the half-value a chunk sees at
+        # its very start or end ("h@example.com") is never reported.
+        merged = PIIDetection()
+        spans = _chunks(text)
+        for i, (lo, hi) in enumerate(spans):
+            own_lo = 0 if i == 0 else (lo + spans[i - 1][1]) // 2 - lo
+            own_hi = (hi - lo if i == len(spans) - 1
+                      else (spans[i + 1][0] + hi) // 2 - lo)
+            chunk = text[lo:hi]
+            part = self._scan_chunk(chunk, include_health)
+            for f in fields(merged):
+                getattr(merged, f.name).extend(
+                    v for v in getattr(part, f.name)
+                    if _starts_within(chunk, v, own_lo, own_hi))
+        for f in fields(merged):
+            setattr(merged, f.name, _unique(getattr(merged, f.name)))
+        # The same cross-type rules one chunk applies, across chunks.
+        taken = (merged.ssns + merged.credit_cards + merged.bank_accounts
+                 + merged.government_ids)
+        merged.phones = [p for p in merged.phones
+                         if not any(p in e for e in merged.emails)
+                         and not any(p in t or t in p for t in taken)]
+        merged.account_last4s = [
+            d for d in merged.account_last4s
+            if not any(d in c for c in merged.credit_cards
+                       + merged.bank_accounts + merged.government_ids)]
+        return merged
 
-        scan_text = text[:500_000]
-        detection.emails = _EMAIL_PATTERN.findall(scan_text)
-        detection.phones = _PHONE_PATTERN.findall(scan_text)
-        # SSN: keep only candidates that satisfy the SSA structural rules.
-        # Two shapes, one bucket: the written form (XXX-XX-XXXX / XXX XX XXXX)
-        # and the spoken form (a bare 9-digit run with an SSN cue in front of
-        # it). Both land in detection.ssns, so severity ("critical"), the
-        # [REDACTED-SSN] marker and the scrub-and-vault routing are identical
-        # for a typed SSN and a dictated one.
-        detection.ssns = [
-            m.group(0) for m in _SSN_CANDIDATE.finditer(scan_text)
+    def _scan_chunk(self, text: str, include_health: bool) -> PIIDetection:
+        """Scan one piece of text (at most :data:`_SCAN_CHUNK` chars)."""
+        detection = PIIDetection()
+        # A marker this module wrote earlier ("[password kept private]") is
+        # never a new detail: fill it (same length, so nothing shifts).
+        # Without this, re-scanning a saved message found "[password" after
+        # "password is" and filed the marker itself as a password. The fill
+        # is not a space: with spaces, "password is [password kept private]
+        # Please" made "Please" the password. A value holding the fill is
+        # dropped at the end.
+        scan = _MARKER_RE.sub(lambda m: _MARKER_FILL * len(m.group(0)),
+                              text)
+
+        detection.emails = _unique(_EMAIL_PATTERN.findall(scan))
+
+        detection.ssns = _unique([
+            m.group(0) for m in _SSN_CANDIDATE.finditer(scan)
             if _valid_ssn(m.group(1), m.group(3), m.group(4))
-        ] + _cued_bare_ssns(scan_text)
-        detection.addresses = _ADDRESS_PATTERN.findall(scan_text)
-        # Credit card: keep only 13-19 digit candidates that pass Luhn.
-        credit_cards = []
-        for m in _CREDIT_CARD_PATTERN.finditer(scan_text):
-            digits = re.sub(r'\D', '', m.group(0))
+        ] + _cued_bare_ssns(scan))
+
+        cards = []
+        for m in _CREDIT_CARD_PATTERN.finditer(scan):
+            digits = re.sub(r"\D", "", m.group(0))
             if 13 <= len(digits) <= 19 and _luhn_ok(digits):
-                credit_cards.append(m.group(0))
-        detection.credit_cards = credit_cards
-        detection.dates_of_birth = _DOB_PATTERN.findall(scan_text)
-        name_matches = _LABELED_NAME_PATTERN.findall(scan_text)
-        detection.names = [m.strip() for m in name_matches if len(m.strip()) > 2]
+                cards.append(m.group(0))
+        detection.credit_cards = _unique(cards)
+
+        taken = detection.ssns + detection.credit_cards
+        phones = []
+        for m in _PHONE_SEPARATED.finditer(scan):
+            if not _vetoed(scan, m.start()):
+                phones.append(m.group(0))
+        for m in _PHONE_BARE.finditer(scan):
+            window = scan[max(0, m.start() - _CUE_WINDOW):m.start()]
+            if _PHONE_CUE.search(window) and not _vetoed(scan, m.start()):
+                phones.append(m.group(0))
+        for m in _PHONE_INTL.finditer(scan):
+            digits = re.sub(r"\D", "", m.group(0))
+            if 8 <= len(digits) <= 15 and not _vetoed(scan, m.start()):
+                phones.append(m.group(0).rstrip())
+        for m in _PHONE_TRUNK.finditer(scan):
+            # The phone word may come before ("my mobile is 07700 900123")
+            # or just after ("07700 900123 (mobile)").
+            window = (scan[max(0, m.start() - _CUE_WINDOW):m.start()] + " "
+                      + scan[m.end():m.end() + _AFTER_CUE_WINDOW])
+            digits = re.sub(r"\D", "", m.group(0))
+            if 9 <= len(digits) <= 12 and _PHONE_CUE.search(window) \
+                    and not _vetoed(scan, m.start()):
+                phones.append(m.group(0))
+        # A shorter match inside a longer one is the same number.
+        phones = [p for p in phones
+                  if not any(p != q and p in q for q in phones)]
+        detection.phones = _unique([
+            p for p in phones
+            if not any(p in e for e in detection.emails)
+            and not any(p in t or t in p for t in taken)
+        ])
+
+        addresses = []
+        for pattern in (_ADDRESS_WITH_DIRECTION, _ADDRESS_PATTERN):
+            for m in pattern.finditer(scan):
+                words = [w.lower().rstrip(".") for w in m.group(2).split()]
+                if any(w in _NOT_STREET_WORDS for w in words):
+                    continue
+                addresses.append(m.group(0).rstrip(",. "))
+        for m in _CITY_STATE_ZIP.finditer(scan):
+            if m.group(2) in _US_STATES \
+                    and m.group(1).split()[0] not in _NOT_TOWN_WORDS:
+                addresses.append(m.group(0))
+        for m in _TOWN_POSTCODE.finditer(scan):
+            if m.group(1).split()[0] not in _NOT_TOWN_WORDS:
+                addresses.append(m.group(0))
+        addresses += [m.group(1) for m in _POSTCODE_CUED.finditer(scan)]
+        # A part already inside a longer address is that address.
+        addresses = [a for a in addresses
+                     if not any(a != b and a in b for b in addresses)]
+        detection.addresses = _unique(addresses)
+
+        # Only the date itself: "My birthday is [birthday kept private]".
+        detection.dates_of_birth = _unique(
+            [m.group(1) for m in _DOB_PATTERN.finditer(scan)])
+
+        names = [n.strip() for n in _LABELED_NAME_PATTERN.findall(scan)]
+        names += [n.strip() for n in _SPOKEN_NAME_PATTERN.findall(scan)]
+        names += [n.strip() for n in _INTRO_NAME_PATTERN.findall(scan)
+                  if n.split()[0] not in _NOT_NAME_WORDS
+                  and n.split()[-1] not in _NOT_NAME_WORDS]
+        detection.names = _unique([n for n in names if len(n) > 2])
+
+        schools = []
+        for m in _SCHOOL_PATTERN.finditer(scan):
+            lead = (m.group(1) or m.group(2) or "").split()
+            if not lead or lead[0] in _NOT_SCHOOL_NAMES:
+                continue
+            schools.append(m.group(0))
+        detection.schools = _unique(schools)
+
+        locations = []
+        for m in _GPS_PATTERN.finditer(scan):
+            try:
+                lat, lon = float(m.group(1)), float(m.group(2))
+            except ValueError:
+                continue
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                continue
+            before = scan[max(0, m.start() - _CUE_WINDOW):m.start()]
+            after = scan[m.end():m.end() + 12]
+            if _SKY_COORD_CUE.search(before) or _SKY_COORD_CUE.search(after):
+                continue
+            locations.append(m.group(0).strip())
+        detection.locations = _unique(locations)
+
+        # The whole token is taken, trailing "!" included: removing one
+        # punctuation mark with a password beats leaving part of it behind.
+        detection.passwords = _unique([
+            m.group(1) for m in _PASSWORD_PATTERN.finditer(scan)
+            if m.group(1).lower().rstrip(".,;!?") not in _NOT_A_PASSWORD
+        ])
+
+        detection.vins = _unique(_vins(scan))
+        detection.license_plates = _unique(_cued_values(_PLATE_PATTERN, scan))
+        detection.government_ids = _unique(_cued_values(_GOV_ID_PATTERN, scan))
+        detection.bank_accounts = _unique(
+            _cued_values(_BANK_ACCOUNT_PATTERN, scan))
+        # A number already caught whole is not also a phone number.
+        whole = detection.bank_accounts + detection.government_ids
+        detection.phones = [p for p in detection.phones
+                            if not any(p in w or w in p for w in whole)]
+        detection.account_last4s = _unique([
+            d for d in _last_fours(scan)
+            if not any(d in c for c in detection.credit_cards + whole)
+        ])
+
         if include_health:
-            detection.health_conditions = _health_disclosures(scan_text)
+            detection.health_conditions = _health_disclosures(scan)
+        for f in fields(detection):
+            values = getattr(detection, f.name)
+            if isinstance(values, list):
+                setattr(detection, f.name,
+                        [v for v in values if _MARKER_FILL not in v])
         return detection
 
     def redact_pii(self, text: str, *,
                    include_health: bool = False) -> tuple[str, PIIDetection]:
-        """Scan text for PII and return (redacted_text, detection).
+        """Return ``(redacted_text, detection)``.
 
-        Replaces detected PII with bracketed placeholders:
-          SSN 123-45-6789 → [REDACTED-SSN]
-          Credit card → [REDACTED-CC]
-          DOB → [REDACTED-DOB]
-          Email → [REDACTED-EMAIL]
-          Phone → [REDACTED-PHONE]
-          Address → [REDACTED-ADDRESS]
-          Name → [REDACTED-NAME]
-          Health term (include_health only) → [REDACTED-HEALTH]
+        Every detected value is replaced by a plain marker the person can read
+        back in their history (``[phone number kept private]``). Longer values
+        are replaced first so a value that contains another is removed whole.
         """
         detection = self.scan_for_pii(text, include_health=include_health)
         if not detection.has_pii:
             return text, detection
-
         redacted = text
-        # Order matters: replace longer/more specific patterns first
-        for ssn in detection.ssns:
-            redacted = redacted.replace(ssn, '[REDACTED-SSN]')
-        for cc in detection.credit_cards:
-            redacted = redacted.replace(cc, '[REDACTED-CC]')
-        for dob in detection.dates_of_birth:
-            redacted = redacted.replace(dob, '[REDACTED-DOB]')
-        for addr in detection.addresses:
-            redacted = redacted.replace(addr, '[REDACTED-ADDRESS]')
-        for email in detection.emails:
-            redacted = redacted.replace(email, '[REDACTED-EMAIL]')
-        for phone in detection.phones:
-            redacted = redacted.replace(phone, '[REDACTED-PHONE]')
-        for name in detection.names:
-            redacted = redacted.replace(name, '[REDACTED-NAME]')
-        for term in detection.health_conditions:
-            # Case-insensitive and word-bounded: "Insulin" at the start of a
-            # sentence must not survive because the captured span was lowercase,
-            # and "meds" must not eat the "meds" inside "medsafe".
-            redacted = re.sub(r'\b' + re.escape(term) + r'\b',
-                              '[REDACTED-HEALTH]', redacted,
+        found = detection.items()
+        for kind in _REDACT_ORDER:
+            for value in sorted(found.get(kind, []), key=len, reverse=True):
+                redacted = redacted.replace(value, REDACTION_MARKERS[kind])
+        for term in sorted(found.get("health.condition", []), key=len,
+                           reverse=True):
+            redacted = re.sub(r"\b" + re.escape(term) + r"\b",
+                              REDACTION_MARKERS["health.condition"], redacted,
                               flags=re.IGNORECASE)
         return redacted, detection
+
+    def classify_content(self, text: str, *, include_health: bool = False
+                         ) -> tuple[DataZone, PIIDetection]:
+        """Content with PII -> :attr:`DataZone.VAULT`; else ``INTELLIGENCE``."""
+        detection = self.scan_for_pii(text, include_health=include_health)
+        if detection.has_pii:
+            return DataZone.VAULT, detection
+        return DataZone.INTELLIGENCE, detection
+
+    def route(self, text: str) -> str:
+        """Convenience wrapper: ``"puffpai_vault"`` or ``"puffpai_knowledge"``."""
+        zone, _ = self.classify_content(text)
+        return "puffpai_vault" if zone is DataZone.VAULT else "puffpai_knowledge"
 
     def should_encrypt(self, filepath, content: str = "") -> bool:
         """Determine if a file should be encrypted."""
@@ -593,3 +1138,93 @@ class DataClassifier:
             if pii.has_pii:
                 return True
         return False
+
+
+#: Characters scanned at once. A bigger text is scanned in chunks of this
+#: size, so memory per scan stays bounded however big the file is.
+_SCAN_CHUNK = 500_000
+#: How far each chunk reaches back into the one before it. Far wider than any
+#: value or cue window, so a value cut by a boundary is whole in one chunk.
+_SCAN_OVERLAP = 4_096
+
+
+def _safe_cut(text: str, pos: int) -> int:
+    """Move ``pos`` back to the start of any marker it would split."""
+    lo = max(0, pos - 64)
+    for m in _MARKER_RE.finditer(text, lo, min(len(text), pos + 64)):
+        if m.start() < pos < m.end():
+            return m.start()
+    return pos
+
+
+def _chunks(text: str) -> list[tuple[int, int]]:
+    """``(start, end)`` of overlapping pieces of ``text`` that cover all of it.
+
+    Each cut falls on a line break (else a space) so a value is rarely
+    split; the next piece starts ``_SCAN_OVERLAP`` chars before the cut, just
+    after a line break or space when one is near, so whatever straddles a
+    cut is whole in the next piece.
+    """
+    n = len(text)
+    spans: list[tuple[int, int]] = []
+    start = 0
+    while True:
+        end = start + _SCAN_CHUNK
+        if end >= n:
+            spans.append((start, n))
+            return spans
+        floor = end - _SCAN_OVERLAP // 2
+        cut = text.rfind("\n", floor, end)
+        if cut < 0:
+            cut = max(text.rfind(" ", floor, end), text.rfind("\t", floor, end))
+        cut = _safe_cut(text, end if cut < 0 else cut + 1)
+        spans.append((start, cut))
+        nxt = cut - _SCAN_OVERLAP
+        reach = nxt + _SCAN_OVERLAP // 2
+        line = text.find("\n", nxt, reach)
+        if line < 0:
+            gaps = [g for g in (text.find(" ", nxt, reach),
+                                text.find("\t", nxt, reach)) if g >= 0]
+            line = min(gaps) if gaps else -1
+        start = _safe_cut(text, nxt if line < 0 else line + 1)
+
+
+def _starts_within(chunk: str, value: str, lo: int, hi: int) -> bool:
+    """True when *value* appears in *chunk* starting in ``[lo, hi)``.
+
+    A value that is not in the chunk word for word (never expected) is kept:
+    when unsure, keep the finding.
+    """
+    at = chunk.find(value)
+    if at < 0:
+        return True
+    while at >= 0:
+        if lo <= at < hi:
+            return True
+        at = chunk.find(value, at + 1)
+    return False
+
+
+def _vetoed(text: str, start: int) -> bool:
+    """True when a device / order word sits just before a digit run."""
+    window = text[max(0, start - _CUE_WINDOW):start]
+    return bool(_NOT_A_PHONE_CUE.search(window))
+
+
+def _unique(items: list[str]) -> list[str]:
+    """De-duplicate while preserving first-seen order."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        token = item.strip()
+        if token and token not in seen:
+            seen.add(token)
+            out.append(token)
+    return out
+
+
+__all__ = [
+    "DataZone", "PIIDetection", "DataClassifier", "PLAIN_WORDS",
+    "REDACTION_MARKERS", "health_terms", "password_spans",
+    "scrub_health_statements",
+]

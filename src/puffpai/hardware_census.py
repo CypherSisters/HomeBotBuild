@@ -30,6 +30,8 @@ import platform
 import re
 import shutil
 import subprocess
+
+from puffpai import procflags
 from typing import Any, Optional
 
 SCHEMA = "hardware_census/v1"
@@ -65,6 +67,7 @@ def _run(cmd: list[str], timeout: int = 3) -> Optional[str]:
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout, check=False,
+            **procflags.hidden(),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -209,6 +212,19 @@ def _cpu_model() -> Optional[str]:
             return brand
 
     if system == "Windows":
+        # The marketing name ("13th Gen Intel(R) Core(TM) i7-13850HX") is in
+        # the registry; the first screen shows it to the owner, and the family
+        # string below ("Intel64 Family 6 Model 183") means nothing to anyone.
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                r"HARDWARE\DESCRIPTION\System\CentralProcessor\0"
+                                ) as key:
+                name = str(winreg.QueryValueEx(key, "ProcessorNameString")[0])
+            if name.strip():
+                return " ".join(name.split())
+        except (ImportError, OSError, ValueError):
+            pass
         # PROCESSOR_IDENTIFIER is set on every Windows box; platform.processor()
         # returns the same family string without a shell-out.
         ident = os.environ.get("PROCESSOR_IDENTIFIER")
@@ -308,9 +324,20 @@ def _detect_accelerator(is_jetson: bool) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _detect_disk(path: str) -> dict[str, Any]:
-    """Total/free space on the volume holding ``path`` (the data dir)."""
+    """Total/free space on the volume holding ``path`` (the data dir).
+
+    A first run checks before the data folder exists, so the space is measured
+    on the nearest folder above it that does (the same drive); the path
+    recorded is still the data folder.
+    """
+    probe = os.path.abspath(path) if path else path
+    while probe and not os.path.exists(probe):
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            break
+        probe = parent
     try:
-        usage = shutil.disk_usage(path)
+        usage = shutil.disk_usage(probe or path)
         return {
             "path": path,
             "total_gb": _bytes_to_gb(usage.total),
@@ -354,7 +381,7 @@ def classify_hardware(total_ram_gb: Optional[float], accelerator_kind: str) -> s
 
     Classes name capacity, not worth: ``unknown`` (RAM undetected — the wizard
     asks), ``minimal`` (<6GB), ``entry`` (6-15), ``mid`` (16-31), ``high``
-    (32-47), ``workstation`` (>=48, e.g. the reference Orin 64GB). The
+    (32-47), ``workstation`` (>=48, e.g. a Jetson AGX Orin 64GB). The
     accelerator does not change the class — RAM binds — but the brain menu uses
     it to speak to speed.
     """

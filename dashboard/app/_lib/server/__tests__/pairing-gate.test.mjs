@@ -13,7 +13,8 @@
  */
 import assert from "node:assert/strict";
 
-const { pathRequiresPairing } = await import("../pairing.ts");
+const { pathRequiresPairing, opensOutsideSwitch, switchOnNeedsPairingResponse,
+  SWITCH_ON_NEEDS_PAIRING } = await import("../pairing.ts");
 
 const ID = "c841a287-b4ab-44d4-8513-4aa929109746"; // shape of a real backend id
 let pass = 0, fail = 0;
@@ -186,6 +187,62 @@ check("knowledge", "/api/pai/chat/VOICE-MEMO", "POST", true, "case spelling stil
 check("knowledge", "/api/pai/chat%2fvoice-memo", "POST", true, "encoded separator still gated");
 check("knowledge", "/api/pai/chat/voice-memo", "GET", true, "any method gated");
 check("off", "/api/pai/chat/voice-memo", "POST", false, "off still means off");
+
+console.log("\n--- the build engine, the owner's programs and files: paired only, reads too ---");
+for (const [path, method] of [
+  ["/api/pai/installed", "GET"],
+  ["/api/pai/build/status", "GET"],
+  ["/api/pai/developer/terminal/open", "POST"],
+  ["/api/pai/keys/brave", "POST"],
+  ["/api/pai/outside", "GET"],
+  ["/api/pai/programs", "GET"],
+  ["/api/pai/programs", "POST"],
+  ["/api/pai/programs/p0123abcd/launch", "POST"],
+  ["/api/pai/files/open", "POST"],
+  ["/api/pai/PROGRAMS", "GET"],
+  ["/api/pai/files%2fopen", "POST"],
+]) {
+  check("knowledge", path, method, true, "gated at the shipped default");
+  check("all", path, method, true, "gated at all");
+}
+check("knowledge", "/api/pai/programsx", "GET", false, "segment-anchored: /programsx is not /programs");
+check("knowledge", "/api/pai/filesystem", "GET", false, "segment-anchored: /filesystem is not /files");
+
+console.log("\n--- switching an outside service ON through /system/egress/door ---");
+const enc = (v) => new TextEncoder().encode(typeof v === "string" ? v : JSON.stringify(v));
+function sw(path, method, body, expected, label) {
+  const got = opensOutsideSwitch(path, method, body);
+  const ok = got === expected;
+  if (ok) pass++; else fail++;
+  console.log(`${ok ? "PASS" : "FAIL"}  ${method.padEnd(6)} /${path.join("/")}  -> needs pairing=${got} (want ${expected})   ${label}`);
+}
+const DOOR = ["system", "egress", "door"];
+for (const id of ["github", "toolsmith_cloud", "web_search", "model_pull"]) {
+  sw(DOOR, "POST", enc({ id, open: true }), true, `${id} on needs pairing`);
+  sw(DOOR, "POST", enc({ id, open: false }), false, `${id} off needs none`);
+}
+sw(DOOR, "POST", enc({ id: "github", open: "false" }), true, "a string is not false: fails closed");
+sw(DOOR, "POST", enc({ id: "github", open: 0 }), true, "0 is not false: fails closed");
+sw(DOOR, "POST", enc({ id: "github" }), true, "no open: fails closed");
+sw(DOOR, "POST", enc({ id: "github", open: false, other: true }), false, "other keys do not matter");
+sw(DOOR, "POST", enc('{"id":"github","open":false,"open":true}'), true, "duplicate key: last wins, as the backend reads it");
+sw(DOOR, "POST", enc("not json"), true, "not JSON: fails closed");
+sw(DOOR, "POST", undefined, true, "no body: fails closed");
+sw(DOOR, "POST", new Uint8Array([0xff, 0xfe]), true, "not UTF-8: fails closed");
+sw(DOOR, "PUT", enc({ id: "github", open: true }), true, "any write method");
+sw(["System", "Egress", "DOOR"], "POST", enc({ id: "github", open: true }), true, "case does not dodge it");
+sw([...DOOR, ""], "POST", enc({ id: "github", open: true }), true, "trailing slash does not dodge it");
+sw(DOOR, "GET", undefined, false, "a read is not a switch");
+sw([...DOOR, "github"], "GET", undefined, false, "the per-switch read is not a switch");
+sw(["system", "egress", "policy"], "POST", enc({ open: true }), false, "another route");
+{
+  const res = switchOnNeedsPairingResponse();
+  const body = JSON.parse(await res.text());
+  const ok = res.status === 403 && body.success === false && body.error === SWITCH_ON_NEEDS_PAIRING
+    && !/door/i.test(SWITCH_ON_NEEDS_PAIRING);
+  if (ok) pass++; else fail++;
+  console.log(`${ok ? "PASS" : "FAIL"}  refusal is a 403 with the plain sentence`);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 assert.equal(fail, 0, `${fail} gate assertions failed`);

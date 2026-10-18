@@ -17,6 +17,10 @@ from dataclasses import dataclass, field
 from typing import Optional
 from enum import Enum
 
+#: The two zones' collection names (Zone 1 personal, Zone 2 general).
+VAULT_COLLECTION = "puffpai_vault"
+KNOWLEDGE_COLLECTION = "puffpai_knowledge"
+
 
 class ResultSource(Enum):
     """Where a RAG result came from."""
@@ -103,6 +107,14 @@ class RAGResponse:
         return [r for r in self.results if r.source == ResultSource.KNOWLEDGE]
 
 
+def chroma_settings():
+    """The one Chroma client setting this build uses: usage reports to Chroma's
+    maker are off. Every client for the same folder must use the same
+    settings, so every client is made with this."""
+    from chromadb.config import Settings
+    return Settings(anonymized_telemetry=False)
+
+
 class DualZoneRAG:
     """Query both personal (vault) and general (knowledge) ChromaDB collections.
 
@@ -149,33 +161,46 @@ class DualZoneRAG:
         can query indexed library collections without changes.
         """
         if self._client is None:
-            import os
             import chromadb
 
-            db_path = self._db_path
-            if db_path is None:
-                # Read from centralized config
-                try:
-                    from puffpai.config import get_config
-                    cfg = get_config()
-                    db_path = cfg.paths.chromadb_path or cfg.chromadb.path
-                except Exception:
-                    db_path = "./kiwix_rag_db"
+            from . import reading_helper
 
-            # Resolve relative paths against REPO_ROOT so we always
-            # find the real data regardless of the current working dir.
-            if not os.path.isabs(db_path):
-                try:
-                    from puffpai.config import get_config
-                    repo_root = get_config().REPO_ROOT
-                except Exception:
-                    repo_root = os.path.dirname(
-                        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                    )
-                db_path = os.path.join(repo_root, db_path)
-
-            self._client = chromadb.PersistentClient(path=db_path)
+            # Chroma's own embedder may never fetch its model from the
+            # internet: it is found on this computer or it is absent.
+            reading_helper.install_guard()
+            db_path = (self._db_path if self._db_path is not None
+                       else self._default_db_path())
+            self._client = chromadb.PersistentClient(
+                path=self._absolute(db_path), settings=chroma_settings())
         return self._client
+
+    @staticmethod
+    def _default_db_path() -> str:
+        """The configured ChromaDB folder, as an absolute path."""
+        # Read from centralized config
+        try:
+            from puffpai.config import get_config
+            cfg = get_config()
+            db_path = cfg.paths.chromadb_path or cfg.chromadb.path
+        except Exception:
+            db_path = "./kiwix_rag_db"
+        return DualZoneRAG._absolute(db_path)
+
+    @staticmethod
+    def _absolute(db_path: str) -> str:
+        """Resolve a relative path against REPO_ROOT so we always find the
+        real data regardless of the current working dir."""
+        import os
+        if os.path.isabs(db_path):
+            return db_path
+        try:
+            from puffpai.config import get_config
+            repo_root = get_config().REPO_ROOT
+        except Exception:
+            repo_root = os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            )
+        return os.path.join(repo_root, db_path)
 
     def query(self, query_text: str, n_results: int = 5,
               authenticated: bool = False,

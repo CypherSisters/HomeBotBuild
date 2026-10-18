@@ -40,6 +40,30 @@ PARTS = ("posture", "vault", "bridge")
 #: A Bridge posture id or a build-network id typed rather than picked.
 _ID_PATTERN = r"^[a-z][a-z0-9_]{0,39}$"
 
+#: Plain words for every option this package offers. The ids stay the ids the
+#: runtime reads; nothing a person sees is an id, so a person can read and
+#: understand what they are choosing.
+BUILD_NETWORK_WORDS = {
+    "online": "Online while building: it may download what the plan lists",
+    "offline": "Offline while building: only what is already on this computer",
+}
+RUN_EGRESS_WORDS = {
+    "sealed": "Nothing at all, not even your home network",
+    "island": ("Your home network, and on the internet only HomeBot's own "
+               "tools for finding things, each with an off switch"),
+    "enumerated": "Only the outside services on the plan",
+}
+BRIDGE_WORDS = {
+    "open_yard": ("Keep what I already said yes to (today this works the "
+                  "same as asking once)"),
+    "fenced": ("Ask once for each outside service when it is added, and let "
+               "me switch any of them off"),
+    "drawbridge_up": ("Reach only the services I switch on, nothing else at "
+                      "home or on the internet"),
+}
+# The old per-visit asking choice (moat) was never built and is
+# folded into "fenced" (zone_bridge.RETIRED_POSTURES).
+
 
 # -- which part -----------------------------------------------------------
 
@@ -108,23 +132,27 @@ def _propose_posture(ctx) -> dict:
                applied.get("build_network") or "") in net_ids else "")
     egress = (str(applied.get("run_egress") or "") if str(
                   applied.get("run_egress") or "") in egress_ids else "")
+    # What the summary settled comes next: this card is not shown any more,
+    # and what it proposes has to be what the owner said yes to.
+    planned_net, planned_egress = _from_summary(ctx)
     net = net or _stated(ctx.args, "build_network", net_ids) \
-        or build_posture.DEFAULT_BUILD_NETWORK
+        or planned_net or build_posture.DEFAULT_BUILD_NETWORK
     egress = egress or _stated(ctx.args, "run_egress", egress_ids) \
-        or build_posture.DEFAULT_RUN_EGRESS
+        or planned_egress or build_posture.DEFAULT_RUN_EGRESS
 
     fields = [
         {"id": "build_network", "kind": "choice",
-         "label": "Can this machine reach the internet WHILE YOU BUILD?",
-         "options": [_option(opt) for opt in options["build_network"]],
+         "label": "Can this computer use the internet while we build?",
+         "options": [_option(opt, BUILD_NETWORK_WORDS)
+                     for opt in options["build_network"]],
          "current": net,
-         "help": "This decides what the rest of the wizard may offer you. An "
-                 "offline build is never shown a download it cannot make."},
+         "help": "Measured on this computer. Offline, nothing is downloaded."},
         {"id": "run_egress", "kind": "choice",
-         "label": "What may the FINISHED BOT reach when it runs?",
-         "options": [_option(opt) for opt in options["run_egress"]],
+         "label": "What may the finished bot reach when it runs?",
+         "options": [_option(opt, RUN_EGRESS_WORDS)
+                     for opt in options["run_egress"]],
          "current": egress,
-         "help": build_posture.ENUMERATED_VS_MOAT_NOTE},
+         "help": "Everything not on the plan stays shut."},
     ]
 
     # The door table is offered only where doors mean anything: the enumerated
@@ -136,23 +164,26 @@ def _propose_posture(ctx) -> dict:
     if egress == "enumerated":
         fields.append({
             "id": "doors", "kind": "multi_choice",
-            "label": "Which doors are open when it runs?",
-            "options": [_option(opt) for opt in options["egress_switches"]],
+            "label": "Which outside services may it use?",
+            "options": [_switch_option(opt)
+                        for opt in options["egress_switches"]],
             "current": _applied_doors(applied, options)
-                       or _stated_doors(ctx.args, options),
-            "help": "Every door starts shut. Open only the ones you want, by "
-                    "name."})
+                       or _stated_doors(ctx.args, options)
+                       or _summary_doors(ctx, options),
+            "help": "Every one starts off. Only the ones you switch on are "
+                    "used."})
     else:
         fields.append({
-            "id": "doors_note", "kind": "info", "label": "Doors",
-            "current": "Individual doors belong to the enumerated tier. Pick "
-                       "it here and this card comes back with the list."})
+            "id": "doors_note", "kind": "info",
+            "label": "Outside services",
+            "current": "None. Outside services can only be switched on when "
+                       "the finished bot may use the internet."})
 
     consequential = egress == "enumerated"
     card = {
         "skill": "secure", "section": "posture",
-        "title": "What this build may reach",
-        "decided": build_posture.describe_combination(net, egress),
+        "title": "What it may reach",
+        "decided": _reach_sentence(net, egress),
         "status": "ready",
         "consequential": consequential,
         "consequential_reasons": ["runtime_egress"] if consequential else [],
@@ -163,7 +194,9 @@ def _propose_posture(ctx) -> dict:
     # gates every later menu is filtered by. ``assess_posture`` decides, it does
     # not persist -- the write is ``persist_posture`` in the apply, and it is
     # not called here.
-    doors = _applied_doors(applied, options) or _stated_doors(ctx.args, options)
+    doors = (_applied_doors(applied, options)
+             or _stated_doors(ctx.args, options)
+             or _summary_doors(ctx, options))
     preview_posture = setup_ops.assess_posture(
         net, egress, doors if egress == "enumerated" else [])
     return {"card": card,
@@ -174,11 +207,54 @@ def _propose_posture(ctx) -> dict:
                     preview_posture.get("build_network") or "")}}
 
 
-def _option(opt) -> dict:
+def _option(opt, words: dict) -> dict:
+    value = str(opt.get("id"))
+    return {"value": value, "label": words.get(value) or value}
+
+
+def _switch_option(opt) -> dict:
     label = str(opt.get("label") or opt.get("id"))
     description = str(opt.get("description") or "")
     return {"value": str(opt.get("id")),
-            "label": f"{label} -- {description}" if description else label}
+            "label": f"{label}: {description}" if description else label}
+
+
+def _reach_sentence(net: str, egress: str) -> str:
+    building = ("It may download while we build" if net == "online"
+                else "Nothing is downloaded while we build")
+    running = {"sealed": "and the finished bot reaches nothing at all.",
+               "island": "and the finished bot stays on your home network.",
+               "enumerated": "and the finished bot uses only the outside "
+                             "services on the plan."}.get(egress, "")
+    return f"{building}, {running}".rstrip(", ")
+
+
+def _from_summary(ctx) -> tuple[str, str]:
+    """(build network, runtime reach) the measured internet and the approved
+    summary imply, or empty strings where they say nothing."""
+    from puffpai.wizard import proposal
+
+    shared = getattr(ctx, "shared", None) or {}
+    internet = shared.get("internet")
+    net = "online" if internet is True else "offline" if internet is False \
+        else ""
+    state = shared.get("summary")
+    egress = ""
+    if isinstance(state, dict) and state.get("approved") \
+            and not state.get("non_interactive"):
+        egress = proposal.run_egress_for(state, ctx.args) or ""
+    elif isinstance(state, dict) and proposal.runtime_reach(state):
+        egress = "enumerated"
+    return net, egress
+
+
+def _summary_doors(ctx, options) -> list[str]:
+    from puffpai.wizard import proposal
+
+    known = {str(opt["id"]) for opt in options["egress_switches"]}
+    state = (getattr(ctx, "shared", None) or {}).get("summary")
+    return [ref for ref in proposal.approved_refs(state, "door")
+            if ref in known]
 
 
 def _stated_doors(args, options) -> list[str]:
@@ -193,6 +269,17 @@ def _applied_doors(applied: dict, options) -> list[str]:
     known = {str(opt["id"]) for opt in options["egress_switches"]}
     return [str(door) for door in (applied.get("enabled_switches") or ())
             if str(door) in known]
+
+
+def _reach_is_the_presets(ctx, answers: dict, posture: dict) -> bool:
+    """True when the run-time reach is the one the build's preset put on the
+    run's arguments, with nobody stating one: a default, not a choice."""
+    from puffpai import homebot_preset
+
+    shared = getattr(ctx, "shared", None) or {}
+    return (not answers.get("run_egress")
+            and bool(shared.get(homebot_preset.RUN_EGRESS_DEFAULTED_KEY))
+            and posture.get("run_egress") == homebot_preset.RUN_EGRESS)
 
 
 def _apply_posture(ctx, answers: dict) -> dict:
@@ -221,6 +308,8 @@ def _apply_posture(ctx, answers: dict) -> dict:
         posture = applied
     else:
         posture = setup_ops.assess_posture(net, egress, doors)
+        if _reach_is_the_presets(ctx, answers, posture):
+            posture = dict(posture, run_egress_source="defaulted")
     setup_ops.persist_posture(posture)
     gates = setup_ops.posture_gates(posture)
 
@@ -232,14 +321,20 @@ def _apply_posture(ctx, answers: dict) -> dict:
         "note": build_posture.describe_combination(
             posture.get("build_network"), posture.get("run_egress")),
     }
+    from puffpai.wizard import proposal
+    shared = getattr(ctx, "shared", None) or {}
+    # ``switches_off_by_design``: a build whose preset ships every outside
+    # service off, so none being on is the build, not a gap in it.
     if posture.get("run_egress") == "enumerated" and not posture.get(
-            "enabled_switches"):
+            "enabled_switches") and not proposal.runtime_reach(
+                shared.get("summary")) \
+            and not shared.get("switches_off_by_design"):
         result["gap"] = {
             "skill": "secure",
-            "what": "You chose the enumerated tier and no door is open.",
-            "why": "Every door starts shut, and none was named on this pass.",
-            "impact": "Your bot reaches nothing outside your own network until "
-                      "you open one by name.",
+            "what": "Outside services are allowed, but none is switched on.",
+            "why": "Every outside service starts off, and none was switched on.",
+            "impact": "Your bot reaches nothing outside your home network "
+                      "until you switch one on.",
             "fix": {"kind": "command", "id": "setup.rerun", "args": {}},
         }
     return result
@@ -260,29 +355,30 @@ def _vault_state(ctx) -> tuple[str, bool]:
 
 def _propose_vault(ctx) -> dict:
     """Zone 1. The card asks for a PIN twice and carries neither."""
-    from puffpai import cli, zone_vault
-    from puffpai.wizard import secure_vault
+    from puffpai import cli
+    from puffpai.wizard import secure_vault, wording
 
     cli.enter_step("Zone 1, the Vault")
     vdir, sealed = _vault_state(ctx)
     skipping = bool(getattr(ctx.args, "skip_vault", False))
     showable = secure_vault.can_show(ctx)
+    mode = wording.mode_of(getattr(ctx, "shared", None) or {})
+    name = str((getattr(ctx, "shared", None) or {}).get("bot_name")
+               or cli.DEFAULT_BOT_NAME)
 
     fields = [{"id": "intro", "kind": "info", "label": "What this is",
-               "current": " ".join(zone_vault.PIN_INTRO_LINES)}]
+               "current": _one_line(wording.say("vault_what", mode,
+                                                name=name))}]
     if sealed:
         fields.append({
-            "id": "existing", "kind": "info", "label": "Already set",
-            "current": f"An encrypted vault already exists at {vdir}. It is "
-                       f"left untouched, and no new recovery code is issued "
-                       f"for it."})
-        decided = "Your vault is sealed. Nothing on this card changes it."
+            "id": "existing", "kind": "info", "label": "Already set up",
+            "current": wording.say("vault_exists", mode)})
+        decided = wording.say("vault_exists", mode)
         status = "ready"
     elif skipping:
         fields.append({"id": "skipping", "kind": "info", "label": "Skipped",
-                       "current": "You asked to skip the vault. Nothing is "
-                                  "protected until you set a PIN."})
-        decided = "No vault. Nothing on this box is encrypted."
+                       "current": wording.say("vault_skipped", mode)})
+        decided = wording.say("vault_skipped", mode)
         status = "needs_you"
     elif not showable:
         # Fail closed, and say so on the card rather than at the failure. This
@@ -291,29 +387,28 @@ def _propose_vault(ctx) -> dict:
         # dashboard's own Vault step (POST /setup/vault) does have one, which is
         # what the owner is pointed at rather than a terminal they may not have.
         fields.append({
-            "id": "no_screen", "kind": "info", "label": "Not from this screen",
-            "current": "Set the vault PIN in the step-by-step setup (Vault "
-                       "step). A vault issues one recovery code, shown once, "
-                       "and this screen has no way to show it to you."})
-        decided = "Set the vault PIN in the step-by-step setup (Vault step)."
+            "id": "no_screen", "kind": "info", "label": "On the next screen",
+            "current": wording.say("vault_no_screen", mode)})
+        decided = wording.say("vault_no_screen", mode)
         status = "needs_you"
     else:
+        # The vault lives in the folder this build's settings name (this
+        # computer by default); HomeBot's vault is not moved or swapped here.
         fields.append({
-            "id": "pin", "kind": "secret_entry", "label": "Your vault PIN",
-            "help": "Not shown as you type, and never written down by this "
-                    "build. Digits-only PINs need at least ten digits; common "
-                    "sequences are refused."})
+            "id": "pin", "kind": "secret_entry",
+            "label": wording.say("vault_pin", mode),
+            "help": _one_line(wording.say("vault_pin_help", mode))})
         fields.append({
             "id": "pin_again", "kind": "secret_entry",
-            "label": "Type it once more",
-            "help": "Both entries have to match, or nothing is created."})
+            "label": wording.say("vault_pin_again", mode),
+            "help": wording.say("vault_pin_again_help", mode)})
         # The folder is its own line: in the summary it pushed the sentence
         # past the card's length cap on machines with long paths.
         fields.append({
             "id": "where", "kind": "info", "label": "Where it lives",
             "current": str(vdir)})
-        decided = ("Set a PIN and this build seals an encrypted vault and "
-                   "shows you one recovery code, once.")
+        decided = ("Choose a PIN. Then you get one recovery code, shown "
+                   "once, in case you ever forget the PIN.")
         status = "needs_you"
         if not getattr(ctx.args, "vault_password", None) and ctx.non_interactive:
             # Today's wording, kept. The questions above stay on the card --
@@ -323,15 +418,12 @@ def _propose_vault(ctx) -> dict:
             # happens rather than after.
             fields.append({
                 "id": "no_keyboard", "kind": "info",
-                "label": "On this run, nothing will be created",
-                "current": "Skipping vault creation. This is a "
-                           "non-interactive run, and a recovery code nobody "
-                           "reads is not a recovery code. Run `puffpai setup` "
-                           "at a keyboard, or pass --vault-pin if you accept "
-                           "that no one will confirm the code."})
+                "label": "On this run, no vault is made",
+                "current": wording.say("vault_no_keyboard", mode)})
 
     card = {
-        "skill": "secure", "section": "posture", "title": "Zone 1, the Vault",
+        "skill": "secure", "section": "posture",
+        "title": wording.say("vault_title", mode),
         "decided": decided, "status": status,
         "consequential": not sealed,
         "consequential_reasons": [] if sealed else ["vault_pin_unset"],
@@ -429,8 +521,11 @@ def _apply_vault(ctx, answers: dict) -> dict:
                       "finished.",
             "fix": {"kind": "command", "id": "setup.rerun", "args": {}}})
 
+    from puffpai.wizard import wording
+    young = wording.mode_of(getattr(ctx, "shared", None) or {}) == wording.SIMPLE
     confirmed = secure_vault.show_and_confirm(
-        code, pin, vault, sink=sink, non_interactive=ctx.non_interactive)
+        code, pin, vault, sink=sink, non_interactive=ctx.non_interactive,
+        young=young)
     del code, pin
     block["recovery_confirmed"] = bool(confirmed)
     block["ready"] = True
@@ -472,36 +567,40 @@ def _propose_bridge(ctx) -> dict:
                  getattr(args, "bridge_posture", None) or "")
     known = {str(item.get("id")) for item in postures}
     if chosen not in known:
-        chosen = str(recommendation.get("recommended")
-                     or zone_bridge.DEFAULT_POSTURE)
+        chosen = _unanswered_bridge(ctx, recommendation)
     final, note = setup_ops.reconcile_bridge(
         chosen, str(posture.get("run_egress") or ""))
 
     fields = [
         {"id": "home_assistant", "kind": "toggle",
-         "label": "Do you run Home Assistant?", "current": has_ha},
+         "label": "Do you use Home Assistant?", "current": has_ha},
         {"id": "external_firewall", "kind": "toggle",
-         "label": "Do you run your own firewall (OPNsense, pfSense, similar)?",
+         "label": "Do you have a special router or firewall that blocks "
+                  "things?",
          "current": has_firewall},
         {"id": "managed_lan", "kind": "toggle",
-         "label": "Is your home network a managed one (VLANs, per-device "
-                  "rules)?", "current": has_managed_lan},
+         "label": "Is your home network split into separate parts for "
+                  "different devices?", "current": has_managed_lan},
         {"id": "bridge_posture", "kind": "choice",
-         "label": "How far may your bot reach?",
+         "label": "When should it ask you before it reaches out?",
          "options": [_bridge_option(item) for item in postures],
          "current": chosen if chosen in known else "",
          "free_text": True, "pattern": _ID_PATTERN,
-         "help": str(recommendation.get("reason") or "")},
+         "help": "Nothing else on your network checks what it does, so the "
+                 "safest choice is to be asked before anything new reaches "
+                 "outside."},
     ]
     if note:
         fields.append({"id": "reconciled", "kind": "info",
-                       "label": "Reconciled with your posture", "current": note})
+                       "label": "Matched to your other choice",
+                       "current": "Set to the stricter of your two choices "
+                                  "about the internet."})
 
     consequential = str(posture.get("run_egress") or "") == "enumerated"
     card = {
-        "skill": "secure", "section": "posture", "title": "Zone 3, the Bridge",
-        "decided": f"{final}, {'reconciled with' if note else 'inside'} "
-                   f"{_a(posture.get('run_egress') or 'default')} build.",
+        "skill": "secure", "section": "posture",
+        "title": "When it asks first",
+        "decided": BRIDGE_WORDS.get(final, BRIDGE_WORDS["fenced"]) + ".",
         "status": "ready",
         "consequential": consequential,
         "consequential_reasons": ["runtime_egress"] if consequential else [],
@@ -512,10 +611,21 @@ def _propose_bridge(ctx) -> dict:
 
 
 def _bridge_option(item) -> dict:
-    label = str(item.get("label") or item.get("id"))
-    summary = str(item.get("summary") or "")
-    return {"value": str(item.get("id")),
-            "label": f"{label} -- {summary}" if summary else label}
+    value = str(item.get("id"))
+    return {"value": value, "label": BRIDGE_WORDS.get(value) or value}
+
+
+def _one_line(text: str) -> str:
+    return " ".join(str(text or "").split())
+
+
+def _unanswered_bridge(ctx, recommendation: dict) -> str:
+    """The Bridge setting used when nobody picked one: the HomeBot preset's
+    (Moat, every outside service off), else the suggestion for the answers."""
+    from puffpai import homebot_preset, zone_bridge
+    if homebot_preset.is_active(ctx.shared or {}):
+        return homebot_preset.BRIDGE_POSTURE
+    return str(recommendation.get("recommended") or zone_bridge.DEFAULT_POSTURE)
 
 
 def _apply_bridge(ctx, answers: dict) -> dict:
@@ -545,8 +655,7 @@ def _apply_bridge(ctx, answers: dict) -> dict:
     chosen = answers.get("bridge_posture") or getattr(args, "bridge_posture", None)
     chosen_by = "owner"
     if not chosen:
-        chosen = str(recommendation.get("recommended")
-                     or zone_bridge.DEFAULT_POSTURE)
+        chosen = _unanswered_bridge(ctx, recommendation)
         chosen_by = "default"
 
     block = setup_ops.bridge_block(
@@ -624,7 +733,8 @@ def verify(ctx) -> dict:
         except Exception as exc:  # pragma: no cover - defensive
             gaps.append({
                 "skill": "secure",
-                "what": "This build could not read its own door table.",
+                "what": "This build could not read its own list of outside "
+                        "services.",
                 "why": f"{type(exc).__name__}: {exc}",
                 "impact": "What your bot may reach at run time is not proven "
                           "either way.",
@@ -634,13 +744,15 @@ def verify(ctx) -> dict:
         if extra:
             gaps.append({
                 "skill": "secure",
-                "what": "A door is open that this build did not record.",
-                "why": f"the runtime config has {', '.join(extra)} open and "
-                       f"the posture does not",
+                "what": "An outside service is switched on that this build "
+                        "did not record.",
+                "why": f"the settings have {', '.join(extra)} switched on and "
+                       f"the plan does not",
                 "impact": "Your bot can reach something you were not shown.",
                 "fix": {"kind": "command", "id": "setup.rerun", "args": {}}})
         else:
-            evidence.append(f"{len(stored)} door(s) open, all of them recorded")
+            evidence.append(f"{len(stored)} outside service(s) on, all of "
+                            f"them recorded")
 
         gates = setup_ops.posture_gates(posture)
         audit = secure_audit.baseline(posture, gates)
@@ -658,9 +770,3 @@ def verify(ctx) -> dict:
                 "gap": gaps[0]}
     return {"status": "pass", "evidence": "; ".join(evidence) or
             "nothing recorded yet to check"}
-
-
-def _a(word: str) -> str:
-    """'an island', 'a sealed': the article that fits the word."""
-    word = str(word)
-    return f"{'an' if word[:1].lower() in 'aeiou' else 'a'} {word}"

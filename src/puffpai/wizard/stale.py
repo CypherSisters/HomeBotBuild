@@ -83,6 +83,9 @@ FIELD_STALENESS: dict[str, tuple[str, ...]] = {
 MAKES_NOTHING_STALE: frozenset[str] = frozenset({
     "posture.pin", "posture.pin_again", "tools.hub_token",
     "brain.download_now",
+    # The age band only changes how the wizard words its questions; nothing
+    # the build decided depends on it (there is no kid mode).
+    "persona.age",
 })
 
 #: Downstream of every row above, in this order.

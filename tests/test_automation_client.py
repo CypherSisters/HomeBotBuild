@@ -305,12 +305,14 @@ class TestEngineConfig:
             with pytest.raises(ValueError, match="No automation engine"):
                 AutomationClient()
 
-    def test_config_loader_reads_nodered_section(self, tmp_path):
+    def test_config_loader_reads_nodered_section(self, tmp_path, monkeypatch):
         import json
         from puffpai.config import _build_config
 
         cfg_dir = tmp_path / "config"
         cfg_dir.mkdir()
+        # The suite pins its own config folder; this test reads its own.
+        monkeypatch.setenv("PUFFPAI_CONFIG_DIR", str(cfg_dir))
         (cfg_dir / "puffpai_config.json").write_text(json.dumps({
             "nodered": {"url": "http://10.0.0.5:1880", "retries": 4},
         }), encoding="utf-8")
@@ -319,12 +321,13 @@ class TestEngineConfig:
         assert cfg.nodered.url == "http://10.0.0.5:1880"
         assert cfg.nodered.retries == 4
 
-    def test_config_accepts_base_url_alias(self, tmp_path):
+    def test_config_accepts_base_url_alias(self, tmp_path, monkeypatch):
         import json
         from puffpai.config import _build_config
 
         cfg_dir = tmp_path / "config"
         cfg_dir.mkdir()
+        monkeypatch.setenv("PUFFPAI_CONFIG_DIR", str(cfg_dir))
         (cfg_dir / "puffpai_config.json").write_text(json.dumps({
             "nodered": {"base_url": "http://10.0.0.9:1880"},
         }), encoding="utf-8")

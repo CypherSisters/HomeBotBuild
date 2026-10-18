@@ -22,6 +22,12 @@ def part_check(ctx):
     from puffpai import prove
 
     record = prove.static_prove()
+    # The same record the home page reads (GET /build/prove): the closing
+    # screen cannot say "5 passed" while the home page says "Not proven yet".
+    try:
+        prove.write_record(record)
+    except OSError:
+        pass
     note = f"static checks: {record['verdict']}"
     return {
         "section": "prove",

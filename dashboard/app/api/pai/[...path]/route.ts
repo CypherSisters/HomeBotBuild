@@ -12,7 +12,12 @@
  * body is returned directly without buffering.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { requirePairing, proxyDeviceSessionFor } from "@/app/_lib/server/pairing";
+import {
+  opensOutsideSwitch,
+  requirePairing,
+  proxyDeviceSessionFor,
+  switchOnNeedsPairingResponse,
+} from "@/app/_lib/server/pairing";
 import { deviceTokenAllows } from "@/app/_lib/server/deviceToken";
 import {
   isAllowedProxyPath,
@@ -186,6 +191,12 @@ async function proxy(
       );
     }
     body = read.body;
+  }
+  // Switching an outside service ON through the Settings switch list needs a
+  // paired device: the same identity the backend is about to be told
+  // (session.sessionId), and the backend refuses it too. OFF needs none.
+  if (opensOutsideSwitch(path, req.method, body) && !session.sessionId) {
+    return switchOnNeedsPairingResponse();
   }
   const init: RequestInit = {
     method: req.method,

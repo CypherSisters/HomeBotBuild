@@ -72,12 +72,14 @@ def test_a_face_without_the_two_methods_is_nobody():
 # -- what the console face does -----------------------------------------------
 
 def test_the_console_face_prints_the_lines_inside_the_card_fence():
+    """The fence is one blank line now (no dashed marks): it sets the block
+    apart, and the code keeps its indent so it stands out."""
     lines = []
     face = render_cli.ConsoleShowOnce(out=lines.append, ask=lambda prompt: None)
-    face.show(["  write this down", "  ABCD-2345"])
-    assert lines[0] == render_cli.BEGIN_MARK
-    assert lines[-1] == render_cli.END_MARK
-    assert "  ABCD-2345" in lines
+    face.show(["  write this down", "      ABCD-2345"])
+    assert lines[0] == ""
+    assert render_cli.BEGIN_MARK not in lines
+    assert "      ABCD-2345" in lines
 
 
 def test_the_console_face_drops_control_characters():

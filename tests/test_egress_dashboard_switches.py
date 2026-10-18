@@ -60,7 +60,9 @@ def client(api_app):
     app, api_key, mod = api_app
     mod._rate_limit_store.clear()
     with app.test_client() as c:
-        yield c, {"X-API-Key": api_key}, mod
+        # A paired screen: the identity the dashboard proxy asserts from the
+        # pairing cookie, which switching an outside service ON needs.
+        yield c, {"X-API-Key": api_key, "X-Puff-Device-Id": "a" * 32}, mod
 
 
 @pytest.fixture()

@@ -53,6 +53,7 @@ def test_setup_with_a_pipe_on_stdin_terminates(tmp_path):
     # vault that was not created rather than a wizard that stops.
     assert done.returncode in (0, 1), (done.returncode, done.stdout[-2000:])
     assert "Traceback" not in done.stderr, done.stderr[-2000:]
-    assert "Zone 1, the Vault" in done.stdout
+    # HomeBot's vault step is headed in the owner's words.
+    assert "Your private stuff" in done.stdout
     assert os.path.isfile(os.path.join(str(tmp_path / "data"), "config",
                                        "build_manifest.json"))

@@ -40,34 +40,34 @@ def render() -> str:
     add("     Source: src/puffpai/security/egress_doors.py")
     add("     Regenerate: python scripts/gen_egress_doc.py -->")
     add("")
-    add("Every outbound connection this appliance can make is a **door**. A "
-        "door has a name,")
-    add("a fixed set of hosts, a stated purpose, a plain description of what "
-        "data leaves, and")
-    add("a switch. **Every door ships off.** Nothing below happens until "
-        "someone in this")
-    add("house turns it on.")
+    add("Every outbound connection this appliance can make is an **outside "
+        "service** with")
+    add("a name, a fixed set of hosts, a stated purpose, a plain description "
+        "of what data")
+    add("leaves, and a switch. **Every switch ships off.** Nothing below "
+        "happens until")
+    add("someone in this house turns it on.")
     add("")
-    add("One carve-out, stated plainly because a list of doors implies it is the "
-        "whole")
+    add("One carve-out, stated plainly because a list like this implies it is "
+        "the whole")
     add("story: **Node-RED runs in its own container. Flows you enable there "
         "make their")
-    add("own connections and are not doors** — they are not listed below, they "
-        "do not")
-    add("appear in `GET /system/status`, and shutting every door on this page "
-        "does not")
+    add("own connections and have no switch here**: they are not listed below, "
+        "they do not")
+    add("appear in `GET /system/status`, and turning off every switch on this "
+        "page does not")
     add("stop them. What they may reach is whatever you named in the `.env` "
         "beside")
     add("`docker-compose.nodered.yml`; no feed or remote service ships enabled "
         "there.")
     add("See `nodered_flows/README.md`.")
     add("")
-    add("## Where a door's switch lives")
+    add("## Where a switch is set")
     add("")
-    add("Four places can set a door, and they are consulted in this order. "
+    add("Four places can set a switch, and they are consulted in this order. "
         "The first one")
     add("that has an opinion wins; `GET /system/status` publishes a `source` "
-        "field per door")
+        "field per switch")
     add("naming which one it was, so you never have to guess why a switch "
         "will not move.")
     add("")
@@ -79,7 +79,7 @@ def render() -> str:
         "**you**, from Settings > Egress |")
     add("| 3 | `config` | `egress_doors` in `config/puffpai_config.json` | "
         "how the appliance shipped or was provisioned |")
-    add("| 4 | `default` | the door registry | always **shut** |")
+    add("| 4 | `default` | the registry of outside services | always **off** |")
     add("")
     add("### Why your switches are not written into the config file")
     add("")
@@ -93,21 +93,21 @@ def render() -> str:
         "every setting on")
     add("the box. Instead your switches go into a small **overlay** file that "
         "holds nothing")
-    add("but door on/off values, in the data directory the service already "
-        "writes.")
+    add("but on/off values for these switches, in the data directory the "
+        "service already writes.")
     add("")
-    add("The overlay outranks the config file, so a door your appliance "
-        "shipped switched")
-    add("off is still yours to open. It does **not** outrank the environment: "
-        "a door forced")
-    add("shut in the unit file stays shut, and the switch tells you so "
+    add("The overlay outranks the config file, so a switch your appliance "
+        "shipped off")
+    add("is still yours to turn on. It does **not** outrank the environment: "
+        "a switch forced")
+    add("off in the unit file stays off, and the switch tells you so "
         "instead of pretending.")
     add("")
-    add("The overlay is per-door. A door it does not mention falls through to "
-        "the config")
-    add("file and then to the default, which is shut. If the overlay is ever "
+    add("The overlay is per switch. A switch it does not mention falls "
+        "through to the config")
+    add("file and then to the default, which is off. If the overlay is ever "
         "unreadable,")
-    add("**every door is treated as shut**. A file we cannot read is not "
+    add("**every switch is treated as off**. A file we cannot read is not "
         "consent.")
     add("")
     add("The config file still looks like this, and is still the right place "
@@ -122,23 +122,23 @@ def render() -> str:
     add("}")
     add("```")
     add("")
-    add("`GET /system/status` returns this same table live, with each door's "
-        "current state,")
+    add("`GET /system/status` returns this same table live, with each "
+        "switch's current state,")
     add("its `source`, and when it was last used. `POST /system/egress/door` "
         "(owner-")
     add("authenticated) is what the Settings screen calls to change one.")
     add("")
 
-    add("## Where a door may actually go")
+    add("## Where an outside service may actually go")
     add("")
-    add("A door names hosts. A hostname is not a destination. It is a "
-        "question asked of a")
+    add("An outside service names hosts. A hostname is not a destination. It "
+        "is a question asked of a")
     add("name server, and the answer decides which machine the socket "
         "actually reaches. So")
-    add("before this appliance connects to a door's host it looks that name "
-        "up and checks")
-    add("**every** address the answer contains. A door may only reach an "
-        "address on the")
+    add("before this appliance connects to one of those hosts it looks that "
+        "name up and checks")
+    add("**every** address the answer contains. An outside service may only "
+        "reach an address on the")
     add("public internet. If any answer is on your own network, such as loopback, "
         "`10.x`, `192.168.x`,")
     add("`172.16-31.x`, a link-local `169.254.x` cloud-metadata address, a "
@@ -153,7 +153,7 @@ def render() -> str:
         "that check. Looking a")
     add("name up, approving it, and then handing the *name* to an HTTP "
         "client that looks it up")
-    add("again is a door with a gap in it: a name server that answers "
+    add("again leaves a gap: a name server that answers "
         "\"public\" the first time")
     add("and \"your router\" the second walks straight through. Pinning "
         "closes it. The encrypted")
@@ -161,13 +161,13 @@ def render() -> str:
         "request and nothing")
     add("about the connection is weakened.")
     add("")
-    add("This matters most for a door whose host **this appliance did not "
-        "choose**. Every host")
+    add("This matters most for an outside service whose host **this "
+        "appliance did not choose**. Every host")
     add("below was picked by us, and their name servers are not ours to "
         "worry about. The check")
-    add("exists because a door whose hostname arrives from somewhere else, "
-        "a downloadable")
-    add("pack or an edited config, is a door whose author would otherwise "
+    add("exists because an outside service whose hostname arrives from "
+        "somewhere else, a downloadable")
+    add("pack or an edited config, is one whose author would otherwise "
         "choose the address")
     add("behind it, and could point a perfectly innocent-looking feed at "
         "the inside of your")
@@ -181,14 +181,14 @@ def render() -> str:
         "in a log file.")
     add("")
 
-    add("## The doors")
+    add("## The outside services")
     add("")
     for d in DOORS:
         add(f"### `{d.id}`{', third party' if d.third_party else ''}")
         add("")
         if d.derived:
-            goes_to = ("only a host some other door you opened already "
-                       "contacts. This door has none of its own")
+            goes_to = ("only a host some other switch you turned on "
+                       "already contacts. This one has none of its own")
         elif d.hosts:
             goes_to = ", ".join(f"`{h}`" for h in d.hosts)
         else:
@@ -201,7 +201,7 @@ def render() -> str:
         add(f"- **Switch:** `{CONFIG_SECTION}.{d.config_flag}` "
             f"(env `{d.env_var}`)")
         if d.derived:
-            add("- **Ships:** contacts nothing until another door is open; "
+            add("- **Ships:** contacts nothing until another switch is on; "
                 "the switch is a hard **off**, not an on")
         else:
             add(f"- **Ships:** off")
@@ -209,15 +209,16 @@ def render() -> str:
             add("- **Reaches:** this house's own network only. Its hosts must "
                 "resolve to a private address; a public one is refused.")
         if d.enforcement == "registry":
-            add("- **Enforced by:** the egress-door registry. With the switch "
+            add("- **Enforced by:** the registry of outside services. With "
+                "the switch "
                 "off the call is refused before any socket opens, before the "
                 "hostname is even looked up. With the switch on, the host must "
                 "be one of those named above AND must resolve to a public "
                 "address, and the connection is pinned to it.")
         elif d.enforcement == "derived":
-            add("- **Enforced by:** the other doors. It can only reach a host "
-                "an open door already contacts, so with every door shut it "
-                "opens no socket at all.")
+            add("- **Enforced by:** the other switches. It can only reach a "
+                "host a switched-on service already contacts, so with every "
+                "switch off it opens no socket at all.")
         elif d.enforcement == "external":
             if d.id in _HONOURED_EXTERNAL:
                 add("- **Enforced by:** the code that opens the socket, which "
@@ -242,6 +243,42 @@ def render() -> str:
             add(f"- **Note:** {d.notes}")
         add("")
 
+    # ── the build engine's switches ───────────────────────────────────
+    #
+    # Rendered from ``puffpai.outside_services.rows()``, the list "What leaves
+    # your computer" shows, for every switch that is not in the registry above.
+    # Their on/off values live in ``outside_switches.json``; only the fixed
+    # text of each row is rendered here, never its current state.
+    from puffpai import outside_services as _outside
+
+    doc_ids = {d.id for d in DOORS}
+    engine_rows = [r for r in _outside.rows()
+                   if r["id"] not in doc_ids
+                   and r.get("kind") in ("as_built", "as_part")]
+    add("## Finding and adding apps, books and pictures")
+    add("")
+    add("The build engine (finding apps, skills, books and pictures, and adding "
+        "the ones you say yes to)")
+    add("uses the outside services below. Each has its own switch on **What "
+        "leaves your computer**,")
+    add("kept in `$PUFFPAI_DATA_DIR/state/outside_switches.json`, and each "
+        "ships off: nothing")
+    add("here is reached until you switch it on, and the Bridge decides on "
+        "top of that.")
+    add("")
+    for r in engine_rows:
+        add(f"### `{r['id']}`")
+        add("")
+        add(f"- **Name:** {r['name']}")
+        add(f"- **Goes to:** " + ", ".join(
+            f"`{w}`" if "." in w and " " not in w else w
+            for w in r.get("websites") or []))
+        add(f"- **What it is for:** {r['for']}")
+        add(f"- **What leaves the house:** {r['what_leaves']}")
+        add(f"- **Switch:** `outside_switches.{r['id']}`, off until you "
+            f"switch it on")
+        add("")
+
     # ── skills the household installed ────────────────────────────────
     #
     # Rendered from ``egress_doors.skill_doors()``, which is the same table the
@@ -258,29 +295,29 @@ def render() -> str:
     add("It runs in a sandbox with **no network of its own**, so it cannot open "
         "a socket at all;")
     add("it can only ask this appliance to fetch a URL for it, and that ask "
-        "goes through a door")
+        "goes through a switch")
     add("of its own named `skill:<id>:0`.")
     add("")
-    add("The rules for that door, none of which a skill can change about "
+    add("The rules for that switch, none of which a skill can change about "
         "itself:")
     add("")
     add("- **Its hosts are the ones in the skill's `manifest.json` under "
         "`permissions.network_hosts`**, shown to you on the consent card before "
         "you approve anything. A host the manifest did not name is refused even "
-        "when the door is open.")
-    add("- **It ships shut, like every other door**, and the switch is keyed to "
+        "when the switch is on.")
+    add("- **It ships off, like every other switch**, and the switch is keyed to "
         "a digest of that exact host set. Re-propose the same skill with one "
-        "more host and it is a different key — so a skill cannot widen its own "
+        "more host and it is a different key, so a skill cannot widen its own "
         "reach by editing a file after you said yes.")
     add("- **`https` only, port 443 only, `GET` only**, with a cap on the URL, "
         "the query string, the number of requests per run and the size of the "
         "answer.")
     add("- **A host that resolves onto your own network is refused.** Skill "
-        "doors are public-internet doors: the address check above applies to "
+        "switches are for the public internet: the address check above applies to "
         "them unchanged, so a skill cannot reach your router, your NAS or "
         "anything else indoors, whatever name it declares. There is no LAN "
-        "skill door in this build.")
-    add("- **Switch the skill off, or remove it, and the door and your `true` "
+        "skill switch in this build.")
+    add("- **Switch the skill off, or remove it, and its switch and your `true` "
         "for it both go** in the same breath.")
     add("- **A single refusal switches the skill off.** A skill reaching for a "
         "host you did not approve is not a skill to retry.")
@@ -289,7 +326,7 @@ def render() -> str:
     if not live_skill_doors:
         add("No skill is installed on the box this page was generated from, so "
             "there are no skill")
-        add("doors below. `GET /system/status` is the live list.")
+        add("switches below. `GET /system/status` is the live list.")
         add("")
     else:
         for d in live_skill_doors:
@@ -303,12 +340,12 @@ def render() -> str:
             add("- **Ships:** shut")
             add("")
 
-    add("## Settings that are not doors")
+    add("## Settings that are not outside services")
     add("")
-    add("A door says **where** this appliance may go. These say **who on the "
-        "box may walk")
-    add("through an open one**. They open nothing by themselves: with every "
-        "web door shut,")
+    add("An outside service says **where** this appliance may go. These say "
+        "**who on the box may")
+    add("use one that is on**. They open nothing by themselves: with every "
+        "web switch off,")
     add("turning one of these on changes nothing at all.")
     add("")
     for p in POLICIES:
@@ -325,12 +362,12 @@ def render() -> str:
         if p.notes:
             add(f"- **Note:** {p.notes}")
         add("")
-    add("These resolve through the same four tiers a door does. Environment, "
+    add("These resolve through the same four tiers a switch does. Environment, "
         "then the owner")
     add("overlay, then the config file, then the code default. The "
         "overlay for them is")
     add("`$PUFFPAI_DATA_DIR/state/egress_policy.json`, a separate file from "
-        "the doors' own so")
+        "the switches' own so")
     add("that changing one can never touch the other. "
         "`POST /system/egress/policy` (owner-")
     add("authenticated, body `{\"id\": …, \"value\": true|false}`) is what "
@@ -339,9 +376,9 @@ def render() -> str:
 
     add("## The record")
     add("")
-    add("Every door decision, allowed **and refused**, is appended to "
+    add("Every decision, allowed **and refused**, is appended to "
         "`security_logs/egress.jsonl`")
-    add("on the appliance, with the door, the host, the URL path, which part "
+    add("on the appliance, with the switch, the host, the URL path, which part "
         "of the code asked,")
     add("and how many bytes were sent. Refusals also get one line in the "
         "system journal at")
@@ -488,7 +525,7 @@ def render() -> str:
     add("question out.")
     add("")
 
-    add("## What is deliberately not a door")
+    add("## What deliberately has no switch")
     add("")
     add("These reach machines on your own network or on the appliance itself, "
         "so nothing")

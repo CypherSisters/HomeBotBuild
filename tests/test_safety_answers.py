@@ -651,6 +651,9 @@ def trivia_bench(monkeypatch):
     monkeypatch.setattr(api, "_get_assistant_tools",
                         lambda: _FakeTools(app_trivia_question=tool))
     monkeypatch.setattr(trivia_game, "_AppDataStore", _MemoryStore)
+    # The suite never reaches a real Ollama, so the model requirement is
+    # answered here: this bench has a model.
+    monkeypatch.setattr(api, "_app_unavailable_reason", lambda app_id: "")
     return tool
 
 

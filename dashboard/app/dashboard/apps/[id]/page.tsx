@@ -26,6 +26,11 @@
  * The write path is the generic one: pull the document, change it, push it back
  * with PUT. That is what an app gets without anybody writing code.
  *
+ * A browser app Toolsmith added has an issued id (`<slug>-<8 base32>`, which
+ * no declarative app id can have: those use no hyphen) and opens in its locked
+ * frame instead. A live card a job uses lives on that job's page, and the
+ * bot's own page lists its apps, one row per job.
+ *
  * BuildBot's generic app page, rendered in this shell's components.
  */
 
@@ -58,6 +63,10 @@ import {
 } from "@/app/_lib/services/personaService";
 import { notifyBuildChanged } from "@/app/_lib/services/buildEvents";
 import { CHAT_ROUTE, stashChatQuery } from "@/app/_lib/chatHandoff";
+import { feedThingId, useJobRedirect } from "@/app/_lib/hooks/useJobRedirect";
+import WebAppFrame, { WEB_APP_ID } from "./WebAppFrame";
+import WebAppHeader from "./AppHeader";
+import BotApps from "./BotApps";
 
 type AppDocument = Record<string, unknown>;
 
@@ -93,8 +102,45 @@ function columnsOf(rows: unknown[]): string[] {
 
 export default function GenericAppPage() {
   const params = useParams<{ id: string }>();
+  const id = String(params?.id ?? "");
+  if (WEB_APP_ID.test(id)) return <WebAppPage id={id} />;
+  return <DeclarativeAppPage />;
+}
+
+/** The friendly name the build knows for a browser app, else its id's words. */
+function WebAppPage({ id }: { id: string }) {
+  const [name, setName] = useState(() => id.replace(/-[a-z2-7]{8}$/, "").replace(/-/g, " "));
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const apps = await getInstalledApps();
+        const found = apps?.find((entry) => entry.id === id);
+        if (!cancelled && found && typeof found.name === "string" && found.name.trim()) {
+          setName(found.name.trim().slice(0, 60));
+        }
+      } catch {
+        /* the id's own words stay */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+  return (
+    <div style={{ padding: "12px 16px" }}>
+      <WebAppHeader id={id} name={name} />
+      <WebAppFrame id={id} title={name} />
+    </div>
+  );
+}
+
+function DeclarativeAppPage() {
+  const params = useParams<{ id: string }>();
   const router = useRouter();
   const id = String(params?.id ?? "");
+  // A live card a job uses lives on that job's page.
+  useJobRedirect(feedThingId(id));
 
   const [app, setApp] = useState<InstalledApp | null>(null);
   /** This app as /persona/list describes it: its own list keys and one sentence
@@ -329,6 +375,9 @@ export default function GenericAppPage() {
         </CardBox>
       )}
 
+      {/* ── The bot's own page: its apps, one row per job ── */}
+      {owned?.own && <BotApps name={owned.name} />}
+
       {/* ── The store ── */}
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-[#0C2F44] dark:text-white">
@@ -537,10 +586,10 @@ export default function GenericAppPage() {
       <CardBox className="mb-6">
         <div className="p-5 text-sm text-gray-700 dark:text-slate-300">
           <p>
-            Installing {title} registered the <code>vocabulary.keywords</code> in
-            its manifest with the router, so its phrases are understood in chat.
-            The <code>actions</code> it declares are phrases too — they are not
-            buttons: nothing in a manifest can add a method to this build, so
+            Installing {title} taught chat the <code>vocabulary.keywords</code> in
+            its app file, so its phrases are understood in chat.
+            The <code>actions</code> it lists are phrases too, not buttons:
+            nothing in an app file can add a new ability to this build, so
             drawing one here would be inviting a click that does nothing.
           </p>
           <p className="mt-2">
@@ -551,8 +600,11 @@ export default function GenericAppPage() {
         </div>
       </CardBox>
 
-      {owned && (
-        /* Offered ONLY for an app the owner made — the box decides that, by
+      {owned && !owned.own && (
+        /* Not on the bot's own page: it is the place the build made for
+           itself, not an app the owner added.
+
+           Offered ONLY for an app the owner made — the box decides that, by
            reading which directory the manifest came out of, and it refuses again
            on the DELETE itself. A shipped app is removed by changing the build.
 

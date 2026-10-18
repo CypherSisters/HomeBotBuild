@@ -12,11 +12,10 @@ Two runs, because they exercise different halves:
 
 * ``offline_yes`` -- ``puffpai setup --yes``, offline, nothing typed. Every card
   accepts its own proposal, which is the path an installer script takes.
-* ``stargazing_scripted`` -- the same wizard with somebody answering: a name
-* and a
-  goal typed at the prompts, every other field left blank to keep what was
-  proposed. Its **console output** is a golden too, because the owner's screen
-  must not change underneath them.
+* ``homebot_scripted`` -- the same HomeBot setup with somebody at the
+  keyboard: each question it asks answered with Enter, which keeps what was
+  proposed (HomeBot's setup asks no name and no goal). Its **console output**
+  is a golden too, because the owner's screen must not change underneath them.
 
 The machine is pinned (:data:`CENSUS`) so neither golden describes the box the
 suite happens to run on, and the normalisation drops what genuinely moves --
@@ -37,6 +36,7 @@ import copy
 import json
 import os
 import re
+import socket
 
 import pytest
 
@@ -79,21 +79,39 @@ BASE_ARGV = ["setup", "--skip-ha", "--skip-knowledge",
 #: away from these is a failure here rather than a golden quietly recorded with
 #: the defaults instead of the answers.
 SCRIPT: dict[str, str] = {
-    "what you call it": "Stargazer",
-    "what it is for": "a bot that helps a beginner learn the night sky and space with a small telescope",
+    "press enter to go on": "",
 }
 
 
 @pytest.fixture
 def pinned(monkeypatch, tmp_path):
-    """One fixed machine, no models installed, an isolated data directory."""
+    """One fixed machine, no models installed, an isolated data directory,
+    and the default Ollama address (the goldens print it; a machine that
+    points PUFFPAI_OLLAMA_URL elsewhere is not the wizard's decision). Nothing
+    may connect to that address: every Ollama question is answered above."""
     monkeypatch.setenv("PUFFPAI_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("PUFFPAI_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("PUFFPAI_OLLAMA_URL", raising=False)
+    real_connect = socket.socket.connect
+
+    def _no_ollama(sock, address):
+        if isinstance(address, tuple) and len(address) >= 2 and address[1] == 11434:
+            raise ConnectionRefusedError("the golden runs never talk to Ollama")
+        return real_connect(sock, address)
+
+    monkeypatch.setattr(socket.socket, "connect", _no_ollama)
     get_config(_force_reload=True)
     monkeypatch.setattr(hardware_census, "run_census",
                         lambda *a, **k: copy.deepcopy(CENSUS))
     monkeypatch.setattr(setup_ops, "list_models", lambda *a, **k: [])
     monkeypatch.setattr(setup_ops, "ollama_survey", lambda *a, **k: [])
+    # The proof's start-up check asks whether `puffpai` runs from this shell.
+    # The goldens were recorded from a checkout (it does not); CI installs the
+    # package (it does). Pin the answer so the golden is the same everywhere.
+    import shutil
+    real_which = shutil.which
+    monkeypatch.setattr(shutil, "which", lambda name, *a, **k:
+                        None if name == "puffpai" else real_which(name, *a, **k))
     yield tmp_path
     get_config(_force_reload=True)
 
@@ -109,11 +127,16 @@ def _feeder(seen: set[str]):
     """
 
     def read(prompt: str) -> str:
+        # Printed the way the console prints it, so the golden reads like the
+        # screen did: each question, then what was typed after the mark.
+        print(prompt)
         lowered = str(prompt or "").lower()
         for key, answer in SCRIPT.items():
             if key in lowered:
                 seen.add(key)
+                print(render_cli.ANSWER_MARK + answer)
                 return answer
+        print(render_cli.ANSWER_MARK)
         return ""
 
     return read
@@ -124,7 +147,8 @@ def _run(argv: list[str], *, script: bool, monkeypatch, capsys) -> tuple[dict, s
     seen: set[str] = set()
     if script:
         monkeypatch.setattr(render_cli, "_read_line", _feeder(seen))
-        monkeypatch.setattr(render_cli, "_read_secret", lambda prompt: "")
+        monkeypatch.setattr(render_cli, "_read_secret",
+                            lambda prompt: print(prompt) or "")
     capsys.readouterr()
     assert cli.main(list(argv)) == 0
     out = capsys.readouterr().out
@@ -202,6 +226,9 @@ _DROP_LINE = re.compile(
 #: transcript from ever being a place a code could land
 #: (:func:`test_the_goldens_carry_no_secret` checks the scrub held).
 _CODE = re.compile(r"\b[A-Z0-9]{4}-[A-Z0-9]{4}\b")
+#: "It stops working at 2:12 am" is the pairing code's clock, printed in a
+#: sentence, in this computer's own time.
+_CLOCK = re.compile(r"\b\d{1,2}:\d{2} (?:am|pm)\b")
 
 
 def _console(out: str, tmp_path) -> str:
@@ -209,6 +236,7 @@ def _console(out: str, tmp_path) -> str:
     lines = []
     for line in out.replace("\r\n", "\n").split("\n"):
         line = _CODE.sub("<code>", _replace(line.rstrip(), replacements))
+        line = _CLOCK.sub("<clock>", line)
         if _DROP_LINE.match(line):
             continue
         lines.append(line)
@@ -240,8 +268,9 @@ def _golden(name: str, produced):
             f"the wizard's console output changed. {name} is what the owner "
             f"saw; if you meant this, re-generate and commit it.")
         return
-    want = json.loads(expected)
-    got = json.loads(text)
+    # Written on Windows: a path's separator is not part of what is pinned.
+    want = json.loads(expected.replace("\\\\", "/"))
+    got = json.loads(text.replace("\\\\", "/"))
     assert set(want) == set(got), (
         f"the manifest's sections changed: "
         f"{sorted(set(got) ^ set(want))}")
@@ -255,20 +284,21 @@ def _golden(name: str, produced):
 def test_the_offline_yes_run_writes_the_manifest_it_always_wrote(
         pinned, monkeypatch, capsys):
     manifest, _out = _run(
-        BASE_ARGV + ["--yes", "--goal", "a bot that helps a beginner learn the night sky and space with a small telescope"],
+        BASE_ARGV + ["--yes"],
         script=False, monkeypatch=monkeypatch, capsys=capsys)
     _golden("wizard_offline_yes.manifest.json",
             _normalised(manifest, pinned))
 
 
+# The run this test pins is HomeBot's own setup.
 def test_the_scripted_stargazer_writes_the_manifest_it_always_wrote(
         pinned, monkeypatch, capsys):
     manifest, _out = _run(BASE_ARGV, script=True, monkeypatch=monkeypatch,
                           capsys=capsys)
-    assert manifest["build"]["name"] == "Stargazer", (
-        "the scripted name never reached the manifest, so this golden would "
-        "pin a run nobody answered")
-    _golden("wizard_stargazing_scripted.manifest.json",
+    assert manifest["build"]["name"] == "HomeBot", (
+        "the HomeBot preset's name never reached the manifest, so this golden "
+        "would pin some other build")
+    _golden("wizard_homebot_scripted.manifest.json",
             _normalised(manifest, pinned))
 
 
@@ -288,7 +318,7 @@ def test_the_scripted_stargazer_prints_the_wizard_it_always_printed(
     """
     _manifest, out = _run(BASE_ARGV, script=True, monkeypatch=monkeypatch,
                           capsys=capsys)
-    _golden("wizard_stargazing_scripted.console.txt", _console(out, pinned))
+    _golden("wizard_homebot_scripted.console.txt", _console(out, pinned))
 
 
 def test_the_goldens_carry_no_secret(pinned, monkeypatch, capsys):

@@ -213,5 +213,7 @@ def test_the_onboarding_placeholders_are_neutral():
     text = (REPO / "dashboard" / "app" / "onboarding" /
             "OnboardingWizard.tsx").read_text(encoding="utf-8")
     owner = re.search(r'id="ob-owner"[^>]*placeholder="([^"]*)"', text)
-    assert owner and owner.group(1) == "Alex"
+    # HomeBot's setup asks no names (the household is set later on its own
+    # page); where a name is asked, its example is the neutral "Alex".
+    assert owner is None or owner.group(1) == "Alex"
     assert '/data/puffpai/knowledge' not in text

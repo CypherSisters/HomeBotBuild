@@ -113,7 +113,7 @@ export const RENEW_AFTER_SEC = 30 * 24 * 60 * 60;
  * every /dashboard page load runs a cookie verification. An unthrottled stamp
  * would mean a read-modify-write of devices.json per request; the kiosk alone
  * fires dozens in parallel on a page load, so the registry would be rewritten
- * continuously, burning the Orin's eMMC and widening the window for a torn
+ * continuously, burning the appliance's eMMC and widening the window for a torn
  * read. "Last seen" is a human-facing nicety with hour-level usefulness, so it
  * gets hour-level precision.
  */
@@ -197,7 +197,7 @@ function writeState(file: string, state: PairingState): void {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   // Write to a temp file then rename so a crash can't leave a truncated state.
   // mode 0600: the secret is the only thing standing between a LAN device and
-  // the household's API key. (No-op on Windows dev boxes; real on the Orin.)
+  // the household's API key. (No-op on Windows; real on Linux.)
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(state, null, 2), { mode: 0o600 });
   try {
@@ -1316,6 +1316,38 @@ const WIZARD_PREFIXES = [
 ];
 
 /**
+ * The build engine: what it installs, removes and runs on this computer, the
+ * sign-up keys and the GitHub account it holds in the vault, Toolsmith's
+ * model, the outside-service switches, and the Developer page with its
+ * command line. Paired devices only at every stage, reads included, like the
+ * wizard family above: the reads describe what is on this computer and which
+ * outside services are on, and no unpaired device needs that. The first
+ * segments mirror the backend's `_SETUP_CODE_PREFIXES` engine families, plus
+ * /fix (it switches outside services on), /mcp (tool servers), and the
+ * owner's own programs and files (/programs, /files: they start programs and
+ * open files on this computer).
+ */
+const ENGINE_PREFIXES = [
+  "/api/pai/build",
+  "/api/pai/installed",
+  "/api/pai/assemble",
+  "/api/pai/box",
+  "/api/pai/add",
+  "/api/pai/things",
+  "/api/pai/integrations",
+  "/api/pai/webapps",
+  "/api/pai/keys",
+  "/api/pai/github",
+  "/api/pai/toolsmith",
+  "/api/pai/outside",
+  "/api/pai/developer",
+  "/api/pai/fix",
+  "/api/pai/mcp",
+  "/api/pai/programs",
+  "/api/pai/files",
+];
+
+/**
  * Persona WRITES (scaffold a persona, preview one, delete one) are the same
  * build surface by another door: POST /persona/scaffold writes a folder, a
  * page and an allowlist entry. Reads stay open at the "knowledge" stage,
@@ -1585,6 +1617,8 @@ export function pathRequiresPairing(
     // The build surface is gated at this stage as well, reads included. It is
     // checked BEFORE the knowledge prefixes so no exemption below can reach it.
     if (hasPrefix(eff, WIZARD_PREFIXES)) return true;
+    // The build engine too, reads included.
+    if (hasPrefix(eff, ENGINE_PREFIXES)) return true;
     // Persona writes only: the list is what the nav renders from.
     if (
       hasPrefix(eff, PERSONA_PREFIXES) &&
@@ -1612,6 +1646,66 @@ export function pathRequiresPairing(
     return true;
   }
   return hasPrefix(eff, ALL_PREFIXES);
+}
+
+/**
+ * The words the backend answers when an outside service is switched ON by a
+ * caller that is not paired (`outside_api._NOT_PAIRED`). Same sentence here,
+ * so the Settings switch list shows one plain line whichever layer refused.
+ */
+export const SWITCH_ON_NEEDS_PAIRING =
+  "Switching an outside service on has to be done from a browser that is paired with your bot.";
+
+const READ_ONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * Does this proxied request switch an outside service ON through the older
+ * Settings route, POST /system/egress/door? `path` is the decoded backend
+ * path segments the catch-all proxy acts on; `body` is the exact bytes it is
+ * about to send.
+ *
+ * Switching ON needs a paired device, the same rule as /outside/<id>/on (the
+ * backend checks it too). Switching OFF does not. Fails closed: any write to
+ * that path whose body is not a JSON object with `open` exactly `false`
+ * counts as switching on. Applies at every enforcement stage, like the
+ * backend's own check.
+ */
+export function opensOutsideSwitch(
+  path: readonly string[],
+  method: string | undefined,
+  body: Uint8Array | undefined,
+): boolean {
+  const segs = path
+    .filter((seg) => seg.length > 0)
+    .map((seg) => seg.toLowerCase());
+  if (segs.length !== 3 || segs[0] !== "system" || segs[1] !== "egress" || segs[2] !== "door") {
+    return false;
+  }
+  if (READ_ONLY_METHODS.has((method || "").toUpperCase())) return false;
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(body ?? new Uint8Array());
+    const data: unknown = JSON.parse(text);
+    if (data !== null && typeof data === "object" && !Array.isArray(data)) {
+      return (data as { open?: unknown }).open !== false;
+    }
+  } catch {
+    // Not JSON: treated as switching on.
+  }
+  return true;
+}
+
+/** The refusal for {@link opensOutsideSwitch} without a paired device. */
+export function switchOnNeedsPairingResponse(): Response {
+  return new Response(
+    JSON.stringify({ success: false, error: SWITCH_ON_NEEDS_PAIRING }),
+    {
+      status: 403,
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      },
+    },
+  );
 }
 
 const UNPAIRED_BODY = JSON.stringify({ error: "pairing_required" });
@@ -1772,7 +1866,7 @@ export interface DeviceCookieOptions {
  * Cookie attributes for the paired-device cookie.
  *
  * `secure: false` is DELIBERATE. The appliance serves plain HTTP on the LAN
- * (http://192.168.50.40:3003) — there is no TLS story yet. Setting Secure would
+ * (http://192.168.1.40:3003): there is no TLS story yet. Setting Secure would
  * make the browser drop the cookie outright and pairing would silently never
  * work. The consequence is that the cookie is sniffable by anyone on the local
  * network; that is a known, accepted residual risk documented at the top of

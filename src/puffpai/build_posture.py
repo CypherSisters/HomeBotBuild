@@ -19,14 +19,15 @@ machine that never touches a network imports it. That is a first-class path
 Three rules hold this module honest:
 
 * **Defaults are recorded as defaults.** Someone who mashes Enter gets
-  ``online`` + ``island`` - useful out of the box, nothing leaves the house -
+  ``online`` + ``island`` - useful out of the box, only what the plan named goes out -
   and the manifest says the value was defaulted, not chosen. Same detected-vs-
   stated discipline the hardware census uses.
 * **Every enumerated switch is off.** The enumerated tier is a build-time list
-  of named doors - weather, music, web search - each closed until the owner
-  opens it by name. It decides which doors exist, not whether using one asks
-  first; that second question is the Bridge posture, and the two are easy to
-  confuse, so the menu says so out loud.
+  of named outside services - weather, music, web search - each off until the
+  owner switches it on by name. It decides which services exist, not how
+  strictly the running bot is held to them; that second question is the
+  Bridge posture, and the two are easy to confuse, so the menu says so out
+  loud.
 * **Posture is a policy choice, not a discovery feature.** Nothing here scans,
   probes, or classifies anything on the network.
 
@@ -64,8 +65,8 @@ _BUILD_NETWORK_LABEL: dict[str, str] = {
 
 _RUN_EGRESS: dict[str, str] = {
     "sealed": (
-        "No outbound anything, ever. Your bot says plainly what it cannot do "
-        "instead of failing quietly."
+        "Every outside service is switched off, and none can be switched on. "
+        "Your bot says plainly what it cannot do instead of failing quietly."
     ),
     "island": (
         "Your home network is allowed, the wider internet is not. Local devices "
@@ -87,19 +88,20 @@ _RUN_EGRESS_LABEL: dict[str, str] = {
 
 # Printed under the enumerated option while the owner is choosing. The two
 # questions read the same to a stranger and are not the same: this one decides
-# which doors are built at all, once, now. Whether walking through an open door
-# asks you first is the Bridge posture, chosen later.
+# which outside services exist at all, once, now. How the bot checks actions
+# that reach further is the Bridge posture, chosen later.
 ENUMERATED_VS_MOAT_NOTE = (
-    "This is a build-time list: which Bridge switches exist at all. Whether your "
-    "bot asks you before using a switch it already has is a separate question you answer "
-    "at the Bridge step ('Moat' asks every time)."
+    "This is a build-time list: which Bridge switches exist at all. How "
+    "strictly your bot is held to the switches you turn on is a separate "
+    "question you answer at the Bridge step ('Moat' lets only the outside "
+    "services you switched on reach the internet)."
 )
 
 # The enumerated table. Every switch is off by default; there is no on-by-default
-# door anywhere in a build. Descriptions say what leaves the box, in one line.
+# outside service anywhere in a build. Descriptions say what leaves the box, in one line.
 _EGRESS_SWITCHES: tuple[tuple[str, str, str], ...] = (
     ("weather", "Weather", "Your rough location goes to a weather service."),
-    ("web_search", "Web search", "Your search words go to the search endpoint you name."),
+    ("web_search", "Web search", "Your search words go to the search service you choose."),
     ("web_fetch", "Fetch a page", "The address of a page you ask for goes to that site."),
     ("radio", "Internet radio", "A station request goes to the streaming service."),
     ("music", "Music streaming", "Playback requests go to the music service you sign in to."),
@@ -197,29 +199,29 @@ def switch_ids() -> frozenset[str]:
 
 _COMBINATIONS: dict[tuple[str, str], str] = {
     ("online", "sealed"): (
-        "The sneakernet build. You assemble everything here with the internet, "
-        "write a provisioning bundle to removable media, and carry it to a "
-        "machine that never touches a network."
+        "Built here with the internet, then copied to a USB stick and carried "
+        "to a computer that never touches a network."
     ),
     ("online", "island"): (
         "The home-lab build. Download what you need now; the finished bot talks "
         "to your own devices and servers and nothing beyond them."
     ),
     ("online", "enumerated"): (
-        "The normal path. Download what you need now, and the finished bot runs "
-        "with only the named doors you opened."
+        "The normal path. Download what you need now, and the finished bot uses "
+        "only the outside services you said yes to."
     ),
     ("offline", "sealed"): (
-        "Built in place on an air-gapped box. Bundled catalog only, and the "
-        "finished bot reaches nothing at all."
+        "Built on a computer with no network, from what came with your bot, "
+        "and the finished bot reaches nothing at all."
     ),
     ("offline", "island"): (
         "No internet during the build, but your home network is fair game "
         "afterwards - Home Assistant, a media server, local devices."
     ),
     ("offline", "enumerated"): (
-        "Built from what is already on the box, then run with named doors open. "
-        "You will need to bring models and packs in some other way."
+        "Built from what is already on this computer, then it uses only the "
+        "outside services you said yes to. Bring the brain and the books over "
+        "some other way, such as a USB stick."
     ),
 }
 
@@ -293,11 +295,12 @@ def assess_posture(
             if key in known:
                 table[key] = True
             else:
-                notes.append(f"Ignoring unknown egress door '{sid}'.")
+                notes.append(f"Ignoring an outside service this build does "
+                             f"not know: '{sid}'.")
     elif enabled_switches:
         notes.append(
-            "Individual egress doors only apply to the enumerated tier; none are "
-            "open at this posture."
+            "Outside services can be switched on one by one only when your bot "
+            "may use the ones you pick; at this setting every one stays off."
         )
 
     if net_source == "defaulted" and egress_source == "defaulted":
@@ -389,8 +392,8 @@ def posture_summary_lines(posture: dict[str, Any]) -> list[str]:
     if egress == "enumerated":
         on = list(settled.get("enabled_switches") or [])
         lines.append(
-            f"Doors open: {', '.join(on)}" if on
-            else "Doors open: none. Every door starts shut."
+            f"Outside services switched on: {', '.join(on)}" if on
+            else "Outside services switched on: none. Every one starts off."
         )
     for note in settled.get("notes") or []:
         lines.append(str(note))

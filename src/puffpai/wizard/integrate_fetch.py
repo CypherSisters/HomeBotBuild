@@ -41,6 +41,32 @@ def fetch_plan(items: list[dict[str, Any]], selected: list[str]
     return now, later
 
 
+def _record_library_choice(source_id: str) -> None:
+    """Write a Kiwix book the owner chose into this build's overlay.
+
+    A book found in the Kiwix library (id ``kiwix:...``) is not on BuildBot's
+    own list, so the fetcher would not know it. Called only after the owner's
+    yes; the row names the book, never an address. A shipped id, an unknown id
+    or a book with no known license writes nothing, and the fetch below then
+    refuses it in plain words.
+    """
+    from puffpai import source_registry
+    from puffpai.catalogs import kiwix_opds, knowledge_resolver
+
+    if kiwix_opds.split_book_id(source_id) is None:
+        return
+    if source_registry.get_source(source_id) is not None:
+        return
+    cand = knowledge_resolver.candidate_by_id(source_id)
+    if cand is None or not cand.get("fetchable"):
+        return
+    try:
+        source_registry.add_owner_row(
+            source_registry.row_from_candidate(cand, added_via="wizard"))
+    except (ValueError, OSError):
+        return
+
+
 def run_fetches(source_ids: list[str], posture: dict,
                 *, acknowledged: bool) -> dict[str, Any]:
     """Fetch each id through the existing path. Returns the sourcing halves.
@@ -55,6 +81,8 @@ def run_fetches(source_ids: list[str], posture: dict,
     fetched: list[dict[str, Any]] = []
     not_fetched: list[str] = []
     for source_id in source_ids:
+        if acknowledged:
+            _record_library_choice(source_id)
         preview = setup_ops.source_preview(source_id, posture)
         if not preview.get("ok"):
             not_fetched.append(source_id)
@@ -87,6 +115,40 @@ def own_data_block(named: list[str], *, skip: bool) -> dict[str, Any]:
                if loc.get("surveyed")]
     return setup_ops.data_sources_block(
         setup_ops.approve_data_locations(surveyed, approve))
+
+
+def own_data_and_learn(named: list[str], *, skip: bool,
+                       ingest: Any = None) -> dict[str, Any]:
+    """Survey and approve exactly the named folders, then learn their files.
+
+    ``{"block": <the manifest block, unchanged>, "learned": <counts + lines>}``.
+    The block is exactly :func:`own_data_block`'s (paths redacted, counts
+    only). Learning goes through the upload path's PII screen; the vault is a
+    fresh, locked instance here, so a file with high or critical personal
+    details is held back rather than learned (fail closed), and said so.
+    """
+    from puffpai import data_sources, setup_ops
+
+    empty = setup_ops.data_sources_block({"approved": []})
+    none = {"learned": 0, "lines": []}
+    if skip or not named:
+        return {"block": empty, "learned": none}
+    surveyed = setup_ops.survey_data_locations([str(p) for p in named])
+    approve = [str(loc.get("path")) for loc in (surveyed.get("locations") or [])
+               if loc.get("surveyed")]
+    selection = setup_ops.approve_data_locations(surveyed, approve)
+    try:
+        from puffpai.security.vault import Vault
+        vault = Vault()
+    except Exception:  # noqa: BLE001 - no vault object: read nothing (fail closed)
+        vault = None
+    if vault is None:
+        learned = {"learned": 0, "lines": [
+            "Your folders were recorded but not read: the vault that protects "
+            "private details could not be opened."]}
+    else:
+        learned = data_sources.learn_approved(selection, vault=vault, ingest=ingest)
+    return {"block": setup_ops.data_sources_block(selection), "learned": learned}
 
 
 def index_handoff(zim_dir: str, *, auto_index: bool,

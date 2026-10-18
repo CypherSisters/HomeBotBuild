@@ -133,8 +133,9 @@ class PuffPAIAgent:
                 )
             # Legacy fallback: direct HTTP to Ollama
             import requests as _requests
+            from puffpai.security.lan_guard import no_proxies
             try:
-                resp = _requests.post(
+                resp = _requests.post(  # lan-egress: Ollama on the configured url (this computer or the home network)
                     f"{self.ollama_url}/v1/chat/completions",
                     json={
                         "model": self.model,
@@ -145,6 +146,7 @@ class PuffPAIAgent:
                         "max_tokens": 512,
                     },
                     timeout=60,
+                    proxies=no_proxies(),
                 )
                 return resp.json()["choices"][0]["message"]["content"]
             except Exception as e:

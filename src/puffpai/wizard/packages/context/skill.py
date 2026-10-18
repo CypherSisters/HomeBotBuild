@@ -50,9 +50,20 @@ ALLOWLIST: tuple[dict, ...] = (
      "cap": 60, "items": 20},
     {"id": "tool_ids", "label": "What it can reach for", "kind": "labels",
      "cap": 60, "items": 20},
-    {"id": "crew_size", "label": "Specialists on top of the master team",
+    {"id": "crew_size", "label": "Extra helpers it has room for",
      "kind": "count", "cap": 3},
 )
+
+#: What a person reads for each enum value. The value itself stays the value
+#: the runtime reads; it is never what is shown.
+ENUM_WORDS: dict[str, dict[str, str]] = {
+    "posture": {
+        "sealed": "nothing at all, not even your home network",
+        "island": ("your home network, and on the internet only HomeBot's "
+                   "own tools for finding things"),
+        "enumerated": "only the outside services on the plan",
+    },
+}
 
 #: Field ids the card carries that are not interpolated content: they are
 #: measurements of the assembled prompt, not anything a skill wrote.
@@ -131,9 +142,13 @@ def _raw_inputs(ctx) -> dict:
     crew = section("crew")
     posture = (section("posture").get("posture") or {})
 
+    # ``stated_purpose`` is what a build that asks no goal is for, seeded by
+    # its preset; the manifest records the same words as ``persona.goal``.
     return {
-        "bot_name": persona.get("bot_name") or persona_block.get("name"),
-        "goal": interview.get("goal") or persona_block.get("goal"),
+        "bot_name": (persona.get("bot_name") or persona_block.get("name")
+                     or ctx.shared.get("bot_name")),
+        "goal": (interview.get("goal") or persona_block.get("goal")
+                 or ctx.shared.get("stated_purpose")),
         # ``app`` is what a scaffolded persona block carries (``id`` only ever
         # appeared in hand-written records), so reading ``id`` alone left this
         # field off the card on every real build.
@@ -166,6 +181,7 @@ def fields_from(ctx) -> tuple[list[dict], dict]:
             continue
         used[spec["id"]] = value
         shown = ", ".join(value) if isinstance(value, list) else value
+        shown = ENUM_WORDS.get(spec["id"], {}).get(shown, shown)
         fields.append({"id": spec["id"], "kind": "info",
                        "label": spec["label"], "current": shown})
     return fields, used
@@ -196,7 +212,8 @@ def propose(ctx) -> dict:
     fields, used = fields_from(ctx)
     text = assembled(used)
     fields.append({"id": "assembled_digest", "kind": "info",
-                   "label": "Fingerprint of what it was told",
+                   "label": "A short code that changes when what it was "
+                            "told changes",
                    "current": digest(text)})
     fields.append({"id": "assembled_chars", "kind": "info",
                    "label": "How long that is", "current": f"{len(text)} characters"})

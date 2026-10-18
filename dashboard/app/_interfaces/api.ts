@@ -96,6 +96,32 @@ export interface ChatMessage {
   timestamp: string;
   sources?: ChatSource[];
   suggestions?: string[];
+  /** One plain sentence from the backend when it kept a personal detail out
+   *  of the saved chat (e.g. "I kept the phone number out of my saved chats
+   *  and put it in your locked vault."). Shown under the reply. */
+  privacyNotice?: string;
+  /** Said once per chat when older turns are kept as a short summary. */
+  chatNotice?: string;
+  /** Plain lines from the tool loop while it worked ("Looking on GitHub ..."). */
+  progress?: string[];
+  /** Local screens (127.0.0.1) a command started: shown as Open buttons. */
+  opens?: string[];
+  /** A command failed for want of a program, package or key: the
+   *  "Install what's missing" card (src/puffpai/deps.py). */
+  missing?: MissingCardData;
+  /** "Fix it now" cards: something switched off or not saved yet, fixed
+   *  with one tap (src/puffpai/fix_api.py, POST /fix/apply). */
+  fixes?: FixCardData[];
+  /** A question the tool loop asked before running something; `answered` is
+   *  the owner's Yes (true) or No (false) once given. */
+  ask?: {
+    id: string;
+    title: string;
+    command?: string;
+    folder?: string;
+    detail?: string;
+    answered?: boolean;
+  };
 }
 
 export interface Conversation {
@@ -213,4 +239,36 @@ export interface AISettings {
 export interface AppData {
   items: any[];
   last_updated: string;
+}
+
+/** "Install what's missing": what the backend says is missing and the plan
+ *  one yes installs (POST /things/install-missing with `plan`). Words only. */
+export interface MissingCardData {
+  plan: string;
+  line: string;
+  steps: string[];
+  manual: string[];
+  keys: { name: string; get_url: string }[];
+  thing: string;
+}
+
+/** "Fix it now": one card in the chat for something switched off
+ *  (`switch_on`), a setting not saved yet (`setting`, today the home town) or
+ *  a sign-up key that is missing (`key`). Words and ids only. */
+export interface FixCardData {
+  kind: 'switch_on' | 'setting' | 'key' | 'assemble_yes';
+  label: string;
+  /** The outside service to switch on (`switch_on`). */
+  service: string;
+  name: string;
+  /** The server's own sentence: what leaves and where it goes, or what is kept. */
+  detail: string;
+  /** The setting (`setting`): "home". */
+  key: string;
+  /** "place" for a town. */
+  input: string;
+  /** Where to get a key (`key`). */
+  get_url: string;
+  /** This bot keeps everything on this computer: ask for a rough position too. */
+  position: boolean;
 }

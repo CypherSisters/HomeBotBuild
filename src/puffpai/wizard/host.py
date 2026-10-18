@@ -582,22 +582,22 @@ def _setup_knowledge_step(args: argparse.Namespace, cfg, *,
 def _wizard_runner_parts(may_complete=None) -> dict:
     """The schedule entries that belong to the runner rather than to a package.
 
-    Two were inline code in the pre-package wizard that never belonged to a step
-    (writing the Ollama config, printing what was written); the third is the
-    manifest, which belongs to the runner because it is assembled from the
-    sections the packages wrote.
+    The engine's own: writing the Ollama config, noting what was written, the
+    manifest (assembled from the sections the packages wrote), the first screen,
+    and the pieces that build from a goal (the needs step, the one summary, the
+    factory and the question before building). A HomeBot setup schedules none
+    of the goal pieces; they are wired here so a run that does schedule them
+    finds them.
 
-    Three more are **this build's**, and they are here rather than inside a
-    package on purpose: Home Assistant with its Zigbee hub, the household
-    profiles, and the storage directories are HomeBotBuild steps that BuildBot
-    has no card for. Keeping them as runner parts leaves the twelve packages
-    byte-identical to BuildBot's while the steps still run, in their old order,
-    asking their old questions. They have no cards.
+    This build's own entries come from :mod:`puffpai.homebot_preset`: the
+    preset seed, the model download offer and the download, Home Assistant, and
+    the storage and household defaults.
 
     *may_complete* is a callable the caller supplies when finishing the build is
     not the same thing as writing the manifest. Fail closed: anything that is
     not a callable returning true leaves setup incomplete.
     """
+    from puffpai import homebot_preset
 
     def persist_config(ctx):
         from puffpai import setup_ops
@@ -607,34 +607,37 @@ def _wizard_runner_parts(may_complete=None) -> dict:
         return {"shared": {"config_path": path}}
 
     def wrote_paths(ctx):
-        config_path = ctx.shared.get("config_path")
-        if config_path:
-            print(f"Wrote {config_path}")
-        ha_path = ctx.shared.get("ha_path")
-        if ha_path:
-            print(f"Wrote {ha_path}")
-        return None
+        # The paths are in the run record; the owner is not shown a list of
+        # files in the middle of the wizard.
+        return {"note": "wrote " + ", ".join(
+            str(path) for path in (ctx.shared.get("config_path"),
+                                   ctx.shared.get("ha_path")) if path)}
 
-    def storage(ctx):
-        """This build's storage step: four directories, validated and written."""
-        from puffpai import setup_ops
-        block = setup_cli._step_storage(ctx.args, setup_ops,
-                                        non_interactive=ctx.non_interactive)
-        return {"shared": {"storage": block}}
+    def summary(ctx):
+        from puffpai import cli
+        return cli._wizard_summary_step(ctx)
 
-    def household(ctx):
-        """This build's household step: who lives here, and what each may see."""
-        from puffpai import setup_ops
-        block = setup_cli._step_household(ctx.args, setup_ops,
-                                          non_interactive=ctx.non_interactive)
-        return {"shared": {"household": block}}
+    def first_look(ctx):
+        from puffpai.wizard import first_look as wizard_first_look
+        return wizard_first_look.run_console(ctx)
 
-    def home_assistant(ctx):
-        """This build's Home Assistant step, with its Zigbee hub."""
-        from puffpai import setup_ops
-        block, present = setup_cli._step_ha(ctx.args, setup_ops,
-                                            non_interactive=ctx.non_interactive)
-        return {"shared": {"ha_block": block, "ha_present": bool(present)}}
+    def needs(ctx):
+        from puffpai.wizard import service as wizard_service
+        return wizard_service.run_needs_console(ctx)
+
+    def factory(ctx):
+        from puffpai import cli
+        from puffpai.wizard import factory as wizard_factory
+        if not getattr(ctx, "console", False):
+            return wizard_factory.apply_approved(ctx)
+        result = cli._streamed_factory(ctx, wizard_factory.apply_approved)
+        from puffpai.wizard import service as wizard_service
+        wizard_service.waiting_console(ctx)
+        return result
+
+    def before_building(ctx):
+        from puffpai import cli
+        return cli._setup_toolsmith_model_step(ctx)
 
     def manifest(ctx):
         from puffpai import setup_ops
@@ -645,9 +648,15 @@ def _wizard_runner_parts(may_complete=None) -> dict:
         return {"note": "the manifest is written; this build is not finished "
                         "while a step that blocks is still waiting for you"}
 
-    return {"persist_config": persist_config, "wrote_paths": wrote_paths,
-            "storage": storage, "household": household,
-            "home_assistant": home_assistant, "manifest": manifest}
+    parts = {"persist_config": persist_config, "wrote_paths": wrote_paths,
+             "manifest": manifest, "summary": summary, "factory": factory,
+             "first_look": first_look, "needs": needs,
+             # Toolsmith's model, asked on the console just before the build
+             # when the run has not settled it (a HomeBot run settles it to
+             # this computer, so it asks nothing).
+             "before_building": before_building}
+    parts.update(homebot_preset.runner_parts())
+    return parts
 
 
 def _setup_manifest_step(ctx, *, non_interactive: bool = False) -> None:
@@ -658,7 +667,7 @@ def _setup_manifest_step(ctx, *, non_interactive: bool = False) -> None:
     Everything is read out of the run's own sections and shared notebook, so a
     package that wrote nothing contributes nothing rather than a guess.
     """
-    from puffpai import build_manifest, setup_ops
+    from puffpai import build_manifest, homebot_preset, setup_ops
 
     setup_cli.enter_step("The build manifest")
     sections = ctx._sections
@@ -695,6 +704,10 @@ def _setup_manifest_step(ctx, *, non_interactive: bool = False) -> None:
     if posture_section.get("posture") is not None:
         choices["posture"] = setup_ops.posture_block(posture_section["posture"])
     surfaces = (sections.get("surfaces") or {}).get("surfaces")
+    if surfaces is None and homebot_preset.is_active(ctx.shared):
+        # The preset asks no page question: every page is on, as the
+        # browser's build records it.
+        surfaces = homebot_preset.surfaces(ctx.args)
     if surfaces is not None:
         choices["surfaces"] = setup_ops.surfaces_block(surfaces)
     if posture_section.get("vault") is not None:
@@ -715,15 +728,21 @@ def _setup_manifest_step(ctx, *, non_interactive: bool = False) -> None:
     # its model the owner had written nothing down. One builder for that half
     # (``purpose_skill.recorded_persona``), so the card wizard and this step
     # cannot record the same run differently.
+    from puffpai import homebot_preset
     from puffpai.wizard.packages.purpose import skill as purpose_skill
 
     persona_block: dict[str, Any] = {"id": defaults["persona"],
                                      "pack": defaults["pack"], "name": name}
-    recorded = purpose_skill.recorded_persona(interview, name)
-    if isinstance(recorded, dict):
-        persona_block.update(recorded)
-        persona_block["id"] = defaults["persona"]
-        persona_block["pack"] = defaults["pack"]
+    if homebot_preset.is_active(ctx.shared) and not interview.get("goal"):
+        # A HomeBot build asks no goal: what it is for is the persona's own.
+        interview = ctx.shared.get("interview") or interview
+        persona_block = homebot_preset.persona_block(name)
+    else:
+        recorded = purpose_skill.recorded_persona(interview, name)
+        if isinstance(recorded, dict):
+            persona_block.update(recorded)
+            persona_block["id"] = defaults["persona"]
+            persona_block["pack"] = defaults["pack"]
     scaffolded = persona.get("scaffolded") or interview.get("persona")
     if scaffolded:
         persona_block["scaffolded"] = scaffolded
@@ -737,8 +756,9 @@ def _setup_manifest_step(ctx, *, non_interactive: bool = False) -> None:
     preview = setup_ops.preview_manifest(machine.get("census") or {}, **choices)
 
     print()
-    print(setup_cli.step_banner("The build manifest", "The record of this build."))
-    print("Build manifest:")
+    print()
+    print("What was built")
+    print("--------------")
     for line in build_manifest.manifest_summary_lines(preview["manifest"]):
         print(f"  {line}")
     diff = preview.get("diff") or []
@@ -838,32 +858,15 @@ def _run_setup(args: argparse.Namespace) -> int:
 
 
 def setup_schedule() -> tuple:
-    """BuildBot's twelve cards plus this build's three uncarded steps.
+    """The HomeBot setup schedule (:func:`puffpai.homebot_preset.schedule`).
 
-    Each extra entry sits immediately after the card it belongs with, which is
-    where the linear wizard asked it:
-
-    * **storage** after ``secure.vault`` - the folders are part of what Zone 1
-      and Zone 2 are pointed at, and the knowledge card reads the folder it
-      chose.
-    * **home_assistant** before ``tools.card`` - Integrations reconciles what
-      the hub reported, so the hub has to have been asked about first.
-    * **household** after ``surfaces.card`` - who lives here is asked once the
-      build knows what it is for.
+    Check this computer, pick the thinking model (and offer its download), set
+    up the vault, offer Home Assistant, then build. No goal is asked. The
+    console and the browser (:mod:`puffpai.wizard.service`) both walk this
+    schedule, so the two faces build the same thing.
     """
-    from puffpai.wizard import runner as wizard_runner
-
-    steps: list = []
-    for step in wizard_runner.SCHEDULE:
-        if step.entry == "tools.card":
-            steps.append(wizard_runner.Step("runner.home_assistant", "",
-                                            "home_assistant"))
-        steps.append(step)
-        if step.entry == "secure.vault":
-            steps.append(wizard_runner.Step("runner.storage", "", "storage"))
-        elif step.entry == "surfaces.card":
-            steps.append(wizard_runner.Step("runner.household", "", "household"))
-    return tuple(steps)
+    from puffpai import homebot_preset
+    return homebot_preset.schedule()
 
 
 #: What ``puffpai setup --yes`` says when it finds a run somebody stopped. A
@@ -889,7 +892,8 @@ def _offer_resume(args: argparse.Namespace, run) -> None:
     """
     from puffpai.wizard import render_cli, runner as wizard_runner
 
-    stopped, why = wizard_runner.find_stopped_run(args=args, cfg=run.cfg)
+    stopped, why = wizard_runner.find_stopped_run(args=args, cfg=run.cfg,
+                                                  schedule=run.schedule)
     if stopped is None:
         if why == wizard_runner.RESUME_UNREADABLE:
             wizard_runner.archive_state(run.state_path())

@@ -12,7 +12,7 @@
       "allows": {
         "lan_devices": "Reaches any device you listed, with no prompt each time.",
         "actions": "Actions that reach into the world run without a per-use prompt.",
-        "egress": "Outbound doors you switched on stay open while the bot runs.",
+        "egress": "Outside services you switched on stay on while the bot runs.",
         "consent": "Asked once, when you set it up, and not again at each use."
       },
       "costs": "Nothing to click, but nothing to catch a mistake either. A wrong instruction reaches the world before you get a second chance to say no. Worth choosing on purpose, never by accident.",
@@ -27,7 +27,7 @@
       "allows": {
         "lan_devices": "Devices on your own network are allowed.",
         "actions": "Actions are gated at the boundary before they run.",
-        "egress": "Outbound doors are listed one by one and every one starts off.",
+        "egress": "Outside services are listed one by one, and every one starts off.",
         "consent": "Asked when an action would reach past what you already allowed."
       },
       "costs": "You will be asked to confirm now and then. That is the trade for a bot that is useful in the house without being loose about the world outside it.",
@@ -38,14 +38,14 @@
       "label": "Moat",
       "strictness": 2,
       "recommendable": true,
-      "summary": "Every outbound call and every action asks you first, every session.",
+      "summary": "Only the outside services you switched on reach the internet. Your home network still works.",
       "allows": {
-        "lan_devices": "Allowed, but each reach asks you first.",
-        "actions": "Every action asks, every session. Nothing is remembered as pre-approved.",
-        "egress": "Every outbound call asks, even through a door you opened before.",
-        "consent": "Asked every time. Approval never carries over to the next session."
+        "lan_devices": "Your home network works as usual: Home Assistant, your media server, your phones and your other devices at home.",
+        "actions": "Nothing reaches the internet unless you switched that service on yourself.",
+        "egress": "Only the outside services you switched on. A setting in a file cannot switch one on for you, and anything else that tries to reach the internet is stopped.",
+        "consent": "You switch each outside service on yourself, one at a time, and you can switch it off again at any time."
       },
-      "costs": "You will answer a lot of prompts. Good when the box is shared, when you are still learning what it does, or when you simply want to watch it work for a while.",
+      "costs": "A new outside service does nothing until you switch it on. Good when you want to know exactly what reaches the internet, and to choose each one yourself.",
       "matches_run_egress": "island"
     },
     {
@@ -53,15 +53,15 @@
       "label": "Drawbridge Up",
       "strictness": 3,
       "recommendable": true,
-      "summary": "Sealed. Nothing outbound, ever, and the bot says so plainly instead of failing quietly.",
+      "summary": "Nothing reaches the internet. Your home network still works: Home Assistant, your media server, your phones and your other devices at home.",
       "allows": {
-        "lan_devices": "Not reached. The bot works with what is already on the box.",
-        "actions": "Actions that would reach off the box do not run.",
-        "egress": "None. There are no doors to open.",
-        "consent": "Nothing to consent to, because nothing leaves."
+        "lan_devices": "Your home network works as usual.",
+        "actions": "Anything that needs the internet does not run, and your bot says so plainly instead of failing quietly.",
+        "egress": "None. Every outside service is off and cannot be switched on.",
+        "consent": "Nothing to switch on, because nothing reaches the internet."
       },
-      "costs": "Anything that needs the network is off the table, and the bot will tell you which things those are. This is the posture for a machine you want fully on its own.",
-      "matches_run_egress": "sealed"
+      "costs": "Anything that needs the internet, like the weather, downloads or finding new apps, is off, and your bot tells you which things those are.",
+      "matches_run_egress": "island"
     }
   ]
 }

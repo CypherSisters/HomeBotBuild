@@ -149,9 +149,11 @@ def test_enumerated_distinguishes_itself_from_the_bridge_moat():
     assert note == build_posture.ENUMERATED_VS_MOAT_NOTE
     assert "moat" in note.lower()
     assert "bridge" in note.lower()
-    # The distinction itself: which doors exist, versus asking each time.
+    # The distinction itself: which switches exist, versus how strictly the
+    # bot is held to the ones switched on (Moat asks nothing: it lets only
+    # the switched-on services out).
     assert "build" in note.lower()
-    assert "asks" in note.lower()
+    assert "switched on" in note.lower()
     # No other tier carries the note; it belongs to the one that is confusable.
     for opt in build_posture.run_egress_options():
         if opt["id"] != "enumerated":
@@ -161,7 +163,9 @@ def test_enumerated_distinguishes_itself_from_the_bridge_moat():
 def test_sealed_and_island_copy_is_untouched():
     by_id = {o["id"]: o for o in build_posture.run_egress_options()}
     assert by_id["sealed"]["label"] == "Sealed"
-    assert by_id["sealed"]["description"].startswith("No outbound anything, ever.")
+    # Plain words instead of "outbound"; the meaning is unchanged.
+    assert by_id["sealed"]["description"].startswith(
+        "Every outside service is switched off, and none can be switched on.")
     assert by_id["island"]["label"] == "Island (home network only)"
     assert by_id["island"]["description"].startswith("Your home network is allowed")
 
@@ -354,7 +358,7 @@ def test_a_typed_name_still_works():
 OPTIONS = [{"id": "one"}, {"id": "two"}, {"id": "three"}]
 
 # ---------------------------------------------------------------------------
-# 5. the closing message hands off to the dashboard
+# 5. the dashboard address comes from config
 # ---------------------------------------------------------------------------
 
 def _closing(printed, monkeypatch, url=None):
@@ -390,7 +394,7 @@ def test_the_whole_wizard_run_is_ascii(scratch, no_ollama, capsys):
     assert out.isascii(), "a non-ascii character would garble a Windows console"
     # "Setup complete" is earned, not printed unconditionally.
     # This run has no model installed, so the honest header is the refusal.
-    assert "Setup finished - NOT READY: the brain is missing." in out
+    assert "Setup finished, but it is not ready yet: the brain is missing."         in " ".join(out.split())
     assert "ollama pull" in out
     assert build_manifest.read_manifest()
 

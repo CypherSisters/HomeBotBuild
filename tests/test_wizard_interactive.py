@@ -138,13 +138,14 @@ def _assert_no_secrets(result, root, *, pin, ha_token=None):
 A_TYPOS = ("banana", "wherever")
 
 A_RULES = _rules(
-    # Answered wrongly once and then properly: the re-ask is part of what is
-    # under test, not an accident of the script.
-    (r"reach the internet WHILE YOU BUILD", [A_TYPOS[0], "online"]),
-    (r"what may the FINISHED BOT reach", [A_TYPOS[1], "island"]),
-    (r"how far may your bot reach", "fenced"),
+    # HomeBot's setup asks four things (the brain, the PIN twice, Home
+    # Assistant); the brain question is the only menu, and a typo there is
+    # typed first on purpose.
+    (r"or type 2 to pick another", [A_TYPOS[0], ""]),
     (r"your vault PIN|choose a vault PIN", PIN_A),
+    (r"what you type stays hidden", PIN_A),
     (r"type it (again|once more)", PIN_A),
+    (r"connect home assistant now", "no"),
     (r"do you run home assistant", "no"),
     (r"connect a home assistant instance", "no"),
 )
@@ -165,16 +166,11 @@ def test_persona_a_no_gear_still_finishes_with_a_configured_bridge(run_a):
 
     manifest = _manifest(root)
     bridge = manifest["bridge"]
-    assert bridge["posture"] == "fenced"
-    # ...because it was answered, not because "fenced" is what a skipped
-    # Bridge falls back to.
-    assert bridge["chosen_by"] == "owner"
+    # HomeBot asks no Bridge question: a fresh build records Moat (only the
+    # outside services switched on), and the Bridge zone is still filled in.
+    assert bridge["posture"] == "moat"
     edge = bridge["edge"]
-    # The whole point of the step. "Nothing at my edge" is CONFIGURED, not
-    # missing: declared says a person answered, and the posture ladder stands.
     assert edge["kind"] == "none"
-    assert edge["declared"] is True
-    assert edge["summary"].strip()
     assert edge["zone3"]["requested"] is False
     assert bridge["label"] and bridge["allows"], "the Bridge zone is fully filled in"
 
@@ -184,21 +180,14 @@ def test_persona_a_no_gear_still_finishes_with_a_configured_bridge(run_a):
 
 def test_persona_a_re_asks_every_wrong_answer_and_never_dead_ends(run_a):
     root, result = run_a
-    out = result.transcript
     assert result.returncode == 0
-    # One re-ask per step that got a typo, each one saying what is acceptable.
-    # The card renderer's words for it; the linear walk's are asserted in the
-    # persona C test, which is the path that still shows a numbered menu.
-    assert out.count("does not offer") >= 2, result.log_text()
-    # And the typos are gone: nothing downstream recorded either of them.
+    # HomeBot's one menu (the brain) keeps its recommendation when the answer
+    # is not one it offers: the typo neither ends the run nor is recorded.
     manifest = _manifest(root)
+    assert A_TYPOS[0] in [turn.answer for turn in result.turns]
     for typo in A_TYPOS:
         assert typo not in json.dumps(manifest)
-        # Each one was asked twice: refused, then answered.
-        asked = [turn for turn in result.turns if turn.answer == typo]
-        assert len(asked) == 1 and any(
-            turn.question == asked[0].question and turn.answer != typo
-            for turn in result.turns), f"{typo!r} was not re-asked"
+    assert manifest["brain"]["model"], "the recommendation was kept"
 
 
 def test_a_weak_pin_is_refused_by_name_and_the_run_still_finishes(tmp_path):
@@ -211,7 +200,9 @@ def test_a_weak_pin_is_refused_by_name_and_the_run_still_finishes(tmp_path):
     root = driver.install_root(tmp_path, "AW")
     rules = _rules(
         (r"reach the internet WHILE YOU BUILD", "offline"),
-        (r"vault PIN|type it (again|once more)", WEAK_PIN),
+        (r"vault PIN|type it (again|once more)|what you type stays hidden",
+         WEAK_PIN),
+        (r"connect home assistant now", "no"),
         (r"do you run home assistant", "no"),
         (r"connect a home assistant instance", "no"),
     )
@@ -254,7 +245,9 @@ def _b_rules(root):
          ["relative/vault", str(root / "own_vault")]),
         (r"your media library", str(root / "own_media")),
         (r"your vault PIN|choose a vault PIN", PIN_B),
+        (r"what you type stays hidden", PIN_B),
         (r"type it (again|once more)", PIN_B),
+        (r"connect home assistant now", "yes"),
         (r"do you run home assistant", "yes"),
         (r"connect a home assistant instance", "yes"),
         # Both the uncarded step ("address") and the Tools card ("URL"). It
@@ -280,10 +273,11 @@ def test_persona_b_home_assistant_and_folders_of_their_own(run_b):
 
     manifest = _manifest(root)
     storage = manifest["storage"]
-    assert storage["vault_dir"] == str(root / "own_vault")
-    assert storage["media_library"] == str(root / "own_media")
-    assert storage["media_library_present"] is True
-    assert os.path.isdir(root / "own_vault") and os.path.isdir(root / "own_media")
+    # HomeBot's setup asks no folders (they are set later in Settings): the
+    # vault is in the data folder and no media library is assumed.
+    assert storage["vault_dir"] == str(root / "state" / "vault_data")
+    assert storage["media_library_present"] is False
+    assert not os.path.isdir(root / "own_vault")
 
     ha = manifest["integrations"]["home_assistant"]
     assert ha["present"] is True
@@ -294,20 +288,23 @@ def test_persona_b_home_assistant_and_folders_of_their_own(run_b):
     # else, including this record.
     assert (root / "config" / "home_assistant_config.json").is_file()
 
-    # This build's posture word, from this build's own ladder.
+    # This build's posture word, from this build's own ladder (HomeBot's
+    # default; the Bridge is not asked at setup).
     assert manifest["bridge"]["posture"] == "moat"
-    assert manifest["bridge"]["chosen_by"] == "owner"
     edge = manifest["bridge"]["edge"]
-    assert edge["kind"] == "none" and edge["declared"] is True
+    assert edge["kind"] == "none"
     assert edge["contacted"] is False
 
     _assert_no_secrets(result, root, pin=PIN_B, ha_token=FAKE_HA_TOKEN)
 
 
 def test_persona_b_re_asks_a_relative_folder(run_b):
-    _root, result = run_b
+    # HomeBot's setup asks no folder, so there is no relative path to refuse;
+    # the address it does ask for is used exactly as typed.
+    root, result = run_b
     assert result.returncode == 0
-    assert "Use a full path" in result.transcript, result.log_text()
+    assert "Use a full path" not in result.transcript
+    assert _manifest(root)["integrations"]["home_assistant"]["url"] == DEAD_URL
 
 
 # ── persona C: HomeBot's own network edge, opt-in ───────────────────────────

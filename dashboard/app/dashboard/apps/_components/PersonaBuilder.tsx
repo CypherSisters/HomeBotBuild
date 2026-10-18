@@ -351,7 +351,7 @@ export default function PersonaBuilder() {
                 {preview.taken && (
                   <Warn>
                     An app called {preview.id} is already installed. Pick another
-                    name — nothing of yours is overwritten.
+                    name. Nothing of yours is overwritten.
                   </Warn>
                 )}
                 {!preview.taken && preview.pack_taken && (

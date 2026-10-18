@@ -550,10 +550,19 @@ import sys                                              # noqa: E402
 from pathlib import Path                                # noqa: E402
 
 
+def _forget_config(monkeypatch):
+    """Drop puffpai.config for one test. A fresh import also rebinds the
+    package's ``config`` attribute, so that is restored too: otherwise later
+    tests hold two config modules, each with its own settings singleton."""
+    import puffpai
+    monkeypatch.setattr(puffpai, "config", sys.modules["puffpai.config"])
+    monkeypatch.delitem(sys.modules, "puffpai.config", raising=False)
+
+
 class TestConstructionDoesNotImportConfig:
     def test_constructor_does_not_import_config(self, monkeypatch):
         """Drop config from sys.modules; constructing must not bring it back."""
-        monkeypatch.delitem(sys.modules, "puffpai.config", raising=False)
+        _forget_config(monkeypatch)
 
         FirewallManager()
 
@@ -562,7 +571,7 @@ class TestConstructionDoesNotImportConfig:
     def test_first_operation_does_import_config(self, monkeypatch, tmp_path):
         """The other half: resolution is deferred, not skipped."""
         monkeypatch.setenv("PUFFPAI_DATA_DIR", str(tmp_path / "state"))
-        monkeypatch.delitem(sys.modules, "puffpai.config", raising=False)
+        _forget_config(monkeypatch)
         backend = MockFirewall()
 
         backend.get_status()

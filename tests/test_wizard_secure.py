@@ -314,7 +314,7 @@ def test_the_card_says_so_before_the_owner_types_a_pin(steady):
     # Not a gap: this is a build that can still set a PIN, just not from a
     # screen that cannot show a recovery code. It says where instead.
     assert card["status"] == "needs_you"
-    assert "step-by-step setup" in card["decided"]
+    assert "next screen" in card["decided"]
 
 
 def test_the_recovery_code_is_shown_once_and_typed_back(steady):
@@ -364,9 +364,12 @@ def test_the_bridge_card_offers_the_whole_ladder(steady):
     ctx = _ctx(steady, package, part="bridge",
                shared={"posture": {"run_egress": "island"}})
     card = cards.validate_card(module.propose(ctx)["card"])
-    offered = {opt["value"]
-               for opt in cards.field_map(card)["bridge_posture"]["options"]}
+    field = cards.field_map(card)["bridge_posture"]
+    offered = {opt["value"] for opt in field["options"]}
+    # HomeBot: Moat (only the outside services the owner switched on) is
+    # offered again and is what a fresh build gets.
     assert {"open_yard", "fenced", "moat", "drawbridge_up"} <= offered
+    assert field.get("current") == "moat"
 
 
 def test_apply_writes_the_bridge_block_the_old_step_wrote(steady, tmp_path,
@@ -471,7 +474,7 @@ def test_a_package_that_wants_more_than_the_posture_allows_is_a_gap(steady):
     posture = setup_ops.assess_posture("offline", "sealed", [])
     result = secure_audit.baseline(posture, packages={"greedy": greedy})
     whys = " ".join(row["why"] for row in result["violations"])
-    assert "sealed" in whys and "credential handle" in whys
+    assert "reaches nothing at all" in whys and "credential handle" in whys
     gaps = secure_audit.gaps_for(result)
     assert gaps and gaps[0]["fix"]["id"] == "setup.rerun"
 
@@ -553,7 +556,7 @@ def test_the_runner_walks_all_three_parts_in_order(steady, tmp_path):
     run.run()
 
     assert [row["shown"]["title"] for row in run.log] == [
-        "What this build may reach", "Zone 1, the Vault", "Zone 3, the Bridge"]
+        "What it may reach", "Your private stuff", "When it asks first"]
     assert [row["outcome"] for row in run.log] == ["done", "done", "done"]
     section = run.sections["posture"]
     assert set(section) == {"posture", "vault", "bridge"}

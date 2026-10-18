@@ -15,9 +15,12 @@ only hosts a door the owner has already opened contacts anyway. With every door
 shut it opens **no sockets at all** and reports offline. See that module and
 ``docs/WHAT_CAN_LEAVE_YOUR_HOUSE.md`` for the ``connectivity_probe`` door.
 
-:meth:`NetworkStatus.is_reachable` is unchanged and ungated on purpose: its only
-callers name loopback or a LAN address the owner configured (Ollama, Home
-Assistant), which is not egress. Do not use it with a public host — use a door.
+:meth:`NetworkStatus.is_reachable` dials this computer and the home network
+itself: its callers name loopback or a LAN address the owner configured
+(Ollama, Home Assistant), which is not egress. An internet address is dialled
+only when it is a probe target right now, and then through
+``egress_doors.probe_reachable``, the listed exit; any other internet address
+answers False without opening a socket.
 
 Usage:
     from puffpai.offline_guard import requires_internet, requires_local_service
@@ -64,9 +67,25 @@ class NetworkStatus:
         return reachable
 
     def _check_connection(self, host: str, port: int, timeout: float) -> bool:
-        """Actually attempt a TCP connection."""
+        """Attempt a TCP connection.
+
+        This computer and the home network are dialled from here. An internet
+        address goes to ``egress_doors.probe_reachable``, which dials only a
+        current probe target and answers False for anything else.
+        """
         try:
-            sock = socket.create_connection((host, port), timeout=timeout)
+            from puffpai.security import lan_guard
+            home = lan_guard.is_home((host, port))
+        except Exception:
+            return False
+        if not home:
+            try:
+                from puffpai.security.egress_doors import probe_reachable
+                return probe_reachable(host, port, timeout=timeout)
+            except Exception:
+                return False
+        try:
+            sock = socket.create_connection((host, port), timeout=timeout)  # lan-egress: is_reachable checks a home service the owner configured
             sock.close()
             return True
         except (socket.timeout, socket.error, OSError):

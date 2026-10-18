@@ -1,11 +1,6 @@
-import type { Metadata } from "next";
-import ReviewScreen from "./ReviewScreen";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = {
-  title: "The review",
-  description: "The whole build, proposed, before anything is applied.",
-};
-
+/** An old link to the review screen lands on setup. */
 export default function ReviewPage() {
-  return <ReviewScreen />;
+  redirect("/onboarding");
 }

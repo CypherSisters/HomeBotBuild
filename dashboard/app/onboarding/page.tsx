@@ -1,6 +1,11 @@
 import { Suspense } from "react";
 import OnboardingWizard from "./OnboardingWizard";
 
+/**
+ * /onboarding: first-run setup. Hardware, the brain's size, the Vault and,
+ * if the owner wants, their Home Assistant; then the build. The same answers
+ * `puffpai setup` asks for on the console.
+ */
 export default function OnboardingPage() {
   return (
     // useSearchParams (the ?rerun=1 flag) needs a Suspense boundary in the app
@@ -17,7 +22,7 @@ export default function OnboardingPage() {
             padding: 32,
           }}
         >
-          Loading…
+          Loading...
         </div>
       }
     >

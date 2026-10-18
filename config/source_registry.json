@@ -1,6 +1,6 @@
 {
   "schema": "source_registry/v1",
-  "_maintainer_note": "The curated list of online knowledge sources the setup wizard is allowed to fetch. This file IS the allowlist: puffpai.source_fetch will not download from any address that is not spelled out here, so adding a row is granting a network permission, not filing a bookmark. Rules, so this stays safe as sources rotate: (1) LICENSE IS MANDATORY. A row with no 'license' is never offered and never fetched - the loader drops it and records a config-health defect naming the id. Put the SPDX-ish id in 'license' and the page you read it on in 'license_url', and actually read that page before you add the row; record the date you read it, or true, in 'license_checked'. A row whose license could not be confirmed says 'license_checked': false, names the best-known terms in 'license', and carries 'commercial_use': false until someone confirms otherwise. (2) NC MEANS NC. Rows marked with a NonCommercial license are fine for a person's own bot and are NOT fine to redistribute in a commercial bundle; they carry 'commercial_use': false and the wizard says so out loud. (3) HTTPS ONLY, DEFAULT PORT, NO USERINFO. A row that needs anything else does not go in. (4) REDIRECTS STAY HOME. A download may only follow redirects to the row's own host unless 'redirect_hosts' names the mirrors, and every hop is re-checked against the private-address rules. Name mirrors explicitly; do not open a wildcard. (4b) EVERY ROW WITH A URL MAKES AN EXPLICIT INTEGRITY CLAIM. There is no silence here: a row carries either a real 'sha256' the maintainer measured, or 'pin': 'none' with a 'pin_reason' saying in words why it cannot carry one. a row that does neither does not go in, and a 'corpus' row may NOT use 'pin': 'none' at all - a corpus row names one fixed file, so it MUST pin. A 'corpus' row names one fixed file, so it MUST carry a 'sha256'; a corpus row without one does not go in. The digest is verified after download and a mismatch is a hard stop with the file set aside - it is the only thing standing between this wizard and a listed host that has been compromised or has quietly swapped a file. 'zim' and 'docs' rows are the two kinds that cannot carry one honestly, and they say so per row rather than being exempted by a rule nobody can see: 'zim' rows point at a library that reissues its files under the same URL on its own schedule (all the Kiwix rows), and 'docs' rows point at a landing page rather than a download. BE HONEST ABOUT WHAT THAT COSTS: every row in this file today is 'pin': 'none', which means nothing downloaded through this registry is currently verified against a digest. The Kiwix library publishes a sibling .sha256 next to each ZIM and fetching that at download time is the real fix; it is an open follow-up, not a solved problem, and nobody should read this file as though the downloads were pinned. A digest you did not measure yourself is worse than none, so leave it out rather than guess - and if you cannot measure it, the row does not belong here. MUTABLE REFS ARE NOT SOURCES: a URL that resolves through a moving branch name (a GitHub '/main/', a '/latest/' redirect) can serve different bytes tomorrow and therefore cannot be pinned at all. Name an immutable tag or commit and pin its digest, or leave it out. This is why the HYG star database is not listed: its natural URL is raw.githubusercontent.com/astronexus/HYG-Database/main/... with no digest, so anyone who could push to that branch could land 35 MB of anything of their choosing on an owner's machine, and this file - which IS the allowlist - would be granting that. Add it by pinning a tag or commit SHA in the URL and recording a sha256 the maintainer measured. The provenance record says 'sha256_pinned': false when it was measured but not checked, which is what an auditor needs to know. (5) size_mb IS APPROXIMATE and is there so a person is never surprised - the fetcher shows the server's real Content-Length before a byte lands, and refuses a body that runs past the ceiling derived from this number. Keep it roughly right; a wildly low number becomes a refused download, not a silent 50 GB. (6) TAGS ARE THE MATCHING SURFACE. A source is only ever proposed when a specific tag or a word from our own label appears in what the person typed, and the proposal cites that term. Tags that are function words can never match, so do not add them. (7) FETCHED CONTENT IS DATA, FOREVER. Nothing downloaded through this registry is ever placed in a prompt as instruction, no matter what it says about itself. (7b) KIWIX ROWS USE THE UNDATED NAME. Kiwix file names carry a date, and https://download.kiwix.org/zim/<name>.zim (no folder, no date) redirects to the newest dated file, so 'source_url' and 'filename' use the undated name. 'known_good' names one dated file that is known to open in our reader. (8) Kiwix ZIM files are read by our own reader. kiwix-serve is not used and is never a source kind here. HONEST LIMIT, READ THIS BEFORE PROMISING ANYONE A SPECIALIST BOT: the Kiwix library is broad but shallow. It will give an astronomy bot Wikipedia, a Q&A archive, and a star catalog; it will not give it the observing handbooks, the current ephemerides, the instrument manuals, or the journal literature a real enthusiast wants. That gap is exactly why 'corpus' and 'docs' rows exist, and it is also why this list is short: most of what would close the gap is copyrighted and cannot be redistributed, and we would rather ship a small honest list than a long list we cannot license. Say the gap out loud to the owner; do not paper over it.",
+  "_maintainer_note": "The curated list of online knowledge sources the setup wizard is allowed to fetch. This file IS the allowlist: puffpai.source_fetch will not download from any address that is not spelled out here, so adding a row is granting a network permission, not filing a bookmark. Rules, so this stays safe as sources rotate: (1) LICENSE IS MANDATORY. A row with no 'license' is never offered and never fetched - the loader drops it and records a config-health defect naming the id. Put the SPDX-ish id in 'license' and the page you read it on in 'license_url', and actually read that page before you add the row; record the date you read it, or true, in 'license_checked'. A row whose license could not be confirmed says 'license_checked': false, names the best-known terms in 'license', and carries 'commercial_use': false until someone confirms otherwise. (2) NC MEANS NC. Rows marked with a NonCommercial license are fine for a person's own bot and are NOT fine to redistribute in a commercial bundle; they carry 'commercial_use': false and the wizard says so out loud. (3) HTTPS ONLY, DEFAULT PORT, NO USERINFO. A row that needs anything else does not go in. (4) REDIRECTS STAY HOME. A download may only follow redirects to the row's own host unless 'redirect_hosts' names the mirrors, and every hop is re-checked against the private-address rules. Name mirrors explicitly; do not open a wildcard. (4b) EVERY ROW WITH A URL MAKES AN EXPLICIT INTEGRITY CLAIM. There is no silence here: a row carries either a real 'sha256' the maintainer measured, or 'pin': 'none' with a 'pin_reason' saying in words why it cannot carry one. a row that does neither does not go in, and a 'corpus' row may NOT use 'pin': 'none' at all - a corpus row names one fixed file, so it MUST pin. A 'corpus' row names one fixed file, so it MUST carry a 'sha256'; a corpus row without one does not go in. The digest is verified after download and a mismatch is a hard stop with the file set aside - it is the only thing standing between this wizard and a listed host that has been compromised or has quietly swapped a file. 'zim' and 'docs' rows are the two kinds that cannot carry one honestly, and they say so per row rather than being exempted by a rule nobody can see: 'zim' rows point at a library that reissues its files under the same URL on its own schedule (all the Kiwix rows), and 'docs' rows point at a landing page rather than a download. BE HONEST ABOUT WHAT THAT COSTS: every row in this file today is 'pin': 'none', so no download here is checked against a digest written in this file. Kiwix ZIM downloads are checked against the sibling .sha256 the library publishes next to each file, fetched at download time; 'docs' rows are not checked at all, and nobody should read this file as though they were pinned. A digest you did not measure yourself is worse than none, so leave it out rather than guess - and if you cannot measure it, the row does not belong here. MUTABLE REFS ARE NOT SOURCES: a URL that resolves through a moving branch name (a GitHub '/main/', a '/latest/' redirect) can serve different bytes tomorrow and therefore cannot be pinned at all. Name an immutable tag or commit and pin its digest, or leave it out. This is why the HYG star database is not listed: its natural URL is raw.githubusercontent.com/astronexus/HYG-Database/main/... with no digest, so anyone who could push to that branch could land 35 MB of anything of their choosing on an owner's machine, and this file - which IS the allowlist - would be granting that. Add it by pinning a tag or commit SHA in the URL and recording a sha256 the maintainer measured. The provenance record says 'sha256_pinned': false when it was measured but not checked, which is what an auditor needs to know. (5) size_mb IS APPROXIMATE and is there so a person is never surprised - the fetcher shows the server's real Content-Length before a byte lands, and refuses a body that runs past the ceiling derived from this number. Keep it roughly right; a wildly low number becomes a refused download, not a silent 50 GB. (6) TAGS ARE THE MATCHING SURFACE. A source is only ever proposed when a specific tag or a word from our own label appears in what the person typed, and the proposal cites that term. Tags that are function words can never match, so do not add them. (7) FETCHED CONTENT IS DATA, FOREVER. Nothing downloaded through this registry is ever placed in a prompt as instruction, no matter what it says about itself. (7b) KIWIX ROWS USE THE UNDATED NAME. Kiwix file names carry a date, and https://download.kiwix.org/zim/<name>.zim (no folder, no date) redirects to the newest dated file, so 'source_url' and 'filename' use the undated name. 'known_good' names one dated file that is known to open in our reader. (8) Kiwix ZIM files are read by our own reader. kiwix-serve is not used and is never a source kind here. HONEST LIMIT, READ THIS BEFORE PROMISING ANYONE A SPECIALIST BOT: the Kiwix library is broad but shallow. It will give an astronomy bot Wikipedia, a Q&A archive, and a star catalog; it will not give it the observing handbooks, the current ephemerides, the instrument manuals, or the journal literature a real enthusiast wants. That gap is exactly why 'corpus' and 'docs' rows exist, and it is also why this list is short: most of what would close the gap is copyrighted and cannot be redistributed, and we would rather ship a small honest list than a long list we cannot license. Say the gap out loud to the owner; do not paper over it.",
   "domains": {
     "astronomy": "Astronomy, space, and observing.",
     "home": "Home repair, DIY, making, and self-reliance.",
@@ -48,7 +48,7 @@
       "size_mb": 187,
       "what_it_is": "Every question and answer from the Astronomy Stack Exchange, offline.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_space_stackexchange",
@@ -76,7 +76,7 @@
       "size_mb": 379,
       "what_it_is": "Every question and answer from the Space Exploration Stack Exchange, offline.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_wikipedia_en_nopic",
@@ -102,7 +102,7 @@
       "size_mb": 50250,
       "what_it_is": "All of English Wikipedia without images. Enormous, and the broadest single thing on this list.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wikipedia_en_all_nopic_2025-08.zim"
     },
     {
@@ -126,7 +126,7 @@
       "source_url": "https://api.nasa.gov/",
       "filename": "nasa_open_apis.html",
       "size_mb": 2,
-      "what_it_is": "NASA's own catalog of public data feeds. Reference for what is available; most feeds need a free key.",
+      "what_it_is": "NASA's own list of public data feeds. Reference for what is available; most feeds need a free key.",
       "pin": "none",
       "pin_reason": "A landing page, not a fixed artifact. Nothing is downloaded from this row to hash; it is a reading reference the wizard cites, and its content is expected to change."
     },
@@ -180,7 +180,7 @@
       "size_mb": 1967,
       "what_it_is": "Every question and answer from the Home Improvement Stack Exchange, offline.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_appropedia",
@@ -214,7 +214,7 @@
       "size_mb": 555,
       "what_it_is": "Practical sustainability and off-grid know-how: solar, water, sanitation, small-scale build projects.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_ifixit",
@@ -240,7 +240,7 @@
       "size_mb": 3405,
       "what_it_is": "Step-by-step teardown and repair guides for consumer hardware. Non-commercial use only.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "ifixit_en_all_2025-12.zim"
     },
     {
@@ -267,7 +267,7 @@
       "size_mb": 1778,
       "what_it_is": "Wikipedia's medical articles as a standalone offline reference. Reference, not advice.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "medlineplus_health_topics",
@@ -313,7 +313,7 @@
       "size_mb": 121515,
       "what_it_is": "All of English Wikipedia with images. The largest single pack on this list.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wikipedia_en_all_maxi_2025-08.zim"
     },
     {
@@ -335,7 +335,7 @@
       "size_mb": 13720,
       "what_it_is": "The opening section of every English Wikipedia article, without images.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wikipedia_en_all_mini_2025-06.zim"
     },
     {
@@ -356,7 +356,7 @@
       "size_mb": 6667,
       "what_it_is": "A selection of about 50,000 of the best English Wikipedia articles, with images.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wikipedia_en_top_maxi_2025-09.zim"
     },
     {
@@ -379,7 +379,7 @@
       "size_mb": 2976,
       "what_it_is": "Wikipedia written in simple English words and grammar, with images.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wikipedia_en_simple_all_maxi_2025-09.zim"
     },
     {
@@ -403,7 +403,7 @@
       "size_mb": 701,
       "what_it_is": "Wikipedia's history articles as a standalone pack, without images.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wikipedia_en_history_nopic_2025-09.zim"
     },
     {
@@ -426,7 +426,7 @@
       "size_mb": 1264,
       "what_it_is": "Wikipedia's physics articles as a standalone pack, with images.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wikipedia_en_physics_maxi_2025-09.zim"
     },
     {
@@ -447,7 +447,7 @@
       "size_mb": 6514,
       "what_it_is": "The manual and help pages for MediaWiki, the software that runs Wikipedia.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "mediawiki_en_all_2023-07.zim"
     },
     {
@@ -471,7 +471,7 @@
       "size_mb": 8217,
       "what_it_is": "A library of public domain texts: books, poems, speeches and historical documents.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wikisource_en_all_maxi_2025-09.zim"
     },
     {
@@ -496,7 +496,7 @@
       "size_mb": 8732,
       "what_it_is": "The English Wiktionary: definitions, spelling, pronunciation and word origins, without images.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wiktionary_en_all_nopic_2026-05.zim"
     },
     {
@@ -518,7 +518,7 @@
       "size_mb": 3345,
       "what_it_is": "Open textbooks and manuals on many subjects, without images.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wikibooks_en_all_nopic_2026-04.zim"
     },
     {
@@ -541,7 +541,7 @@
       "size_mb": 1554,
       "what_it_is": "Open course material and learning projects, without images.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wikiversity_en_all_nopic_2026-05.zim"
     },
     {
@@ -566,7 +566,7 @@
       "size_mb": 1022,
       "what_it_is": "The Wikivoyage travel guide, with images.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wikivoyage_en_all_maxi_2025-09.zim"
     },
     {
@@ -590,7 +590,7 @@
       "size_mb": 260,
       "what_it_is": "The Wikivoyage travel guide without images. Much smaller than the full version.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wikivoyage_en_all_nopic_2025-09.zim"
     },
     {
@@ -623,7 +623,7 @@
       "size_mb": 3272,
       "what_it_is": "A catalogue of all known species and their classification, with images.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wikispecies_en_all_maxi_2025-09.zim"
     },
     {
@@ -647,7 +647,7 @@
       "size_mb": 1461,
       "what_it_is": "A catalogue of all known species and their classification, without images.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wikispecies_en_all_nopic_2025-09.zim"
     },
     {
@@ -674,7 +674,7 @@
       "size_mb": 357,
       "what_it_is": "WikEM, the open emergency medicine reference, with images. Reference, not advice.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wikem_en_all_maxi_2021-02.zim"
     },
     {
@@ -697,7 +697,7 @@
       "size_mb": 331,
       "what_it_is": "WikEM, the open emergency medicine reference, without images. Reference, not advice.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "wikem_en_all_nopic_2021-02.zim"
     },
     {
@@ -722,7 +722,7 @@
       "size_mb": 2196,
       "what_it_is": "Healthcare articles curated by WikiProjectMed. Reference, not advice.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "mdwiki_en_all_maxi_2024-06.zim"
     },
     {
@@ -746,7 +746,7 @@
       "size_mb": 1186,
       "what_it_is": "The OpenStreetMap wiki: how the map is made, tagged and used, with images.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "openstreetmap-wiki_en_all_maxi_2025-07.zim"
     },
     {
@@ -769,7 +769,7 @@
       "size_mb": 456,
       "what_it_is": "The OpenStreetMap wiki: how the map is made, tagged and used, without images.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "openstreetmap-wiki_en_all_nopic_2025-07.zim"
     },
     {
@@ -791,7 +791,7 @@
       "size_mb": 147,
       "what_it_is": "Every xkcd comic with a community explanation of the joke. The comics themselves are non-commercial only.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "explainxkcd_en_all_maxi_2021-03.zim"
     },
     {
@@ -815,7 +815,7 @@
       "size_mb": 238,
       "what_it_is": "Articles analysing and refuting pseudoscience and anti-science claims, with images.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "rationalwiki_en_all_maxi_2025-05.zim"
     },
     {
@@ -839,7 +839,7 @@
       "size_mb": 80,
       "what_it_is": "Articles analysing and refuting pseudoscience and anti-science claims, without images.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "rationalwiki_en_all_nopic_2025-05.zim"
     },
     {
@@ -863,7 +863,7 @@
       "size_mb": 9,
       "what_it_is": "Plain guides to tools and habits that protect your privacy online.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "incognitocat.me_en_all_2025-09.zim"
     },
     {
@@ -888,7 +888,7 @@
       "size_mb": 211002,
       "what_it_is": "Every English book in Project Gutenberg: classic literature that is public domain in the US. Very large.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "gutenberg_en_all_2025-11.zim"
     },
     {
@@ -912,7 +912,7 @@
       "size_mb": 210140,
       "what_it_is": "Scanned books and manuals, mostly 1800s to early 1900s, on making and growing things without modern infrastructure. Rights are mixed: mostly old public domain works, not checked title by title. Very large.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "survivorlibrary.com_en_all_2025-09.zim"
     },
     {
@@ -937,7 +937,7 @@
       "size_mb": 4019,
       "what_it_is": "Every question and answer from the Electrical Engineering Stack Exchange, offline.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_physics_stackexchange",
@@ -959,7 +959,7 @@
       "size_mb": 1743,
       "what_it_is": "Every question and answer from the Physics Stack Exchange, offline.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_gardening_stackexchange",
@@ -982,7 +982,7 @@
       "size_mb": 884,
       "what_it_is": "Every question and answer from the Gardening and Landscaping Stack Exchange, offline.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_softwareengineering_stackexchange",
@@ -1003,7 +1003,7 @@
       "size_mb": 457,
       "what_it_is": "Every question and answer from the Software Engineering Stack Exchange, offline.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_security_stackexchange",
@@ -1025,7 +1025,7 @@
       "size_mb": 419,
       "what_it_is": "Every question and answer from the Information Security Stack Exchange, offline.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_mechanics_stackexchange",
@@ -1048,7 +1048,7 @@
       "size_mb": 324,
       "what_it_is": "Every question and answer from the Motor Vehicle Maintenance and Repair Stack Exchange, offline.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_outdoors_stackexchange",
@@ -1070,7 +1070,7 @@
       "size_mb": 135,
       "what_it_is": "Every question and answer from the Great Outdoors Stack Exchange, offline.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_cooking_stackexchange",
@@ -1092,7 +1092,7 @@
       "size_mb": 226,
       "what_it_is": "Every question and answer from the Cooking Stack Exchange (Seasoned Advice), offline.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_engineering_stackexchange",
@@ -1114,7 +1114,7 @@
       "size_mb": 244,
       "what_it_is": "Every question and answer from the Engineering Stack Exchange, offline.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_ham_stackexchange",
@@ -1136,7 +1136,7 @@
       "size_mb": 72,
       "what_it_is": "Every question and answer from the Amateur Radio Stack Exchange, offline.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_homebrew_stackexchange",
@@ -1160,7 +1160,7 @@
       "size_mb": 36,
       "what_it_is": "Every question and answer from the Homebrewing Stack Exchange, offline.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_medicalsciences_stackexchange",
@@ -1182,7 +1182,7 @@
       "size_mb": 58,
       "what_it_is": "Every question and answer from the Medical Sciences Stack Exchange, offline.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_sustainability_stackexchange",
@@ -1204,7 +1204,7 @@
       "size_mb": 26,
       "what_it_is": "Every question and answer from the Sustainable Living Stack Exchange, offline.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_libretexts_medicine",
@@ -1228,7 +1228,7 @@
       "size_mb": 1137,
       "what_it_is": "Medicine courses and textbooks from LibreTexts. Licenses are set per page; most are non-commercial.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "libretexts.org_en_med_2025-01.zim"
     },
     {
@@ -1253,7 +1253,7 @@
       "size_mb": 2317,
       "what_it_is": "The US government's disaster preparedness site: weather, fire, making a plan and building a kit.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "www.ready.gov_en_2024-12.zim"
     },
     {
@@ -1276,7 +1276,7 @@
       "size_mb": 2460,
       "what_it_is": "The Spanish edition of the US government's disaster preparedness site.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "www.ready.gov_es_2024-12.zim"
     },
     {
@@ -1300,7 +1300,7 @@
       "size_mb": 2141,
       "what_it_is": "Videos from the Urban Prepper channel on emergency preparedness in cities.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "urban-prepper_en_all_2025-09.zim"
     },
     {
@@ -1324,7 +1324,7 @@
       "size_mb": 1279,
       "what_it_is": "Videos from the Canadian Prepper channel on preparing for winter storms and cold weather emergencies.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "canadian_prepper_winterprepping_en_2025-08.zim"
     },
     {
@@ -1346,7 +1346,7 @@
       "size_mb": 72,
       "what_it_is": "US military medical doctrine and instruction manuals, as collected by the Federation of American Scientists. Reference, not advice.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "fas-military-medicine_en_2025-06.zim"
     },
     {
@@ -1370,7 +1370,7 @@
       "size_mb": 93,
       "what_it_is": "A collection of recipes and techniques for preparing and storing food.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "zimgit-food-preparation_en_2025-04.zim"
     },
     {
@@ -1395,7 +1395,7 @@
       "size_mb": 27,
       "what_it_is": "Illustrated resources on all kinds of knots, lashings and ladders.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "zimgit-knots_en_2024-08.zim"
     },
     {
@@ -1418,7 +1418,7 @@
       "size_mb": 67,
       "what_it_is": "A collection of books on field and emergency medicine. Reference, not advice.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "zimgit-medicine_en_2024-08.zim"
     },
     {
@@ -1442,7 +1442,7 @@
       "size_mb": 615,
       "what_it_is": "A collection of guides for the weeks after a disaster: shelter, sanitation, repair and recovery.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "zimgit-post-disaster_en_2024-05.zim"
     },
     {
@@ -1467,7 +1467,7 @@
       "size_mb": 20,
       "what_it_is": "Resources on collecting and purifying water.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "zimgit-water_en_2024-08.zim"
     },
     {
@@ -1490,7 +1490,7 @@
       "size_mb": 1295,
       "what_it_is": "TED talk videos about the coronavirus pandemic, with subtitles in many languages. Non-commercial use only, no edited versions.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_ted_democracy",
@@ -1512,7 +1512,7 @@
       "size_mb": 2225,
       "what_it_is": "TED talk videos about democracy, with subtitles in many languages. Non-commercial use only, no edited versions.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_ted_human_rights",
@@ -1532,7 +1532,7 @@
       "size_mb": 558,
       "what_it_is": "TED talk videos about human rights, with subtitles in many languages. Non-commercial use only, no edited versions.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_ted_justice_system",
@@ -1554,7 +1554,7 @@
       "size_mb": 966,
       "what_it_is": "TED talk videos about the justice system, with subtitles in many languages. Non-commercial use only, no edited versions.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_ted_law",
@@ -1575,7 +1575,7 @@
       "size_mb": 1777,
       "what_it_is": "TED talk videos about law, with subtitles in many languages. Non-commercial use only, no edited versions.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_ted_maps",
@@ -1596,7 +1596,7 @@
       "size_mb": 293,
       "what_it_is": "TED talk videos about maps and mapping, with subtitles in many languages. Non-commercial use only, no edited versions.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_ted_military",
@@ -1617,7 +1617,7 @@
       "size_mb": 617,
       "what_it_is": "TED talk videos about the military, with subtitles in many languages. Non-commercial use only, no edited versions.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_ted_plants",
@@ -1638,7 +1638,7 @@
       "size_mb": 633,
       "what_it_is": "TED talk videos about plants, with subtitles in many languages. Non-commercial use only, no edited versions.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_ted_solar_energy",
@@ -1660,7 +1660,7 @@
       "size_mb": 515,
       "what_it_is": "TED talk videos about solar energy, with subtitles in many languages. Non-commercial use only, no edited versions.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_ted_surveillance",
@@ -1680,7 +1680,7 @@
       "size_mb": 384,
       "what_it_is": "TED talk videos about surveillance, with subtitles in many languages. Non-commercial use only, no edited versions.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_ted_water",
@@ -1701,7 +1701,7 @@
       "size_mb": 832,
       "what_it_is": "TED talk videos about water, with subtitles in many languages. Non-commercial use only, no edited versions.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up."
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it."
     },
     {
       "id": "kiwix_prunelle_books",
@@ -1723,7 +1723,7 @@
       "size_mb": 359,
       "what_it_is": "Illustrated interactive books for young readers, from the publisher Book Prunelle.",
       "pin": "none",
-      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM; verifying that at download time is the real fix and is an open follow-up.",
+      "pin_reason": "Kiwix reissues this file under the same URL on its own schedule, so a pinned digest would break on the next reissue rather than catch a swap. The library publishes a sibling .sha256 next to each ZIM, and the downloader checks the file against it before keeping it.",
       "known_good": "prunelle_en_interactive-books_2025-02.zim"
     }
   ]

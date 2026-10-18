@@ -992,10 +992,25 @@ def _step_bridge(args, setup_ops, posture, ha_present, *, non_interactive: bool)
 
 
 def _step_ha(args, setup_ops, *, non_interactive: bool) -> tuple[dict, bool]:
-    """The "Home Assistant" step, which is OPTIONAL. One question, no nagging."""
+    """The "Connect your Home Assistant" step, which is OPTIONAL and skipped
+    with Enter. The address starts filled in; the token is read hidden and
+    tested before the step ends."""
+    import textwrap
+
+    from puffpai import homebot_preset
+
+    if getattr(args, "run_egress", None) == "sealed":
+        # A sealed build reaches nothing, the home network included, so the
+        # step is not offered (the Tools card says why).
+        return setup_ops.ha_block(present=False), False
+
     enter_step("Home Assistant")
     print()
-    print(step_banner("Home Assistant", "Optional. Plenty of households have none."))
+    print()
+    print(homebot_preset.HA_TITLE)
+    print("-" * len(homebot_preset.HA_TITLE))
+    for line in textwrap.wrap(homebot_preset.HA_INTRO, 76):
+        print(f"  {line}")
 
     url_flag = getattr(args, "ha_url", None)
     token_flag = getattr(args, "ha_token", None)
@@ -1003,30 +1018,44 @@ def _step_ha(args, setup_ops, *, non_interactive: bool) -> tuple[dict, bool]:
         present = False
     elif url_flag or token_flag:
         present = True
+    elif non_interactive:
+        present = False
     else:
-        present = _ask_yes_no("  Do you run Home Assistant?", False,
-                              non_interactive=non_interactive)
+        from puffpai.wizard import host
+        answer = host._read_line("  Connect Home Assistant now? [y/N] ")
+        present = (answer or "").strip().lower() in ("y", "yes")
 
     if not present:
-        print("  Recorded: no Home Assistant. Everything else works the same.")
+        print("  Skipped. Everything else works the same. Connect it later on")
+        print("  the Smart Home page or in Settings.")
         return setup_ops.ha_block(present=False), False
 
     url = url_flag or _ask("  Home Assistant address", setup_ops.DEFAULT_HA_URL,
                            non_interactive=non_interactive)
     token = token_flag
     if token is None and not non_interactive:
-        print("  Paste a long-lived access token (Home Assistant > your profile")
-        print("  > Security > Long-lived access tokens). It is written to the")
-        print("  Home Assistant config file this build reads and nowhere else -")
-        print("  never to the build record, never to a log.")
-        token = _read_pin("  Token")
+        for line in textwrap.wrap(homebot_preset.HA_TOKEN_HELP, 76):
+            print(f"  {line}")
+        print("  The token is kept in the Home Assistant settings file on this")
+        print("  computer and nowhere else, never in a log.")
+        token = _read_pin("  Long-lived access token")
     if not token:
-        print("  No token given. The address is recorded; add the token later")
-        print("  from Settings and Home Assistant starts working.")
+        print("  No token given. The address is kept; add the token later on")
+        print("  the Smart Home page or in Settings.")
         return setup_ops.ha_block(present=True, url=url,
                                   token_configured=False), True
 
-    setup_ops.set_ha_config(url, token, enabled=True)
+    try:
+        setup_ops.set_ha_config(url, token, enabled=True,
+                                posture=getattr(args, "run_egress", None))
+    except Exception:  # noqa: BLE001 - said plainly; the token is not kept
+        del token
+        print("  HomeBot talks to Home Assistant only on your home network, and")
+        print(f"  {url} could not be found there. Nothing was saved. Check the")
+        print("  address (Home Assistant shows it under Settings, System,")
+        print("  Network) and connect it on the Smart Home page or in Settings.")
+        return setup_ops.ha_block(present=True, url=url,
+                                  token_configured=False), True
     del token_flag
     checked = False
     reachable = None
@@ -1037,11 +1066,12 @@ def _step_ha(args, setup_ops, *, non_interactive: bool) -> tuple[dict, bool]:
         result = setup_ops.test_ha_connection(url, token)
         reachable = bool(result.get("ok"))
         if reachable:
-            print(f"  Home Assistant answered (version {result.get('version')}).")
+            print(f"  Connected. Home Assistant answered (version "
+                  f"{result.get('version')}).")
         else:
-            print(f"  Could not talk to it: {result.get('error')}")
-            print("  The token is saved; fix the address or the token in "
-                  "Settings when you can.")
+            print(f"  {result.get('error')}")
+            print("  The address and token are saved. Fix them on the Smart "
+                  "Home page or in Settings when you can.")
     del token
     return setup_ops.ha_block(present=True, url=url, token_configured=True,
                               checked=checked, reachable=reachable), True

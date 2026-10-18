@@ -238,8 +238,8 @@ def _check_sources(status: dict[str, Any],
                 skill="prove",
                 what=f"{label} was chosen during the build and never "
                      f"downloaded.",
-                why=f"Nothing for '{source_id}' is in this machine's "
-                    f"knowledge folders, and nothing is in the index.",
+                why="It is not in this computer's library folders, and "
+                    "your bot has not learned any of it.",
                 impact="Your bot will say it does not know, rather than guess, "
                        "on questions this was meant to answer.",
                 fix={"kind": "command", "id": "source.fetch",
@@ -250,10 +250,10 @@ def _check_sources(status: dict[str, Any],
                 skill="prove",
                 what=f"{label} is downloaded but not searchable yet.",
                 why=str(item.get("note") or
-                        "The file is on disk and no chunks of it are in the "
-                        "knowledge index."),
-                impact="Your bot cannot find anything in it until it is "
-                       "indexed.",
+                        "The file is on this computer, but your bot has not "
+                        "learned any of it yet."),
+                impact="Your bot cannot find anything in it until it has "
+                       "learned it.",
                 fix={"kind": "command", "id": "knowledge.sync", "args": {}}))
     if not gaps:
         return (_check("sources_honest", title, PASS,
@@ -287,7 +287,9 @@ def _check_handoff(launchers: Any) -> dict[str, Any]:
         return _check("handoff_correct", title, FAIL,
                       f"The installer record points at {env_file or 'nothing'}, "
                       f"which is not there.")
-    folder = os.path.dirname(env_file)
+    # The launchers live in the install folder (beside the pointer); only an
+    # older record without it is read as "beside the env file".
+    folder = str(launchers.get("root") or "") or os.path.dirname(env_file)
     for key in ("backend", "dashboard"):
         script = str(launchers.get(key) or "")
         if not script:
@@ -555,6 +557,54 @@ def closing_lines(record: dict[str, Any]) -> list[str]:
     return lines
 
 
+def count_line(checks: list) -> str:
+    """"Of 5 checks: 1 passed, 2 found something missing, 2 did not apply."
+
+    Never "5 checks ran and none failed" when one passed.
+    """
+    checks = [c for c in checks or [] if isinstance(c, dict)]
+    passed = sum(1 for c in checks if c.get("result") == PASS)
+    gaps = sum(1 for c in checks if c.get("result") == GAP)
+    skipped = sum(1 for c in checks if c.get("result") == NOT_APPLICABLE)
+    parts = [f"{passed} passed"]
+    if gaps:
+        parts.append(f"{gaps} found something missing")
+    if skipped:
+        parts.append(f"{skipped} did not apply to this build")
+    other = len(checks) - passed - gaps - skipped
+    if other:
+        parts.append(f"{other} could not tell")
+    noun = "check" if len(checks) == 1 else "checks"
+    return f"Of {len(checks)} {noun}: " + ", ".join(parts) + "."
+
+
+def summary_head(record: dict[str, Any]) -> str:
+    """What the build's own checks found, in one sentence, or "" when none
+    ran. The one wording the end screen and the home page both show, so the
+    two cannot disagree."""
+    checks = [c for c in (record or {}).get("checks") or [] if isinstance(c, dict)]
+    if not checks:
+        return ""
+    failed = [c for c in checks if c.get("result") == FAIL]
+    if failed:
+        return ("This build did not check out: "
+                + "; ".join(str(c.get("reason") or "") for c in failed[:3]))
+    return count_line(checks)
+
+
+def summary_line(record: dict[str, Any]) -> str:
+    """:func:`summary_head`, then how to prove the rest while the running bot
+    has not been asked yet."""
+    head = summary_head(record)
+    if not head:
+        return ""
+    live = (record or {}).get("live")
+    if isinstance(live, dict) and live.get("ran"):
+        return head
+    # Words on a screen, not code marks around the command.
+    return f"{head} {RUN_LINE.replace('`', '')}"
+
+
 def strip_block(lines: list[str]) -> list[str]:
     """*lines* with the Prove block removed. Used by the equivalence test."""
     out, inside = [], False
@@ -634,6 +684,7 @@ def write_record(record: dict[str, Any], cfg: Any = None) -> str:
 
 
 __all__ = ["BEGIN_MARK", "END_MARK", "FAIL", "GAP", "IDENTITY_QUESTION",
+           "count_line", "summary_head", "summary_line",
            "MAX_CHAT_CALLS", "NOT_APPLICABLE", "PASS", "RUN_LINE", "SCHEMA",
            "closing_lines", "read_record", "state_path", "static_prove",
            "strip_block", "verdict", "write_record"]

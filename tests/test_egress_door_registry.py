@@ -438,11 +438,28 @@ _NOT_EGRESS: dict[str, str] = {
     "zone3/adguard_controller.py": "AdGuard on the LAN",
     "zone3/pihole_controller.py": "Pi-hole on the LAN",
     "agents/caretaker.py": "LAN/loopback reachability probe",
-    "offline_guard.py": "connectivity probe (door: connectivity_probe) — it "
-                        "has no hosts of its own; probe_targets() hands it "
-                        "hosts drawn from doors that are already open, and "
-                        "with every door shut it opens no socket at all",
+    "offline_guard.py": "LAN/loopback reachability only (is_reachable refuses "
+                        "an internet address before a socket opens); the "
+                        "connectivity probe itself dials through "
+                        "egress_doors.probe_reachable",
+    # The build engine's listed exits and guards. Each checks, pins and logs
+    # what it sends, or (the two guards) dials nothing at all.
+    "security/pinned_net.py": "the pinned transport the listed exits use "
+                              "(no host of its own)",
+    "source_fetch.py": "a listed exit: every request goes through a door "
+                       "(egress_request) and is checked and logged there",
+    "security/lan_guard.py": "the home-network guard: builds proxy-free "
+                             "clients for marked calls, dials nothing",
+    "security/bridge_guard.py": "the Bridge's connect-time backstop: wraps "
+                                "client libraries, dials nothing",
 }
+
+#: A line marked ``# lan-egress: <why>`` is a call to this computer or the home
+#: network. security.lan_guard holds it to that at run time (an internet
+#: address from a marked line is refused before a packet is sent) and the test
+#: run fails on one (tests/conftest.py), so the marker is a check that runs,
+#: not a comment.
+_LAN_MARKER = "# lan-" "egress:"
 
 #: Per-LINE exemptions, for files that hold BOTH a loopback call and the WAN
 #: calls this row converted. assistant_tools.py is the file the Azure door was
@@ -469,7 +486,7 @@ _NOT_EGRESS_LINES: dict[str, dict[str, str]] = {
     "bridge_inventory.py": {
         'return websocket.create_connection(url, timeout=_HA_WS_TIMEOUT)':
             "Home Assistant's websocket on the LAN (config "
-            "`home_assistant.url`, for example 192.168.50.140), the "
+            "`home_assistant.url`, for example 192.168.1.140), the "
             "read-only device/entity/area registries, via ha_events.ws_url_for "
             "and ha_events._resolve_ha for the credential; same destination as "
             "ha_events.py above",
@@ -594,6 +611,38 @@ _NOT_EGRESS_LINES: dict[str, dict[str, str]] = {
     # refuses, before this line, any address whose host does not resolve to
     # loopback, private or link-local space, and _NoRedirects stops a 3xx
     # from turning into a new destination.
+    # The build engine's calls to the apps it runs on this computer. Each line
+    # below builds a request or a redirect refusal; the line that dials it is
+    # marked ``# lan-egress:`` and checked to 127.0.0.1 first.
+    "assemble/server/app.py": {
+        'req = urllib.request.Request(url, data=data, method=method, headers=send)':
+            "the assembled app's gateway on 127.0.0.1 (built here, sent by "
+            "the marked opener below it)",
+    },
+    "build/api.py": {
+        'class _Stay(urllib.request.HTTPRedirectHandler):':
+            "the redirect refusal for the 127.0.0.1 frame check, not a call",
+        'with opener.open(urllib.request.Request(url, method="GET"), timeout=3) as resp:':
+            "an app on 127.0.0.1 (host checked just above), through the "
+            "marked proxy-free opener",
+    },
+    "build/toolsmith_run.py": {
+        'req = urllib.request.Request(url, headers={"Authorization": f"Basic {token}"})':
+            "an app on 127.0.0.1 (checked by the caller), sent by the marked "
+            "opener below it",
+    },
+    "integrate/page_reader.py": {
+        'req = urllib.request.Request(':
+            "the headless browser's DevTools on 127.0.0.1, sent by the "
+            "marked opener",
+    },
+    "integrate/run_here.py": {
+        'class _NoRedirect(urllib.request.HTTPRedirectHandler):':
+            "the redirect refusal for calls to an app on 127.0.0.1, not a call",
+        'req = urllib.request.Request(url, data=data, method=method,':
+            "an app on 127.0.0.1 (the URL is built on LOOPBACK), sent by the "
+            "marked opener",
+    },
     "prove_live.py": {
         'class _NoRedirects(urllib.request.HTTPRedirectHandler):':
             "the redirect refusal for the local backend probe, not a call",
@@ -649,7 +698,7 @@ class TestLanHttpRefusesAnythingOffTheHouse:
         from puffpai.security import lan_http, netaddr
         monkeypatch.setattr(
             netaddr, "default_resolver",
-            lambda host, port: ["192.168.50.140", "93.184.216.34"])
+            lambda host, port: ["192.168.1.140", "93.184.216.34"])
         with pytest.raises(netaddr.AddressRefused):
             lan_http.lan_get("http://adguard.lan/control/status")
 
@@ -672,7 +721,7 @@ class TestLanHttpRefusesAnythingOffTheHouse:
             lan_http.lan_get("http://adguard.lan/")
 
     @pytest.mark.parametrize("url", [
-        "file:///etc/passwd", "ftp://192.168.50.5/x", "not-a-url", "http://",
+        "file:///etc/passwd", "ftp://192.168.1.5/x", "not-a-url", "http://",
     ])
     def test_a_non_http_url_is_refused(self, url):
         from puffpai.security import lan_http
@@ -705,7 +754,7 @@ class TestLanHttpRefusesAnythingOffTheHouse:
         from puffpai.security import lan_http
         monkeypatch.setattr("requests.Session.request",
                             lambda self, method, url, **kw: "ok")
-        assert lan_http.lan_post("http://192.168.50.140:8123/api/x",
+        assert lan_http.lan_post("http://192.168.1.140:8123/api/x",
                                  json={}) == "ok"
 
     def test_lan_posture_alone_would_refuse_loopback(self):
@@ -951,10 +1000,11 @@ def test_no_outbound_call_site_outside_the_registry():
         except (OSError, UnicodeDecodeError):
             continue
         for lineno, line in enumerate(text.splitlines(), 1):
-            if _CALL_RE.search(line) and line.strip() not in exempt_lines:
+            if _CALL_RE.search(line) and line.strip() not in exempt_lines \
+                    and _LAN_MARKER not in line:
                 offenders.append(f"{rel}:{lineno}: {line.strip()[:90]}")
         for lineno, line in _client_call_offenders(text, exempt_lines):
-            if line not in exempt_lines:
+            if line not in exempt_lines and _LAN_MARKER not in line:
                 offenders.append(f"{rel}:{lineno}: {line[:90]}")
     assert not offenders, (
         "outbound call sites outside the egress-door registry:\n  "
@@ -995,9 +1045,16 @@ def test_every_wan_hostname_in_the_tree_belongs_to_a_door():
     # placeholder in logging_config's redaction docstring.
     url_re = re.compile(r"https://([A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+)")
     known = {h for d in ed.DOORS for h in d.hosts}
+    # The build engine's switches ("What leaves your computer", kept in
+    # outside_switches.json) name the websites each one reaches, and
+    # docs/WHAT_CAN_LEAVE_YOUR_HOUSE.md lists them.
+    from puffpai import outside_services
+    known |= {w for r in outside_services.rows()
+              for w in r.get("websites") or [] if "." in w and " " not in w}
     # Documentation URLs, SSRF-test literals and placeholder hosts: these are
     # strings in comments and test fixtures, not fetch targets.
-    ignore_suffixes = (".example", "example.com", "w3.org", "wiki.openzim.org",
+    ignore_suffixes = (".example", "example.com", "example.org", "w3.org",
+                       "wiki.openzim.org",
                        "registry.npmjs.org", "github.com",
                        "raw.githubusercontent.com")
     # Hosts that appear only as text a person reads, never as a fetch target.
@@ -1010,6 +1067,37 @@ def test_every_wan_hostname_in_the_tree_belongs_to_a_door():
         # "Install it from https://ollama.com": advice shown when Ollama is
         # absent. The model download itself goes through the model_pull door.
         ("wizard/packages/brain/skill.py", "ollama.com"),
+        # The build engine's links, comments and attributions: a page a
+        # person may open, a licence's own address, a project's home.
+        ("assemble/server/app.py", "www.youtube-nocookie.com"),  # frame-src in the app page's own header: the owner's browser loads it
+        ("build/classify.py", "clawic.com"),  # an example in a docstring
+        ("catalogs/ha_integrations.py", "www.home-assistant.io"),  # the integration's docs link
+        ("catalogs/kiwix_opds.py", "library.kiwix.org"),  # a book's page link
+        ("catalogs/knowledge_resolver.py", "library.kiwix.org"),  # a book's page link
+        ("catalogs/searchers/knowledge.py", "library.kiwix.org"),  # a book's page link
+        ("catalogs/openstax.py", "creativecommons.org"),  # a licence address prefix
+        ("catalogs/wikibooks.py", "creativecommons.org"),  # a licence address
+        ("catalogs/wikipedia_topics.py", "creativecommons.org"),  # a licence address
+        ("catalogs/where_to_look.py", "creativecommons.org"),  # a licence address
+        ("catalogs/where_to_look.py", "www.gnu.org"),  # a comment about licence terms
+        ("catalogs/where_to_look.py", "sindresorhus.com"),  # an example in a docstring
+        ("catalogs/searchers/npm.py", "www.npmjs.com"),  # a package's page link
+        ("finding/sites.py", "www.npmjs.com"),  # a package's page link
+        ("catalogs/searchers/openverse.py", "openverse.org"),  # a picture's page link
+        ("catalogs/snapshot_build_code.py", "data-v2.hacs.xyz"),  # provenance of a shipped snapshot, built by a maintainer from a local folder
+        ("deps.py", "ffmpeg.org"),  # where a person gets the program themself
+        ("deps.py", "nodejs.org"),  # where a person gets the program themself
+        ("deps.py", "git-scm.com"),  # where a person gets the program themself
+        ("deps.py", "jqlang.org"),  # where a person gets the program themself
+        ("deps.py", "docs.docker.com"),  # where a person gets the program themself
+        ("start_cli.py", "nodejs.org"),  # "Get it from https://nodejs.org"
+        ("skill_learn.py", "agentskills.io"),  # the skill format's home, in a docstring
+        # Fetched, but behind a switch HomeBot does not offer, so never: the
+        # locked box (box_install, a Windows-only part) and a live-card seed
+        # (live cards are not in this build; a card's host would be its own
+        # app switch).
+        ("box/driver.py", "dl-cdn.alpinelinux.org"),
+        ("feeds.py", "images-api.nasa.gov"),
     }
     strays: list[str] = []
     for path in sorted(SRC.rglob("*.py")):

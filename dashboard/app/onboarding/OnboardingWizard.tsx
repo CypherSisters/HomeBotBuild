@@ -1,31 +1,40 @@
 "use client";
 
 /**
- * First-run wizard — the browser face of HomeBot's `setup` flow.
+ * First-run setup, the browser face of HomeBot's `setup` flow.
  *
- * Thirteen steps, in the order the owner can actually answer them: name the
- * bot, state the posture, look at the hardware, fit a brain, name the
- * household, say what it is for, put the files somewhere, seal the Vault, plug
- * in the smart home (or not), pick a Bridge posture, point at knowledge packs,
- * read the manifest back, done.
+ * Four questions and a build: look at the hardware, pick the brain's size
+ * (with one button to download it when it is not here yet), set up the Vault,
+ * and, if the owner wants, connect their Home Assistant. Then the build, then the
+ * dashboard. A first-run code step comes first only when this browser is not
+ * on the machine itself.
+ *
+ * Everything else takes HomeBot's own defaults without a question: the bot's
+ * name, the build posture (nothing reaches the internet until the owner switches it
+ * on), every HomeBot part switched on, the storage folders, and the Bridge
+ * posture the backend ships as its default. Each is still sent through its own
+ * /setup/* route, so the manifest records the backend's answer, not one this
+ * page invented. The household, the knowledge folder and the rest are set
+ * later from their own pages.
  *
  * SECRETS. The vault PIN, its recovery code and the Home Assistant token live
  * in component state and nowhere else: not localStorage, not sessionStorage,
  * not the URL, never logged. They are POSTed through the same-origin /api/pai
  * proxy (which adds the appliance's own key server-side) and cleared the moment
- * the step that owns them is finished — and again on unmount.
+ * the step that owns them is finished, and again on unmount.
  *
  * RESILIENCE. Every step's load and every step's save can fail two ways: the
  * backend is unreachable, or it answered `{ok:false}`. Both render one line and
- * a Retry, in an aria-live region. Back always works; the optional steps carry
- * a Skip. No step can dead-end.
+ * a Retry, in an aria-live region. Back always works; the Home Assistant step
+ * carries a Skip. No step can dead-end.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import MsIcon from "../_components/MsIcon";
+import { HA_TOKEN_HOW, plainHaWords } from "../_components/HomeAssistantConnect";
 import { recoveryCodeMatches, RECOVERY_CONFIRM_FAILED } from "../_lib/recoveryCode";
+import { pinRefusal } from "../_lib/vaultPin";
 import {
   commitManifest,
   confirmVaultRecovery,
@@ -36,38 +45,28 @@ import {
   getCrew,
   getDefaults,
   getHardware,
-  getHousehold,
-  getPendingApply,
-  getPosture,
+  getModelPull,
   getSetupStatus,
   getStorage,
-  getInterview,
-  getSurfaces,
   isBackendDown,
   markComplete,
-  previewManifest,
   saveBridge,
   saveHa,
-  saveHousehold,
   saveIdentity,
-  saveKnowledge,
   saveOllama,
   savePosture,
   saveStorage,
   saveSurfaces,
   setSetupCode,
+  startModelPull,
   testHa,
   unwrap,
   type BridgeOptions,
   type BrainMenu,
   type Census,
   type CrewBudget,
-  type HouseholdStatus,
-  type InterviewProposal,
-  type ManifestPreview,
   type ManifestSections,
-  type PendingItem,
-  type PostureOptions,
+  type ModelPull,
   type Reply,
   type StoragePaths,
   type SurfaceDerivation,
@@ -83,53 +82,32 @@ import {
   PuffButton,
   Stepper,
   TextInput,
-  Toggle,
-  inputStyle,
   microLabel,
 } from "./ui";
 
-const STEPS = [
-  "Welcome",
-  "Posture",
-  "Hardware",
-  "Brain",
-  "Household",
-  "Goal",
-  "Storage",
-  "Vault",
-  "Smart home",
-  "Bridge",
-  "Knowledge",
-  "Review",
-  "Done",
-] as const;
+type StepId = "welcome" | "hardware" | "brain" | "vault" | "ha" | "build";
 
-const S_WELCOME = 0;
-const S_POSTURE = 1;
-const S_HARDWARE = 2;
-const S_BRAIN = 3;
-const S_HOUSEHOLD = 4;
-const S_GOAL = 5;
-const S_STORAGE = 6;
-const S_VAULT = 7;
-const S_HA = 8;
-const S_BRIDGE = 9;
-const S_KNOWLEDGE = 10;
-const S_REVIEW = 11;
-const S_DONE = 12;
-
-/** Steps the owner may walk past without answering. */
-const SKIPPABLE = new Set([S_HA, S_KNOWLEDGE]);
+const STEP_LABELS: Record<StepId, string> = {
+  welcome: "Welcome",
+  hardware: "Hardware",
+  brain: "Brain size",
+  vault: "Vault",
+  ha: "Home Assistant",
+  build: "Build",
+};
 
 /** The vault PIN rules, shown before the field, not after the rejection. */
 const PIN_RULES = [
-  "At least six characters.",
+  "At least 8 characters that are not all numbers, or at least 10 digits.",
   "No spaces.",
   "Not a run or a repeat (123456, 111111).",
   "Not a birthday or an address anyone could guess.",
 ];
 
 const HEADING_ID = "onboarding-step-heading";
+
+/** How often a running model download is read back. */
+const PULL_POLL_MS = 2000;
 
 function labelOf(entry: { label?: string; name?: string; id: string }): string {
   return entry.label || entry.name || entry.id;
@@ -142,6 +120,7 @@ export default function OnboardingWizard() {
 
   const [booting, setBooting] = useState(true);
   const [step, setStep] = useState(0);
+  const [built, setBuilt] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   /** What to run again when the owner presses Retry. */
@@ -151,7 +130,7 @@ export default function OnboardingWizard() {
   /**
    * The first-run setup code, and whether the backend wants one.
    *
-   * Component state is the authoritative copy — the same rule the vault PIN and
+   * Component state is the authoritative copy, the same rule the vault PIN and
    * the HA token follow. It is mirrored into setupService (memory only) so every
    * step's request carries the header, and cleared on unmount and on completion.
    * Never localStorage, sessionStorage, a cookie, a store or the URL.
@@ -163,11 +142,8 @@ export default function OnboardingWizard() {
   const [botName, setBotName] = useState("HomeBot");
   const [persona, setPersona] = useState("");
   const [defaultGoal, setDefaultGoal] = useState("");
-
-  const [postureOpts, setPostureOpts] = useState<PostureOptions | null>(null);
-  const [buildNetwork, setBuildNetwork] = useState("");
-  const [runEgress, setRunEgress] = useState("");
-  const [doors, setDoors] = useState<string[]>([]);
+  /** The silent defaults that must land before any LAN address is saved. */
+  const [basicsSaved, setBasicsSaved] = useState(false);
 
   const [census, setCensus] = useState<Census | null>(null);
   const [hwSummary, setHwSummary] = useState<string[]>([]);
@@ -176,22 +152,9 @@ export default function OnboardingWizard() {
   const [menu, setMenu] = useState<BrainMenu | null>(null);
   const [crew, setCrew] = useState<CrewBudget | null>(null);
   const [model, setModel] = useState("");
+  const [pull, setPull] = useState<{ model: string; state: string; line: string } | null>(null);
 
-  const [ownerName, setOwnerName] = useState("");
-  const [members, setMembers] = useState<string[]>([]);
-
-  const [derivation, setDerivation] = useState<SurfaceDerivation | null>(null);
-  // What the CATALOG said about the goal, which /setup/surfaces does not carry:
-  // whether anything matched at all. A goal nothing matches is a fact, and the
-  // useful next move is a blank persona rather than a longer shopping list.
-  const [proposal, setProposal] = useState<InterviewProposal | null>(null);
-  const [goal, setGoal] = useState("");
-  const [surfaces, setSurfaces] = useState<string[]>([]);
-
-  const [paths, setPaths] = useState<StoragePaths>({});
-  const [pathProblems, setPathProblems] = useState<Record<string, string>>({});
-
-  // Vault. PIN and code are component state only — see the module docstring.
+  // Vault. PIN and code are component state only, see the module docstring.
   const [pin, setPin] = useState("");
   const [pin2, setPin2] = useState("");
   const [recoveryCode, setRecoveryCode] = useState("");
@@ -200,28 +163,24 @@ export default function OnboardingWizard() {
   const [recoveryConfirmed, setRecoveryConfirmed] = useState(false);
   const [vaultSealed, setVaultSealed] = useState(false);
 
-  const [haPresent, setHaPresent] = useState<boolean | null>(null);
   const [haUrl, setHaUrl] = useState(DEFAULT_HA_URL);
   const [haToken, setHaToken] = useState("");
   const [haResult, setHaResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [haTesting, setHaTesting] = useState(false);
+  const [haConnected, setHaConnected] = useState(false);
 
-  const [bridge, setBridge] = useState<BridgeOptions | null>(null);
-  const [bridgePosture, setBridgePosture] = useState("");
-  const [networkEdge, setNetworkEdge] = useState(false);
-
-  const [zimDir, setZimDir] = useState("");
-  const [autoIndex, setAutoIndex] = useState(true);
-
-  const [manifest, setManifest] = useState<ManifestPreview | null>(null);
-  const [pending, setPending] = useState<PendingItem[]>([]);
   const [doneLines, setDoneLines] = useState<string[]>([]);
 
   // The manifest is assembled from what the caller sends and NOTHING else (see
   // ManifestSections). Each step keeps the block the backend handed it here;
-  // the review step previews and commits the lot.
+  // the build step commits the lot.
   const sections = useRef<ManifestSections>({});
   const [ollamaUrl, setOllamaUrl] = useState("");
+
+  const path: StepId[] = setupCodeRequired
+    ? ["welcome", "hardware", "brain", "vault", "ha", "build"]
+    : ["hardware", "brain", "vault", "ha", "build"];
+  const current: StepId = path[Math.min(step, path.length - 1)];
 
   const statedRamNum = useCallback((): number | undefined => {
     const n = parseFloat(statedRam);
@@ -230,7 +189,7 @@ export default function OnboardingWizard() {
 
   /** Keep a manifest block a step's response carried. Ignores anything that is
    *  not an object, so a route that stops returning one cannot poison the
-   *  commit — the section simply falls back to the backend's own default. */
+   *  commit: the section simply falls back to the backend's own default. */
   const record = useCallback((key: keyof ManifestSections, block: unknown) => {
     if (block && typeof block === "object" && !Array.isArray(block)) {
       sections.current[key] = block as Record<string, unknown>;
@@ -272,10 +231,7 @@ export default function OnboardingWizard() {
       );
       if (d.bot_name) setBotName(d.bot_name);
       if (d.persona) setPersona(d.persona);
-      if (d.goal) {
-        setDefaultGoal(d.goal);
-        setGoal((current) => current || d.goal || "");
-      }
+      if (d.goal) setDefaultGoal(d.goal);
     }
     // Does this browser need the console code? The backend answers per-caller;
     // a client on the machine itself is told false.
@@ -300,7 +256,7 @@ export default function OnboardingWizard() {
   useEffect(() => {
     if (booting) return;
     heading.current?.focus();
-  }, [step, booting]);
+  }, [step, built, booting]);
 
   // Mirror the typed code into the transport so every step carries the header.
   // One-way: component state -> service. The service never reads it back.
@@ -323,25 +279,6 @@ export default function OnboardingWizard() {
   }, []);
 
   // ── per-step loaders ───────────────────────────────────────────────
-  const loadPosture = useCallback(async () => {
-    setBusy(true);
-    const reply = await getPosture();
-    setBusy(false);
-    if (!reply.ok) {
-      fail(reply, () => void loadPosture());
-      return;
-    }
-    const data = unwrap<PostureOptions>(reply.data, "options");
-    setPostureOpts(data);
-    setBuildNetwork(
-      (current) => current || data.build_network?.find((o) => o.default)?.id || data.build_network?.[0]?.id || "",
-    );
-    setRunEgress(
-      (current) => current || data.run_egress?.find((o) => o.default)?.id || data.run_egress?.[0]?.id || "",
-    );
-    clearError();
-  }, [clearError, fail]);
-
   const loadHardware = useCallback(async () => {
     setBusy(true);
     const reply = await getHardware(statedRamNum());
@@ -376,110 +313,60 @@ export default function OnboardingWizard() {
     clearError();
   }, [clearError, fail, statedRamNum]);
 
-  const loadHousehold = useCallback(async () => {
-    setBusy(true);
-    const reply = await getHousehold();
-    setBusy(false);
-    if (!reply.ok) {
-      fail(reply, () => void loadHousehold());
-      return;
-    }
-    const h = unwrap<HouseholdStatus>(reply.data, "household");
-    if (h.owner) setOwnerName((current) => current || h.owner || "");
-    const others = (h.names || []).filter((n) => n && n !== h.owner);
-    if (others.length) setMembers((current) => (current.length ? current : others));
-    clearError();
-  }, [clearError, fail]);
-
-  const loadSurfaces = useCallback(async () => {
-    setBusy(true);
-    const reply = await getSurfaces();
-    setBusy(false);
-    if (!reply.ok) {
-      fail(reply, () => void loadSurfaces());
-      return;
-    }
-    const d = unwrap<SurfaceDerivation>(reply.data, "surfaces");
-    setDerivation(d);
-    setGoal((current) => current || d.goal || defaultGoal);
-    setSurfaces((current) => (current.length ? current : d.surfaces || []));
-    clearError();
-    // Second, independent question, and a failure here is not worth an error
-    // screen: this step still works without it. All it adds is the offer below.
-    const interview = await getInterview(d.goal || defaultGoal);
-    if (interview.ok) {
-      setProposal(
-        unwrap<{ proposal?: InterviewProposal }>(interview.data, "interview")
-          .proposal ?? null,
-      );
-    }
-  }, [clearError, defaultGoal, fail]);
-
-  const loadStorage = useCallback(async () => {
-    setBusy(true);
-    const reply = await getStorage();
-    setBusy(false);
-    if (!reply.ok) {
-      fail(reply, () => void loadStorage());
-      return;
-    }
-    const p = unwrap<StoragePaths>(reply.data, "paths");
-    setPaths((current) => (Object.keys(current).length ? current : p));
-    clearError();
-  }, [clearError, fail]);
-
-  const loadBridge = useCallback(async () => {
-    setBusy(true);
-    const reply = await getBridge();
-    setBusy(false);
-    if (!reply.ok) {
-      fail(reply, () => void loadBridge());
-      return;
-    }
-    const b = unwrap<BridgeOptions>(reply.data, "bridge");
-    setBridge(b);
-    setBridgePosture((current) => current || b.recommended || b.default || b.postures?.[0]?.id || "");
-    clearError();
-  }, [clearError, fail]);
-
-  const loadReview = useCallback(async () => {
-    setBusy(true);
-    // A PREVIEW, not a read: GET /setup/manifest answers {exists, summary} for
-    // whatever is already on disk, which on a first run is nothing at all. The
-    // owner has to be shown the build they just described, so it is assembled
-    // from the blocks the steps collected — the same POST the commit uses,
-    // without `commit`.
-    const reply = await previewManifest(sections.current);
-    if (!reply.ok) {
-      setBusy(false);
-      fail(reply, () => void loadReview());
-      return;
-    }
-    setManifest(reply.data || {});
-    const pendingReply = await getPendingApply();
-    setBusy(false);
-    if (pendingReply.ok) setPending(pendingReply.data?.pending || []);
-    clearError();
-  }, [clearError, fail]);
-
   useEffect(() => {
     if (booting) return;
-    if (step === S_POSTURE && !postureOpts) void loadPosture();
-    if (step === S_HARDWARE && !census) void loadHardware();
-    if (step === S_BRAIN && !menu) void loadBrain();
-    if (step === S_HOUSEHOLD && !ownerName && members.length === 0) void loadHousehold();
-    if (step === S_GOAL && !derivation) void loadSurfaces();
-    if (step === S_STORAGE && Object.keys(paths).length === 0) void loadStorage();
-    if (step === S_BRIDGE && !bridge) void loadBridge();
-    if (step === S_REVIEW && !manifest) void loadReview();
+    if (current === "hardware" && !census) void loadHardware();
+    if (current === "brain" && !menu) void loadBrain();
     // Loaders are stable callbacks; the guards above keep this to one call.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, booting]);
 
+  // ── the brain download ─────────────────────────────────────────────
+  const readPull = useCallback(
+    (id: string, reply: Reply<ModelPull>) => {
+      if (reply.status === 404) {
+        setPull({
+          model: id,
+          state: "failed",
+          line: `This box cannot download it from here. On the box, run: ollama pull ${id}`,
+        });
+        return;
+      }
+      if (!reply.ok) {
+        setPull({ model: id, state: "failed", line: reply.error });
+        return;
+      }
+      const state = reply.data?.state || "running";
+      const line = reply.data?.line || reply.data?.message || "";
+      setPull({ model: id, state, line });
+      if (state === "done") void loadBrain();
+    },
+    [loadBrain],
+  );
+
+  const downloadBrain = useCallback(
+    async (id: string) => {
+      setPull({ model: id, state: "running", line: "Starting the download." });
+      readPull(id, await startModelPull(id));
+    },
+    [readPull],
+  );
+
+  useEffect(() => {
+    if (!pull || pull.state !== "running") return;
+    const timer = setTimeout(() => {
+      void getModelPull(pull.model).then((reply) => readPull(pull.model, reply));
+    }, PULL_POLL_MS);
+    return () => clearTimeout(timer);
+  }, [pull, readPull]);
+
   // ── the vault ceremony ─────────────────────────────────────────────
   const sealVault = useCallback(async () => {
-    if (pin.length < 6) {
-      setError("That PIN is too short: six characters at least.");
+    // The same rule the box enforces (../_lib/vaultPin.ts), said before the
+    // vault is asked.
+    const refusal = pinRefusal(pin);
+    if (refusal) {
+      setError(refusal);
       return;
     }
     if (pin !== pin2) {
@@ -540,58 +427,139 @@ export default function OnboardingWizard() {
 
   const runHaTest = useCallback(async () => {
     setHaTesting(true);
-    const reply = await testHa(haUrl, haToken);
+    const reply = await testHa(haUrl.trim(), haToken);
     setHaTesting(false);
     if (!reply.ok || reply.data?.ok === false) {
-      setHaResult({
-        ok: false,
-        text:
-          reply.data?.error ||
-          reply.error ||
-          "Home Assistant did not accept that address and token.",
-      });
+      // `error` is the backend's code; the sentence is in `message`.
+      setHaResult({ ok: false, text: plainHaWords(reply.data?.message || reply.error) });
       return;
     }
     const where = reply.data?.location_name ? ` (${reply.data.location_name})` : "";
-    const version = reply.data?.version ? ` version ${reply.data.version}` : "";
-    setHaResult({ ok: true, text: `Connected to Home Assistant${where}${version}.` });
+    setHaResult({ ok: true, text: `Home Assistant answered${where}.` });
   }, [haToken, haUrl]);
+
+  /** "No Home Assistant" is a complete answer; it is recorded, not left blank. */
+  const recordNoHa = useCallback(async () => {
+    setHaToken("");
+    setHaConnected(false);
+    const reply = await saveHa(false);
+    record("integrations", {
+      home_assistant: reply.data?.ha || { present: false },
+      media_library: { present: false },
+    });
+  }, [record]);
+
+  // ── HomeBot's defaults, sent through the same routes setup always uses ──
+  /** Name and posture. Saved before any address on the home network is, because
+   *  the address check reads the posture the owner's build runs under. */
+  const saveBasics = useCallback(async (): Promise<boolean> => {
+    if (basicsSaved) return true;
+    const name = botName.trim() || "HomeBot";
+    const identity = await saveIdentity(name, persona || undefined);
+    if (!identity.ok) {
+      fail(identity, () => void advance());
+      return false;
+    }
+    // `identity` is the one section with no block route: assemble_manifest
+    // reads `identity.identity` and `identity.name`.
+    record("identity", { identity: identity.data?.persona || persona, name });
+    // Both axes left to the backend: it records them as defaulted, not chosen.
+    const posture = await savePosture("", "", []);
+    if (!posture.ok) {
+      fail(posture, () => void advance());
+      return false;
+    }
+    record("posture", posture.data?.manifest_block);
+    setBasicsSaved(true);
+    return true;
+    // `advance` is defined below and stable enough for the retry closure.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [basicsSaved, botName, fail, persona, record]);
+
+  /** Every HomeBot part on, the default folders, the default Bridge posture,
+   *  then the manifest and the finished flag. */
+  const build = useCallback(async (): Promise<boolean> => {
+    const again = () => void advance();
+    if (!(await saveBasics())) return false;
+
+    // Every surface the build knows, switched on.
+    const derived = await saveSurfaces(defaultGoal, [], []);
+    if (!derived.ok) {
+      fail(derived, again);
+      return false;
+    }
+    const d = unwrap<SurfaceDerivation>(derived.data, "surfaces");
+    const missing = (d.available || []).filter((s) => !(d.surfaces || []).includes(s));
+    const all = missing.length ? await saveSurfaces(defaultGoal, missing, []) : derived;
+    if (!all.ok) {
+      fail(all, again);
+      return false;
+    }
+    record("surfaces", all.data?.manifest_block);
+
+    const storage = await getStorage();
+    if (!storage.ok) {
+      fail(storage, again);
+      return false;
+    }
+    const placed = await saveStorage(unwrap<StoragePaths>(storage.data, "paths"));
+    const problems = Object.values(placed.data?.problems || {});
+    if (!placed.ok || problems.length > 0) {
+      setError(problems.length ? problems.join(" ") : placed.error);
+      retry.current = again;
+      return false;
+    }
+    record("storage", placed.data?.manifest_block);
+
+    const ladder = await getBridge();
+    if (!ladder.ok) {
+      fail(ladder, again);
+      return false;
+    }
+    const b = unwrap<BridgeOptions>(ladder.data, "bridge");
+    const posture = b.default || b.postures?.[0]?.id || "";
+    // Nobody picks the Bridge during HomeBot setup: the default is recorded
+    // as the default.
+    const bridge = await saveBridge(posture, false, true);
+    if (!bridge.ok) {
+      fail(bridge, again);
+      return false;
+    }
+    // The backend reconciles the choice against the build posture (stricter
+    // wins), so the block it answers with is what the build record gets.
+    record("bridge", bridge.data?.bridge);
+
+    const written = await commitManifest(sections.current);
+    if (!written.ok) {
+      fail(written, again);
+      return false;
+    }
+    const done = await markComplete();
+    if (!done.ok) {
+      fail(done, again);
+      return false;
+    }
+    // Setup is over, so the first-run code is over: the backend has just
+    // destroyed its copy and nothing further needs the header.
+    setSetupCodeInput("");
+    setSetupCodeRequired(false);
+    setSetupCode("");
+    setDoneLines(written.data?.summary || []);
+    return true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultGoal, fail, record, saveBasics]);
 
   // ── commit for the current step ────────────────────────────────────
   const commit = useCallback(async (): Promise<boolean> => {
-    switch (step) {
-      case S_WELCOME: {
-        const name = botName.trim() || "HomeBot";
-        setBotName(name);
-        const reply = await saveIdentity(name, persona || undefined);
-        if (!reply.ok) {
-          fail(reply, () => void advance());
-          return false;
-        }
-        // `identity` is the one section with no block route: assemble_manifest
-        // reads `identity.identity` and `identity.name` (setup_cli does the
-        // same), and the persona comes back echoed from the backend.
-        record("identity", { identity: reply.data?.persona || persona, name });
-        return true;
-      }
-      case S_POSTURE: {
-        const reply = await savePosture(buildNetwork, runEgress, runEgress === "enumerated" ? doors : []);
-        if (!reply.ok) {
-          fail(reply, () => void advance());
-          return false;
-        }
-        // `posture` is the validated home for both axes and the door table.
-        // The manifest's separate `egress` section keeps its own default on
-        // purpose: setup_cli does not fill it either, and inventing a value
-        // for it here would put an unvalidated vocabulary in the build record.
-        record("posture", reply.data?.manifest_block);
-        return true;
-      }
-      case S_HARDWARE:
-        return true;
-      case S_BRAIN: {
+    switch (current) {
+      case "welcome":
+      case "hardware":
+        // The first answer that needs the code proves it, and the defaults
+        // that later steps depend on are in place before they are needed.
+        return saveBasics();
+      case "brain": {
         if (!model) {
-          setError("Pick a model. You can change it later from Settings.");
+          setError("Pick a size. You can change it later from Settings.");
           return false;
         }
         const reply = await saveOllama(model);
@@ -608,55 +576,7 @@ export default function OnboardingWizard() {
         if (crew) record("crew", crew);
         return true;
       }
-      case S_HOUSEHOLD: {
-        if (!ownerName.trim()) {
-          setError("Your name, so the household has an owner.");
-          return false;
-        }
-        const reply = await saveHousehold(
-          ownerName.trim(),
-          members.map((n) => n.trim()).filter(Boolean).map((name) => ({ name })),
-        );
-        if (!reply.ok) {
-          fail(reply, () => void advance());
-          return false;
-        }
-        return true;
-      }
-      case S_GOAL: {
-        const base = derivation?.surfaces || [];
-        const add = surfaces.filter((s) => !base.includes(s));
-        const remove = base.filter((s) => !surfaces.includes(s));
-        const reply = await saveSurfaces(goal.trim(), add, remove);
-        if (!reply.ok) {
-          fail(reply, () => void advance());
-          return false;
-        }
-        const d = unwrap<SurfaceDerivation>(reply.data, "surfaces");
-        if (d.surfaces) {
-          setDerivation(d);
-          setSurfaces(d.surfaces);
-        }
-        // This route writes nothing. The allowlist becomes real only when this
-        // block reaches the manifest commit, so losing it here would ship a
-        // build whose surfaces are all switched off.
-        record("surfaces", reply.data?.manifest_block);
-        return true;
-      }
-      case S_STORAGE: {
-        const reply = await saveStorage(paths);
-        const problems = reply.data?.problems || {};
-        if (!reply.ok || Object.keys(problems).length > 0) {
-          setPathProblems(problems);
-          if (Object.keys(problems).length === 0) fail(reply, () => void advance());
-          else setError("Some of those folders will not work: see the notes under each one.");
-          return false;
-        }
-        setPathProblems({});
-        record("storage", reply.data?.manifest_block);
-        return true;
-      }
-      case S_VAULT: {
+      case "vault": {
         if (!vaultSealed) {
           await sealVault();
           return false;
@@ -667,113 +587,57 @@ export default function OnboardingWizard() {
         }
         return true;
       }
-      case S_HA: {
-        if (haPresent === null) {
-          setError("Answer yes or no: either one finishes this step.");
+      case "ha": {
+        if (!haToken) {
+          // Nothing typed: the same as Skip.
+          await recordNoHa();
+          return true;
+        }
+        if (!haUrl.trim()) {
+          setError("Home Assistant needs its address.");
           return false;
         }
-        if (haPresent && (!haUrl.trim() || !haToken)) {
-          setError("Home Assistant needs its address and a long-lived token.");
-          return false;
-        }
-        const reply = haPresent
-          ? await saveHa(true, haUrl.trim(), haToken)
-          : await saveHa(false);
+        const reply = await saveHa(true, haUrl.trim(), haToken);
         if (!reply.ok) {
-          fail(reply, () => void advance());
+          setError(plainHaWords(reply.error));
+          retry.current = null;
           return false;
         }
         // The `ha` block records presence, the address and WHETHER a token was
-        // placed — never the token, which stays on the box.
+        // placed, never the token, which stays on the box.
         record("integrations", {
-          home_assistant: reply.data?.ha || { present: haPresent },
-          media_library: { present: Boolean((paths.media_dir || "").trim()) },
+          home_assistant: reply.data?.ha || { present: true },
+          media_library: { present: false },
         });
         // The token is written into the backend's config; the browser forgets it.
         setHaToken("");
+        setHaConnected(true);
         return true;
       }
-      case S_BRIDGE: {
-        if (!bridgePosture) {
-          setError("Pick one of the postures.");
-          return false;
-        }
-        const reply = await saveBridge(bridgePosture, networkEdge);
-        if (!reply.ok) {
-          fail(reply, () => void advance());
-          return false;
-        }
-        // The backend reconciles the choice against Step 0's egress tier
-        // (stricter wins), so the block it answers with — not the id that was
-        // clicked — is what the build record gets.
-        record("bridge", reply.data?.bridge);
-        return true;
-      }
-      case S_KNOWLEDGE: {
-        if (!zimDir.trim()) return true; // nothing pointed at is a valid answer
-        const reply = await saveKnowledge(zimDir.trim(), autoIndex, true);
-        if (!reply.ok) {
-          fail(reply, () => void advance());
-          return false;
-        }
-        record("knowledge", { zim_dir: zimDir.trim(), auto_index: autoIndex });
-        return true;
-      }
-      case S_REVIEW: {
-        const written = await commitManifest(sections.current);
-        if (!written.ok) {
-          fail(written, () => void advance());
-          return false;
-        }
-        const done = await markComplete();
-        if (!done.ok) {
-          fail(done, () => void advance());
-          return false;
-        }
-        // Setup is over, so the first-run code is over: the backend has just
-        // destroyed its copy and nothing further needs the header.
-        setSetupCodeInput("");
-        setSetupCodeRequired(false);
-        setSetupCode("");
-        setDoneLines(written.data?.summary || manifest?.summary || []);
-        return true;
-      }
+      case "build":
+        return build();
       default:
         return true;
     }
     // `advance` is defined below and stable enough for the retry closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    autoIndex,
-    botName,
-    bridgePosture,
-    buildNetwork,
+    build,
     confirmRecovery,
     crew,
-    derivation,
-    doors,
+    current,
     fail,
-    goal,
-    haPresent,
     haToken,
     haUrl,
-    manifest,
-    members,
     menu,
     model,
-    networkEdge,
     ollamaUrl,
-    ownerName,
-    paths,
-    persona,
     record,
+    recordNoHa,
     recoveryConfirmed,
-    runEgress,
+    saveBasics,
     sealVault,
-    step,
-    surfaces,
     vaultSealed,
-    zimDir,
   ]);
 
   const advance = useCallback(async () => {
@@ -788,103 +652,56 @@ export default function OnboardingWizard() {
       setError("Something went wrong on this step. Try again.");
     }
     setBusy(false);
-    if (ok) {
-      retry.current = null;
-      setStep((s) => Math.min(s + 1, S_DONE));
-    }
-  }, [busy, commit]);
+    if (!ok) return;
+    retry.current = null;
+    if (current === "build") setBuilt(true);
+    else setStep((s) => Math.min(s + 1, path.length - 1));
+  }, [busy, commit, current, path.length]);
 
   const back = useCallback(() => {
     clearError();
     setStep((s) => Math.max(0, s - 1));
   }, [clearError]);
 
-  const skip = useCallback(async () => {
+  const skipHa = useCallback(async () => {
     clearError();
-    if (step === S_HA) {
-      // "No Home Assistant" is a complete answer; record it rather than leave
-      // the step unanswered.
-      setHaPresent(false);
-      setHaToken("");
-      const reply = await saveHa(false);
-      record("integrations", {
-        home_assistant: reply.data?.ha || { present: false },
-        media_library: { present: Boolean((paths.media_dir || "").trim()) },
-      });
-    }
-    setStep((s) => Math.min(s + 1, S_DONE));
-  }, [clearError, paths.media_dir, record, step]);
-
-  const toggleIn = (list: string[], id: string): string[] =>
-    list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
-
-  const surfaceMenu = useMemo(() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    const push = (id: string) => {
-      if (id && !seen.has(id)) {
-        seen.add(id);
-        out.push(id);
-      }
-    };
-    (derivation?.available || []).forEach(push);
-    (derivation?.surfaces || []).forEach(push);
-    Object.keys(derivation?.reasons || {}).forEach(push);
-    surfaces.forEach(push);
-    return out;
-  }, [derivation, surfaces]);
-
-  // Zone 3 is offered only where it can actually run. The verdict and its
-  // plain sentences come from the backend (`zone3_support`); the row's own copy
-  // comes from the edge menu, so the browser and the terminal wizard say the
-  // same thing. Missing either ⇒ the card stays off: it fails closed.
-  const zone3Row = (bridge?.edge_options?.kinds || []).find((k) => k.id === "zone3");
-  const zone3Supported = Boolean(bridge?.zone3_support?.supported && zone3Row?.available !== false);
-  const zone3Reasons = bridge?.zone3_support?.reasons || zone3Row?.reasons || [];
+    setBusy(true);
+    await recordNoHa();
+    setBusy(false);
+    setStep((s) => Math.min(s + 1, path.length - 1));
+  }, [clearError, path.length, recordNoHa]);
 
   // The brain step's current pick, so a model that is not on this box can say
-  // so with the command that gets it.
+  // so and offer the download.
   const pickedBrain = (menu?.options || []).find((o) => o.id === model);
+  const pullHere = pull && pull.model === model ? pull : null;
 
   // ── render ─────────────────────────────────────────────────────────
   if (booting) {
     return (
       <div style={{ ...microLabel, padding: 32 }} aria-live="polite">
-        Checking your setup…
+        Checking your setup...
       </div>
     );
   }
 
-  const canSkip = SKIPPABLE.has(step);
-  const nextLabel =
-    step === S_REVIEW ? "Build it" : step === S_DONE ? "Open the dashboard" : "Continue";
+  const labels = path.map((id) => STEP_LABELS[id]);
+  const nextLabel = built
+    ? "Open the dashboard"
+    : current === "build"
+      ? "Build it"
+      : current === "ha" && !haToken
+        ? "Continue without it"
+        : "Continue";
 
   return (
     <div style={{ maxWidth: 860, margin: "0 auto", padding: "8px 0 40px" }}>
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <Stepper labels={STEPS} current={step} />
-        {/* The same build on one screen, every row proposed, nothing applied
-            until it is. The step-by-step is still here; the review is the way
-            to see the whole of it at once. */}
-        <Link
-          href="/onboarding/review"
-          style={{
-            fontFamily: "var(--font-jbmono), monospace",
-            fontWeight: 700,
-            fontSize: 10,
-            letterSpacing: ".14em",
-            textTransform: "uppercase",
-            color: "var(--text2)",
-          }}
-        >
-          See the whole build on one screen
-        </Link>
-      </div>
+      <Stepper labels={labels} current={built ? path.length : step} />
 
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (step === S_DONE) {
+          if (built) {
             router.replace("/dashboard");
             return;
           }
@@ -894,7 +711,9 @@ export default function OnboardingWizard() {
       >
         <Card>
           <Eyebrow>
-            Step {String(step + 1).padStart(2, "0")} of {STEPS.length} · {STEPS[step]}
+            {built
+              ? "Done"
+              : `Step ${String(step + 1).padStart(2, "0")} of ${path.length} · ${STEP_LABELS[current]}`}
           </Eyebrow>
           <h1
             id={HEADING_ID}
@@ -909,101 +728,38 @@ export default function OnboardingWizard() {
               outline: "none",
             }}
           >
-            {headingFor(step, botName)}
+            {built ? `${botName} is ready` : headingFor(current)}
           </h1>
 
           <div style={{ marginTop: 10 }}>
-            {step === S_WELCOME && (
+            {!built && current === "welcome" && (
               <>
                 <Lede>
-                  This box runs your household&apos;s AI. Everything it learns stays here. Give it a
-                  name. The family will use it out loud.
+                  This box runs your household&apos;s AI. What it learns stays on this computer, and
+                  nothing leaves it without your consent. First, the code that proves you are at the box.
                 </Lede>
-                <Field id="ob-bot-name" label="Bot name">
-                  <TextInput id="ob-bot-name" value={botName} onChange={setBotName} placeholder="HomeBot" />
+                <Field
+                  id="ob-setup-code"
+                  label="First-run code"
+                  hint="Printed on the console of the machine running HomeBot when it started. Run `puffpai setup-code` there to see it again."
+                >
+                  <TextInput
+                    id="ob-setup-code"
+                    value={setupCodeInput}
+                    onChange={setSetupCodeInput}
+                    placeholder="ABCD-EFGH"
+                  />
                 </Field>
-                {setupCodeRequired ? (
-                  <>
-                    <Field
-                      id="ob-setup-code"
-                      label="First-run code"
-                      hint="Printed on the console of the machine running HomeBot when it started. Run `puffpai setup-code` there to see it again."
-                    >
-                      <TextInput
-                        id="ob-setup-code"
-                        value={setupCodeInput}
-                        onChange={setSetupCodeInput}
-                        placeholder="ABCD-EFGH"
-                      />
-                    </Field>
-                    <Notice>
-                      HomeBot printed this code in its console when it started (run{" "}
-                      <code>puffpai setup-code</code> to see it again). It proves the person
-                      answering these questions is the person who owns the box, and the answers
-                      include the Vault.
-                    </Notice>
-                  </>
-                ) : null}
-                {persona ? (
-                  <Notice>Persona: {persona}. Change it later in Settings.</Notice>
-                ) : null}
+                <Notice>
+                  It proves the person answering these questions is the person who owns the box, and
+                  the answers include the Vault.
+                </Notice>
               </>
             )}
 
-            {step === S_POSTURE && (
+            {!built && current === "hardware" && (
               <>
-                <Lede>Two questions: how this build gets assembled, and what it may reach once it runs.</Lede>
-                <div style={{ marginTop: 16 }}>
-                  <Eyebrow>Building it</Eyebrow>
-                  {(postureOpts?.build_network || []).map((o) => (
-                    <Choice
-                      key={o.id}
-                      name="ob-build-network"
-                      value={o.id}
-                      checked={buildNetwork === o.id}
-                      onSelect={setBuildNetwork}
-                      title={labelOf(o)}
-                      description={o.description}
-                    />
-                  ))}
-                </div>
-                <div style={{ marginTop: 18 }}>
-                  <Eyebrow>Running it</Eyebrow>
-                  {(postureOpts?.run_egress || []).map((o) => (
-                    <Choice
-                      key={o.id}
-                      name="ob-run-egress"
-                      value={o.id}
-                      checked={runEgress === o.id}
-                      onSelect={setRunEgress}
-                      title={labelOf(o)}
-                      description={o.description}
-                      note={o.note}
-                    />
-                  ))}
-                </div>
-                {runEgress === "enumerated" && (
-                  <div style={{ marginTop: 18 }}>
-                    <Eyebrow>Bridge switches you are opening</Eyebrow>
-                    <Lede>Every switch is shut until you open it. Each one says what it sends.</Lede>
-                    {(postureOpts?.egress_switches || []).map((sw) => (
-                      <Toggle
-                        key={sw.id}
-                        id={`ob-door-${sw.id}`}
-                        checked={doors.includes(sw.id)}
-                        onChange={() => setDoors((d) => toggleIn(d, sw.id))}
-                        title={labelOf(sw)}
-                        description={sw.description || sw.purpose}
-                      />
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-
-            {step === S_HARDWARE && (
-              <>
-                <Lede>What this machine actually is. Correct the memory if the reading is wrong.</Lede>
+                <Lede>What this computer has. Correct the memory if the reading is wrong.</Lede>
                 <div style={{ marginTop: 14 }}>
                   <FactRow label="Class" value={census?.hardware_class || "unknown"} />
                   <FactRow
@@ -1036,7 +792,13 @@ export default function OnboardingWizard() {
                   />
                 </Field>
                 <div style={{ marginTop: 10 }}>
-                  <PuffButton label="Re-read the hardware" onClick={() => void loadHardware()} />
+                  <PuffButton
+                    label="Read the hardware again"
+                    onClick={() => {
+                      setMenu(null);
+                      void loadHardware();
+                    }}
+                  />
                 </div>
                 {hwSummary.length > 0 && (
                   <Notice>
@@ -1055,11 +817,11 @@ export default function OnboardingWizard() {
               </>
             )}
 
-            {step === S_BRAIN && (
+            {!built && current === "brain" && (
               <>
                 <Lede>
-                  Models that fit this machine&apos;s memory, biggest first. The list shows size and
-                  fit, not speed.
+                  A bigger brain thinks better and needs more memory. These fit this computer, biggest
+                  first. You can change it later in Settings.
                 </Lede>
                 {(menu?.options || []).map((o) => (
                   <Choice
@@ -1072,173 +834,59 @@ export default function OnboardingWizard() {
                     description={[
                       o.disk_gb ? `${o.disk_gb} GB on disk` : "",
                       o.fit ? `fit: ${o.fit}` : "",
-                      o.installed ? "already installed" : "not installed yet",
+                      o.installed ? "already on this computer" : "not on this computer yet",
                     ]
                       .filter(Boolean)
                       .join(" · ")}
-                    note={o.benchmark_note || "Untested on your hardware."}
+                    note={o.id === menu?.recommended?.id ? "Suggested for this computer." : undefined}
                   />
                 ))}
-                {/* Saving the pick (/setup/ollama) downloads nothing, and nothing
-                    later fetches it on its own: a model that is not here has to
-                    be pulled. Say how, for the Ollama this build uses. */}
                 {pickedBrain && !pickedBrain.installed && (
                   <Notice>
-                    {labelOf(pickedBrain)} is not installed yet, and picking it here downloads
-                    nothing. Pull it with <code>ollama pull {pickedBrain.id}</code>
-                    {ollamaUrl ? <> on the Ollama at {ollamaUrl}</> : null}. HomeBot itself
-                    fetches the models on this list only through the Model pull Bridge switch.
+                    <div>
+                      {labelOf(pickedBrain)} is not on this computer yet
+                      {pickedBrain.disk_gb ? ` (${pickedBrain.disk_gb} GB)` : ""}. Downloading it uses
+                      the internet once: Ollama fetches it from its own library. Pressing Download
+                      turns the Model downloads switch on for this one download, and turns it back off
+                      when the download ends. If you had already turned that switch on, it stays on.
+                    </div>
+                    <div style={{ marginTop: 10 }}>
+                      <PuffButton
+                        label={pullHere?.state === "running" ? "Downloading..." : "Download it"}
+                        onClick={() => void downloadBrain(pickedBrain.id)}
+                        disabled={pullHere?.state === "running" || pullHere?.state === "done"}
+                      />
+                    </div>
+                    {pullHere?.line ? (
+                      <div aria-live="polite" style={{ marginTop: 8 }}>
+                        {pullHere.line}
+                      </div>
+                    ) : null}
+                    <div style={{ marginTop: 8, color: "var(--text3)" }}>
+                      You can also go on now and download it later; your bot answers once it is here.
+                    </div>
                   </Notice>
                 )}
                 {(menu?.options || []).length === 0 && (
                   <Notice tone="warn">
-                    {menu?.message || "No model menu came back. You can set the model later in Settings."}
+                    {menu?.message || "No list of sizes came back. You can set the brain later in Settings."}
                   </Notice>
                 )}
                 {(menu?.too_big || []).length > 0 && (
                   <Notice tone="warn">
-                    Too big for this machine: {(menu?.too_big || []).map((t) => t.label).join(", ")}.
-                  </Notice>
-                )}
-                {/* The crew budget is a FACT about this machine, not a
-                    question: nothing in the build accepts a crew size, so a
-                    number box here would be a field the wizard pretends to
-                    store. It is reported, and it goes into the manifest. */}
-                <div style={{ marginTop: 18 }}>
-                  <Eyebrow>Specialist crew</Eyebrow>
-                  <FactRow
-                    label="Specialists this machine can carry"
-                    value={String(crew?.max_specialists ?? 0)}
-                  />
-                  {crew?.note ? <Notice>{crew.note}</Notice> : null}
-                </div>
-              </>
-            )}
-
-            {step === S_HOUSEHOLD && (
-              <>
-                <Lede>Who lives here. Names only: no ages, no birthdays, nothing it does not need.</Lede>
-                <Field id="ob-owner" label="Your name (the owner)">
-                  <TextInput id="ob-owner" value={ownerName} onChange={setOwnerName} placeholder="Alex" />
-                </Field>
-                {members.map((name, i) => (
-                  <Field key={i} id={`ob-member-${i}`} label={`Household member ${i + 1}`}>
-                    <div className="flex gap-2">
-                      <TextInput
-                        id={`ob-member-${i}`}
-                        value={name}
-                        onChange={(next) =>
-                          setMembers((list) => list.map((v, j) => (j === i ? next : v)))
-                        }
-                      />
-                      <PuffButton
-                        label="Remove"
-                        onClick={() => setMembers((list) => list.filter((_, j) => j !== i))}
-                      />
-                    </div>
-                  </Field>
-                ))}
-                <div style={{ marginTop: 12 }}>
-                  <PuffButton label="Add someone" onClick={() => setMembers((list) => [...list, ""])} />
-                </div>
-              </>
-            )}
-
-            {step === S_GOAL && (
-              <>
-                <Lede>
-                  What this household wants out of it. The surfaces below follow from the goal, every
-                  one is a switch you own.
-                </Lede>
-                <Field id="ob-goal" label="Household goal">
-                  <textarea
-                    id="ob-goal"
-                    value={goal}
-                    onChange={(e) => setGoal(e.target.value)}
-                    rows={3}
-                    style={inputStyle}
-                  />
-                </Field>
-                <div style={{ marginTop: 16 }}>
-                  <Eyebrow>Surfaces</Eyebrow>
-                  {surfaceMenu.map((id) => (
-                    <Toggle
-                      key={id}
-                      id={`ob-surface-${id}`}
-                      checked={surfaces.includes(id)}
-                      onChange={() => setSurfaces((list) => toggleIn(list, id))}
-                      title={id}
-                      description={derivation?.reasons?.[id]}
-                    />
-                  ))}
-                </div>
-                {derivation?.message ? <Notice>{derivation.message}</Notice> : null}
-                {proposal?.scaffold_offer && (
-                  /* The catalog matched nothing. The box's own sentence, shown
-                     verbatim, plus the thing it promises: a blank persona with
-                     the owner's words in it. Opened in a new tab on purpose —
-                     leaving the wizard mid-run would lose the answers above. */
-                  <Notice>
-                    {proposal.message}
-                    <div style={{ marginTop: 10 }}>
-                      <a
-                        href="/dashboard/apps/new"
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{ color: "var(--sky)", fontWeight: 700 }}
-                      >
-                        Build a persona for it &rarr;
-                      </a>{" "}
-                      <span style={{ color: "var(--text3)" }}>
-                        (opens in a new tab, so you keep your place here)
-                      </span>
-                    </div>
-                  </Notice>
-                )}
-                {surfaces.length === 0 && (
-                  <Notice tone="warn">
-                    Nothing is switched on, so your bot will decline everything until you turn
-                    something back on. You can still continue.
-                  </Notice>
-                )}
-                {(derivation?.sensitive || []).length > 0 && (
-                  <Notice tone="warn">
-                    Sensitive: {(derivation?.sensitive || []).join(", ")}. These reach the house
-                    itself, so they always ask first.
+                    Too big for this computer: {(menu?.too_big || []).map((t) => t.label).join(", ")}.
                   </Notice>
                 )}
               </>
             )}
 
-            {step === S_STORAGE && (
-              <>
-                <Lede>Four folders. Full paths: they have to mean the same thing from anywhere.</Lede>
-                {STORAGE_FIELDS.map(([key, label, hint]) => (
-                  <Field
-                    key={key}
-                    id={`ob-path-${key}`}
-                    label={label}
-                    hint={hint}
-                    error={pathProblems[key]}
-                  >
-                    <TextInput
-                      id={`ob-path-${key}`}
-                      value={(paths as Record<string, string | undefined>)[key] || ""}
-                      onChange={(next) => setPaths((p) => ({ ...p, [key]: next }))}
-                      invalid={Boolean(pathProblems[key])}
-                    />
-                  </Field>
-                ))}
-              </>
-            )}
-
-            {step === S_VAULT && (
+            {!built && current === "vault" && (
               <>
                 {!vaultSealed && (
                   <>
                     <Lede>
                       The Vault holds what only the household should see. One PIN opens it, and that
-                      PIN is never stored here.
+                      PIN is never stored here. Installing apps and storing keys later asks for it too.
                     </Lede>
                     <ul style={{ margin: "12px 0 0", paddingLeft: 18, color: "var(--text2)", fontSize: 14 }}>
                       {PIN_RULES.map((rule) => (
@@ -1292,185 +940,66 @@ export default function OnboardingWizard() {
 
                 {vaultSealed && recoveryConfirmed && (
                   <Notice tone="ok">
-                    The Vault is sealed and the recovery code is confirmed. Keep the paper somewhere
+                    The Vault is set up and the recovery code is confirmed. Keep the paper somewhere
                     the household can find it.
                   </Notice>
                 )}
               </>
             )}
 
-            {step === S_HA && (
+            {!built && current === "ha" && (
               <>
                 <Lede>
-                  Do you run Home Assistant? A household without it is a finished build, not a
-                  degraded one.
+                  If you run Home Assistant, connect it now so {botName} can see and run your home. You
+                  can skip this and connect it later from the Smart Home page or Settings.
                 </Lede>
-                <Choice
-                  name="ob-ha"
-                  value="no"
-                  checked={haPresent === false}
-                  onSelect={() => setHaPresent(false)}
-                  title="No"
-                  description="Skip the smart-home step entirely."
-                />
-                <Choice
-                  name="ob-ha"
-                  value="yes"
-                  checked={haPresent === true}
-                  onSelect={() => setHaPresent(true)}
-                  title="Yes"
-                  description="Point this build at it with a long-lived access token."
-                />
-                {haPresent === true && (
-                  <>
-                    <Field id="ob-ha-url" label="Home Assistant address">
-                      <TextInput id="ob-ha-url" value={haUrl} onChange={setHaUrl} />
-                    </Field>
-                    <Field
-                      id="ob-ha-token"
-                      label="Long-lived access token"
-                      hint="Created in Home Assistant under your profile. It is sent to this box and stored there, never in the browser."
-                    >
-                      <TextInput
-                        id="ob-ha-token"
-                        type="password"
-                        value={haToken}
-                        onChange={setHaToken}
-                        autoComplete="off"
-                      />
-                    </Field>
-                    <div style={{ marginTop: 12 }}>
-                      <PuffButton
-                        label={haTesting ? "Testing…" : "Test the connection"}
-                        onClick={() => void runHaTest()}
-                        disabled={haTesting || !haUrl.trim() || !haToken}
-                      />
-                    </div>
-                    {haResult ? (
-                      <Notice tone={haResult.ok ? "ok" : "warn"}>{haResult.text}</Notice>
-                    ) : null}
-                  </>
-                )}
-              </>
-            )}
-
-            {step === S_BRIDGE && (
-              <>
-                <Lede>
-                  The Bridge is what your bot may reach beyond itself. Stricter is always available;
-                  the suggestion is only a suggestion.
-                </Lede>
-                {bridge?.reason ? <Notice>{bridge.reason}</Notice> : null}
-                {(bridge?.postures || []).map((p) => (
-                  <Choice
-                    key={p.id}
-                    name="ob-bridge"
-                    value={p.id}
-                    checked={bridgePosture === p.id}
-                    onSelect={setBridgePosture}
-                    title={labelOf(p)}
-                    description={p.description || p.summary}
-                    note={p.id === bridge?.recommended ? "Suggested for what you described." : undefined}
-                  />
-                ))}
-                <div style={{ marginTop: 18 }}>
-                  <Eyebrow>Zone 3 · the network edge</Eyebrow>
-                  <Toggle
-                    id="ob-network-edge"
-                    checked={networkEdge && zone3Supported}
-                    onChange={setNetworkEdge}
-                    disabled={!zone3Supported}
-                    title={zone3Row?.label || "Filter DNS for the whole house"}
-                    description={
-                      <>
-                        {zone3Row?.description ||
-                          "Runs a DNS filter on this box and watches what the household's other devices ask for."}
-                        <div style={{ marginTop: 4 }}>
-                          {zone3Supported
-                            ? "Nothing is started here. The commands are written down for you to run."
-                            : zone3Reasons.join(" ") ||
-                              "This machine cannot run Zone 3; your own edge gear, or nothing at all, is a complete answer."}
-                        </div>
-                      </>
-                    }
-                  />
-                </div>
-                {bridge?.note ? <Notice>{bridge.note}</Notice> : null}
-              </>
-            )}
-
-            {step === S_KNOWLEDGE && (
-              <>
-                <Lede>
-                  Point at a folder of knowledge packs (ZIM files) and documents, or skip. You can
-                  add them any time from the Knowledge page.
-                </Lede>
-                <Field id="ob-zim" label="Knowledge folder" hint="A full path. It will be created if it does not exist.">
-                  <TextInput id="ob-zim" value={zimDir} onChange={setZimDir} placeholder="e.g. /srv/homebot/knowledge or D:\HomeBot\knowledge" />
+                <Field id="ob-ha-url" label="Home Assistant address">
+                  <TextInput id="ob-ha-url" value={haUrl} onChange={setHaUrl} />
                 </Field>
-                <Toggle
-                  id="ob-autoindex"
-                  checked={autoIndex}
-                  onChange={setAutoIndex}
-                  title="Index what is in there"
-                  description="Builds the search index in the background so answers can cite the source."
-                />
-              </>
-            )}
-
-            {step === S_REVIEW && (
-              <>
-                <Lede>This is the build you just described. It is written as a plain manifest you can re-read, diff, or re-run.</Lede>
-                <div style={{ marginTop: 14 }}>
-                  {(manifest?.summary || []).map((line, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        padding: "8px 0",
-                        borderTop: "1px solid var(--line)",
-                        color: "var(--text)",
-                        fontSize: 15,
-                      }}
-                    >
-                      {line}
-                    </div>
-                  ))}
-                  {(manifest?.summary || []).length === 0 && (
-                    <Notice tone="warn">No manifest preview came back yet.</Notice>
-                  )}
+                <Field id="ob-ha-token" label="Long-lived access token" hint={HA_TOKEN_HOW}>
+                  <TextInput
+                    id="ob-ha-token"
+                    type="password"
+                    value={haToken}
+                    onChange={setHaToken}
+                    autoComplete="off"
+                  />
+                </Field>
+                <div style={{ marginTop: 12 }}>
+                  <PuffButton
+                    label={haTesting ? "Testing..." : "Test"}
+                    onClick={() => void runHaTest()}
+                    disabled={haTesting || !haUrl.trim() || !haToken}
+                  />
                 </div>
-                {(manifest?.warnings || []).length > 0 && (
-                  <Notice tone="warn">
-                    {(manifest?.warnings || []).map((line, i) => (
-                      <div key={i}>{line}</div>
-                    ))}
-                  </Notice>
-                )}
-                {pending.length > 0 && (
-                  <div style={{ marginTop: 18 }}>
-                    <Eyebrow>Decided here, applied elsewhere</Eyebrow>
-                    {pending.map((item, i) => (
-                      <div
-                        key={i}
-                        style={{
-                          padding: "8px 0",
-                          borderTop: "1px solid var(--line)",
-                          color: "var(--text2)",
-                          fontSize: 14,
-                        }}
-                      >
-                        {item.kind}
-                        {typeof item.detail?.note === "string" ? `: ${item.detail.note}` : ""}
-                      </div>
-                    ))}
-                  </div>
-                )}
+                {haResult ? (
+                  <Notice tone={haResult.ok ? "ok" : "warn"}>{haResult.text}</Notice>
+                ) : null}
               </>
             )}
 
-            {step === S_DONE && (
+            {!built && current === "build" && (
               <>
-                <Lede>{botName} is built. Everything above is recorded in the manifest on this box.</Lede>
+                <Lede>Here is what gets built. Press Build it when you are ready.</Lede>
+                <div style={{ marginTop: 14 }}>
+                  <FactRow label="Name" value={botName} />
+                  <FactRow label="Brain" value={pickedBrain ? labelOf(pickedBrain) : model || "not picked"} />
+                  <FactRow label="Vault" value={recoveryConfirmed ? "set up" : "not set up"} />
+                  <FactRow label="Home Assistant" value={haConnected ? haUrl : "not connected"} />
+                  <FactRow label="HomeBot parts" value="all on" />
+                  <FactRow label="Household apps" value="AlarmFlow, Calendar, FreshTable, FitFam, Trivia" />
+                  <FactRow label="The Bridge" value="closed" />
+                </div>
+                <Notice>
+                  The Bridge starts closed: nothing reaches the internet until you switch it on. You
+                  can open single services later on the Firewall page.
+                </Notice>
+              </>
+            )}
+
+            {built && (
+              <>
+                <Lede>Everything above is recorded on this box. The dashboard is next.</Lede>
                 <div style={{ marginTop: 14 }}>
                   {doneLines.map((line, i) => (
                     <div
@@ -1529,13 +1058,15 @@ export default function OnboardingWizard() {
             className="flex flex-wrap items-center gap-3"
             style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--line)" }}
           >
-            <PuffButton label="Back" onClick={back} disabled={step === 0 || busy} />
-            {canSkip && <PuffButton label="Skip" onClick={() => void skip()} disabled={busy} />}
+            {!built && <PuffButton label="Back" onClick={back} disabled={step === 0 || busy} />}
+            {!built && current === "ha" && haToken ? (
+              <PuffButton label="Skip" onClick={() => void skipHa()} disabled={busy} />
+            ) : null}
             <span style={{ flex: 1 }} />
             <PuffButton
               type="submit"
               kind="primary"
-              label={busy ? "Working…" : vaultButtonLabel(step, vaultSealed, recoveryConfirmed, nextLabel)}
+              label={busy ? "Working..." : vaultButtonLabel(current, built, vaultSealed, recoveryConfirmed, nextLabel)}
               disabled={busy}
             />
           </div>
@@ -1545,54 +1076,33 @@ export default function OnboardingWizard() {
   );
 }
 
-/** Storage step fields: key, label, one line of why. */
-const STORAGE_FIELDS: [string, string, string][] = [
-  ["state_dir", "State", "Where this build keeps its own files: logs, indexes, state."],
-  ["knowledge_dir", "Knowledge", "Where knowledge packs (ZIM files) live."],
-  ["vault_dir", "Vault", "Where the Vault's encrypted files live."],
-  ["media_dir", "Media", "Your media library, if you have one. May be left empty."],
-];
-
-function headingFor(step: number, botName: string): string {
+function headingFor(step: StepId): string {
   switch (step) {
-    case S_WELCOME:
-      return "Name your bot";
-    case S_POSTURE:
-      return "How this build lives";
-    case S_HARDWARE:
+    case "welcome":
+      return "Welcome";
+    case "hardware":
       return "What we are working with";
-    case S_BRAIN:
-      return "Pick a brain";
-    case S_HOUSEHOLD:
-      return "Who lives here";
-    case S_GOAL:
-      return "What it is for";
-    case S_STORAGE:
-      return "Where things go";
-    case S_VAULT:
-      return "Seal the Vault";
-    case S_HA:
-      return "Your smart home";
-    case S_BRIDGE:
-      return "The Bridge";
-    case S_KNOWLEDGE:
-      return "Knowledge packs";
-    case S_REVIEW:
-      return "Read it back";
+    case "brain":
+      return "Pick the brain's size";
+    case "vault":
+      return "Set up the Vault";
+    case "ha":
+      return "Connect your Home Assistant";
     default:
-      return `${botName} is ready`;
+      return "Build it";
   }
 }
 
 /** The vault step's button says what it is about to do. */
 function vaultButtonLabel(
-  step: number,
+  step: StepId,
+  built: boolean,
   sealed: boolean,
   confirmed: boolean,
   fallback: string,
 ): string {
-  if (step !== S_VAULT) return fallback;
-  if (!sealed) return "Seal the Vault";
+  if (built || step !== "vault") return fallback;
+  if (!sealed) return "Set up the Vault";
   if (!confirmed) return "I wrote it down";
   return fallback;
 }

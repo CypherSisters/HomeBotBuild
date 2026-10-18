@@ -71,7 +71,7 @@ ESTIMATE_BASES = ("measured:this_machine", "calibrated:sample", "unknown")
 #: declared is a package reading whatever happens to be in the record.
 KNOWN_SECTIONS = (
     "run", "machine", "persona", "brain", "sources", "tools", "knowledge",
-    "context", "crew", "posture", "egress", "surfaces", "prove", "handoff",
+    "context", "crew", "posture", "egress", "surfaces", "assemble", "prove", "handoff",
 )
 
 #: Writable only by built-in packages, refused at validate

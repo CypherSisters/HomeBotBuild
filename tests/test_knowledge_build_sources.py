@@ -169,8 +169,7 @@ def test_chosen_pack_that_never_downloaded_says_size_and_command(dirs):
     assert wiki["selected_by"] == ["pack:wikipedia"]
     assert wiki["size_label"] == "about 55.7 GB"
     assert wiki["command"] == (
-        "puffpai setup --yes --fetch-source kiwix_wikipedia_en_nopic "
-        "--accept-source-size")
+        "puffpai sources add kiwix_wikipedia_en_nopic")
 
     # One interview pack, two registry rows, and the owner is told about both.
     space = _item(result, "kiwix_space_stackexchange")
@@ -299,6 +298,17 @@ def test_a_chosen_pack_with_no_vetted_download_says_so(dirs):
     assert "no vetted download" in item["note"]
 
 
+def test_a_chosen_pack_the_library_has_points_at_the_book_and_the_add_command(dirs):
+    manifest = _manifest()
+    manifest["knowledge"]["packs"] = ["pack:knots"]
+    result = _status(manifest, dirs)
+    item = _item(result, "kiwix:wikipedia_en_knots:maxi")
+    assert item["status"] == bs.STATUS_SELECTED_NOT_DOWNLOADED
+    assert item["selected_by"] == ["pack:knots"]
+    assert item["command"] == "puffpai sources add kiwix:wikipedia_en_knots:maxi"
+    assert item["label"].startswith("Knots by Wikipedia")
+
+
 def test_no_manifest_is_an_answer_not_an_error(dirs):
     result = _status(None, dirs)
     assert result["schema"] == bs.SCHEMA
@@ -306,12 +316,37 @@ def test_no_manifest_is_an_answer_not_an_error(dirs):
 
 
 def test_the_shipped_registry_backs_every_mapped_pack():
-    """PACK_SOURCE_IDS may not point at a row that does not exist."""
-    from puffpai import source_registry
+    """A pack may not point at a list row that does not exist."""
+    from puffpai import catalogs, source_registry
     ids = {str(r.get("id")) for r in source_registry.load_registry().get("sources", [])}
-    for pack, mapped in bs.PACK_SOURCE_IDS.items():
+    packs = (catalogs.catalog_row("kiwix") or {}).get("interview_packs") or {}
+    for pack, mapped in packs.items():
+        if not pack.startswith("pack:"):
+            continue
         for source_id in mapped:
-            assert source_id in ids, f"{pack} -> missing row {source_id}"
+            assert source_id.startswith("kiwix:") or source_id in ids,                 f"{pack} -> missing row {source_id}"
+
+
+def test_a_mapped_id_that_is_nowhere_is_dropped(monkeypatch):
+    from puffpai import catalogs
+    fake = {"interview_packs": {"pack:x": ["not_a_row", "kiwix:real_book", "kiwix_space_stackexchange"]}}
+    monkeypatch.setattr(catalogs, "catalog_row", lambda _id: fake)
+    assert bs.pack_source_ids("pack:x") == ("kiwix:real_book", "kiwix_space_stackexchange")
+    fake["interview_packs"]["pack:x"] = "kiwix:not_a_list"
+    assert bs.pack_source_ids("pack:x") == ()
+
+
+def test_every_catalog_mapped_pack_is_a_downloadable_book():
+    from puffpai import catalogs
+    from puffpai.catalogs import knowledge_resolver
+    packs = (catalogs.catalog_row("kiwix") or {}).get("interview_packs") or {}
+    real = {k: v for k, v in packs.items() if k.startswith("pack:")}
+    assert real, "the mapping is empty"
+    for pack, ids in real.items():
+        assert bs.pack_source_ids(pack) == tuple(ids)
+        for ident in ids:
+            cand = knowledge_resolver.candidate_by_id(ident)
+            assert cand and cand["fetchable"], f"{pack} -> {ident}"
 
 
 def test_shipped_zim_rows_all_record_a_size():

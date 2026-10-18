@@ -5,14 +5,16 @@
   "version": "1.0.0",
   "author": "puffpai",
   "license": "Apache-2.0",
-  "label": "What this machine is",
-  "description": "The census of this machine, and where Ollama answers.",
+  "label": "This computer",
+  "description": "What this computer has, where Ollama answers, and whether the internet answers.",
   "reads": [
     "run"
   ],
   "writes": "machine",
   "permissions": {
-    "network_hosts": [],
+    "network_hosts": [
+      "registry.ollama.ai"
+    ],
     "files": [
       "data"
     ],
@@ -21,7 +23,7 @@
   },
   "doors": [],
   "secrets": [],
-  "egress": "none",
+  "egress": "build_only",
   "estimate": {
     "bytes": 0,
     "seconds": 0,
@@ -32,7 +34,8 @@
   "blocking": false,
   "provides": [
     "machine.census",
-    "machine.ollama_url"
+    "machine.ollama_url",
+    "machine.internet"
   ],
   "needs": [],
   "builtin": true

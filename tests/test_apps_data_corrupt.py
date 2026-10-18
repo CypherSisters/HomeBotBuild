@@ -208,8 +208,10 @@ def test_the_error_never_leaks_the_path(corrupt_api):
 
 
 def test_the_chat_fastpath_says_so_instead_of_answering_from_defaults(
-        corrupt_api):
+        corrupt_api, monkeypatch):
     api, _ = corrupt_api
+    # The suite never reaches a real Ollama; this box has a model.
+    monkeypatch.setattr(api, "_app_unavailable_reason", lambda app_id: "")
     reply = api._try_trivia_start("whats my quiz score")
     assert reply and "can't read the trivia file" in reply
     assert "Nothing was changed" in reply

@@ -206,6 +206,18 @@ _ALL_AGENT_KEYWORDS = (
 )
 
 
+def reload_app_words() -> None:
+    """Rebuild the combined word list after an app is turned on or off
+    (:mod:`puffpai.first_apps`). The household apps' words are written in
+    this module, so only the combined list is rebuilt."""
+    global _ALL_AGENT_KEYWORDS
+    _ALL_AGENT_KEYWORDS = (
+        _HOME_KEYWORDS + _SECURITY_KEYWORDS + _PREP_KEYWORDS +
+        _WEB_SEARCH_KEYWORDS + _APP_KEYWORDS +
+        _MEDIA_KEYWORDS + _DOCUMENT_KEYWORDS
+    )
+
+
 # ── Action-intent safety net ────────────────────────────────────────────────
 # The RAG path has NO tools: anything action-shaped that slips through the
 # keyword lists lands there and the LLM tends to *claim* it acted ("Sure,

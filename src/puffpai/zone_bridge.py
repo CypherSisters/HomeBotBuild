@@ -31,6 +31,31 @@ Two rules the reconciliation obeys
   hand-edited config file can change how a posture reads but never how strict it
   is.
 
+What is enforced
+----------------
+The choice is read back at run time by
+:func:`puffpai.security.bridge_guard.reach_level`, and three places
+act on it. Nothing here scans or resolves anything; the acting is done by the
+code that already sits at each exit:
+
+* ``open_yard`` and ``fenced`` (level ``open``): the home network is allowed,
+  and every outside service still waits for its own switch.
+* ``moat`` (level ``switched_on``): only the outside services the owner
+  switched on reach the internet. The home network still works (Home
+  Assistant, the media server, phones, other devices at home). A setting in
+  a file or the environment cannot switch an outside service on, and
+  :mod:`puffpai.security.bridge_guard` refuses, at the moment a connection
+  is made, any internet connection that did not come through a listed exit
+  (each of which checks the owner's switch).
+* ``drawbridge_up`` (level ``sealed``): nothing reaches the internet,
+  switched on or not. The home network still works.
+* A build whose ``run_egress`` is ``sealed`` (level ``sealed`` and
+  ``home_network`` False): nothing leaves this computer at all, the home
+  network included, which is what that build setting promises.
+
+A record that cannot be read, or a Bridge value nobody knows, is read as
+``drawbridge_up``: when the choice is unclear, the stricter rule applies.
+
 All strings are ASCII: they reach a Windows console.
 
 Copyright (c) Cypher Sisters. Apache-2.0 License.
@@ -52,7 +77,22 @@ _STRICTNESS: dict[str, int] = {
     "drawbridge_up": 3,
 }
 
+# The setting used only when no Bridge was chosen (before setup, or a build
+# whose record names none). It does not open the internet: every outside
+# service ships off and is used only after the owner switches it on. A build
+# that pins its own Bridge records it (the HomeBot preset records Moat).
 DEFAULT_POSTURE = "fenced"
+
+# Postures that are no longer offered, and the one each now reads as. Every
+# posture is still offered here, so nothing is folded; the map stays so a
+# record from a build that retires one is read the same way everywhere.
+RETIRED_POSTURES: dict[str, str] = {}
+
+# Shown next to a record that was folded by RETIRED_POSTURES.
+MOAT_FOLDED_NOTE = (
+    "The setting this record named is no longer offered, so the closest one "
+    "that is still offered is used instead. You can pick another at any time."
+)
 
 # Never handed out as a recommendation. Open Yard is a legitimate choice, but it
 # is the one posture that has to be chosen deliberately rather than accepted
@@ -86,7 +126,7 @@ _FALLBACK_POSTURES: dict[str, Any] = {
             "allows": {
                 "lan_devices": "Reaches any device you listed, with no prompt each time.",
                 "actions": "Actions run without a per-use prompt.",
-                "egress": "Outbound doors you switched on stay open while the bot runs.",
+                "egress": "Outside services you switched on stay on while the bot runs.",
                 "consent": "Asked once at setup, not again at each use.",
             },
             "costs": "Nothing to click, and nothing to catch a mistake either.",
@@ -101,7 +141,7 @@ _FALLBACK_POSTURES: dict[str, Any] = {
             "allows": {
                 "lan_devices": "Devices on your own network are allowed.",
                 "actions": "Actions are gated at the boundary before they run.",
-                "egress": "Outbound doors are listed one by one and every one starts off.",
+                "egress": "Outside services are listed one by one, and every one starts off.",
                 "consent": "Asked when an action reaches past what you already allowed.",
             },
             "costs": "You will confirm things now and then.",
@@ -112,14 +152,15 @@ _FALLBACK_POSTURES: dict[str, Any] = {
             "label": "Moat",
             "strictness": 2,
             "recommendable": True,
-            "summary": "Every outbound call and every action asks you first, every session.",
+            "summary": ("Only the outside services you switched on reach the "
+                        "internet. Your home network still works."),
             "allows": {
-                "lan_devices": "Allowed, but each reach asks you first.",
-                "actions": "Every action asks, every session.",
-                "egress": "Every outbound call asks, even through a door you opened before.",
-                "consent": "Asked every time; approval never carries to the next session.",
+                "lan_devices": "Your home network works as usual.",
+                "actions": "Nothing reaches the internet unless you switched that service on.",
+                "egress": "Only the outside services you switched on, each one by you.",
+                "consent": "You switch each outside service on yourself, one at a time.",
             },
-            "costs": "You will answer a lot of prompts.",
+            "costs": "A new outside service does nothing until you switch it on.",
             "matches_run_egress": "island",
         },
         {
@@ -127,15 +168,16 @@ _FALLBACK_POSTURES: dict[str, Any] = {
             "label": "Drawbridge Up",
             "strictness": 3,
             "recommendable": True,
-            "summary": "Sealed. Nothing outbound, ever, and the bot says so plainly.",
+            "summary": ("Nothing reaches the internet. Your home network still "
+                        "works."),
             "allows": {
-                "lan_devices": "Not reached. The bot works with what is on the box.",
-                "actions": "Actions that would reach off the box do not run.",
-                "egress": "None. There are no doors to open.",
-                "consent": "Nothing to consent to, because nothing leaves.",
+                "lan_devices": "Your home network works as usual.",
+                "actions": "Anything that needs the internet does not run, and the bot says so.",
+                "egress": "None. Every outside service is off and cannot be switched on.",
+                "consent": "Nothing to switch on, because nothing reaches the internet.",
             },
-            "costs": "Anything that needs the network is off the table.",
-            "matches_run_egress": "sealed",
+            "costs": "Anything that needs the internet is off.",
+            "matches_run_egress": "island",
         },
     ],
 }
@@ -466,9 +508,9 @@ def posture_for_environment(
         recommended = "moat"
         reason = (
             "There is no firewall and no managed network in front of this box, "
-            "so your bot's own rules are the only rules. Moat asks you before "
-            "every reach, which costs you some clicks and gives you the clearest "
-            "view of what it is doing."
+            "so your bot's own rules are the only rules. With Moat, only the "
+            "outside services you switched on reach the internet, and your "
+            "home network still works."
         )
 
     return {
@@ -531,8 +573,8 @@ def reconcile_with_egress(posture: str, run_egress: str) -> tuple[str, str]:
     if result != chosen:
         if egress == "sealed":
             notes.append(
-                f"You chose a sealed build, so the Bridge is set to "
-                f"{_label('drawbridge_up')}: nothing outbound, ever. The stricter "
+                f"You chose a build that keeps everything on this computer, so "
+                f"the Bridge is set to {_label('drawbridge_up')}. The stricter "
                 f"of your two choices always wins."
             )
         else:
@@ -597,6 +639,8 @@ def bridge_manifest_block(
         final, note = reconcile_with_egress(requested, str(run_egress))
     elif requested in _STRICTNESS:
         final, note = requested, ""
+    elif requested in RETIRED_POSTURES:
+        final, note = RETIRED_POSTURES[requested], MOAT_FOLDED_NOTE
     else:
         final = DEFAULT_POSTURE
         note = (
@@ -635,6 +679,56 @@ def bridge_manifest_block(
     }
 
 
+def migrate_record(block: Any) -> dict[str, Any]:
+    """An older Bridge record, read as today's. Never raises, never loosens.
+
+    A record whose posture is in :data:`RETIRED_POSTURES` becomes the posture
+    it folds into, with :data:`MOAT_FOLDED_NOTE` as its note and today's
+    wording. Every other record is returned unchanged (as a copy);
+    :func:`current_words` is what a page shows.
+    """
+    out = dict(block) if isinstance(block, dict) else {}
+    old = str(out.get("posture") or "").strip().lower()
+    if old not in RETIRED_POSTURES:
+        return out
+    new = RETIRED_POSTURES[old]
+    entry = posture_by_id(new) or {}
+    out.update({
+        "posture": new,
+        "label": entry.get("label", new),
+        "summary": entry.get("summary", ""),
+        "allows": dict(entry.get("allows") or {}),
+        "costs": entry.get("costs", ""),
+        "strictness": _STRICTNESS[new],
+        "note": MOAT_FOLDED_NOTE,
+        "migrated_from": old,
+    })
+    return out
+
+
+def current_words(block: Any) -> dict[str, Any]:
+    """A Bridge record with TODAY's words for its posture. Never raises.
+
+    A saved record carries the sentences it was written with; a page shows
+    the current ones, so it never repeats wording that has since changed. A
+    retired posture is migrated first; an unknown posture is returned as it
+    was (a copy).
+    """
+    out = migrate_record(block)
+    pid = str(out.get("posture") or "").strip().lower()
+    if pid in _STRICTNESS:
+        entry = posture_by_id(pid) or {}
+        out.update({
+            "posture": pid,
+            "label": entry.get("label", pid),
+            "summary": entry.get("summary", ""),
+            "allows": dict(entry.get("allows") or {}),
+            "costs": entry.get("costs", ""),
+            "strictness": _STRICTNESS[pid],
+        })
+    return out
+
+
 # ---------------------------------------------------------------------------
 # display
 # ---------------------------------------------------------------------------
@@ -655,23 +749,181 @@ def posture_summary_lines(recommendation: dict[str, Any]) -> list[str]:
     return lines
 
 
+# ---------------------------------------------------------------------------
+# enforcement: what the running bot may actually reach
+# ---------------------------------------------------------------------------
+
+#: The home network is allowed; each outside service waits for its switch.
+LEVEL_OPEN = "open"
+#: Only the outside services the owner switched on reach the internet; the
+#: home network still works.
+LEVEL_SWITCHED_ON = "switched_on"
+#: Nothing reaches the internet, switched on or not. The home network still
+#: works, except on a build whose ``run_egress`` is ``sealed``
+#: (``home_network`` False in :func:`enforced_from_manifest`).
+LEVEL_SEALED = "sealed"
+
+#: The level each posture is enforced at. Every posture is listed, so a
+#: posture added to :data:`_STRICTNESS` without a level here fails loudly.
+_POSTURE_LEVEL: dict[str, str] = {
+    "open_yard": LEVEL_OPEN,
+    "fenced": LEVEL_OPEN,
+    "moat": LEVEL_SWITCHED_ON,
+    "drawbridge_up": LEVEL_SEALED,
+}
+
+#: A service with no row of its own on "What leaves your computer" that is
+#: used only as part of another one. With only switched-on services allowed it
+#: follows that row's switch: the locked box's setup and its code parts are
+#: downloads of code the owner picked, so they wait for "Downloading an app or
+#: code you picked" to be switched on.
+SWITCH_FOLLOWS: dict[str, str] = {"box_install": "code_download"}
+
+#: What the Bridge does not hold (security.bridge_guard, "What it does not
+#: do"): a name lookup asks the resolver before any connection is judged, and
+#: a UDP datagram sent without connecting is not seen. Said wherever a line
+#: says what the bot connects to, so no line claims more than is enforced.
+NAME_LOOKUP_LINE = ("Looking up a website's address still asks your network; "
+                    "the Bridge does not stop that.")
+
+#: One plain sentence per level, for the pages and the terminal. Only what is
+#: enforced: connections (security.bridge_guard), not name lookups.
+ENFORCED_LINES: dict[str, str] = {
+    LEVEL_OPEN: ("Your bot may reach things on your home network. Each outside "
+                 "service has its own switch in Settings, Bridge switches."),
+    LEVEL_SWITCHED_ON: ("Only the outside services you switched on reach the "
+                        "internet. Your home network still works: Home "
+                        "Assistant, your media server, your phones and your "
+                        "other devices at home. " + NAME_LOOKUP_LINE),
+    LEVEL_SEALED: ("Nothing reaches the internet. Your home network still "
+                   "works: Home Assistant, your media server, your phones and "
+                   "your other devices at home. " + NAME_LOOKUP_LINE),
+}
+
+#: The line for a build whose ``run_egress`` is ``sealed``: not even the home
+#: network is reached.
+LOCAL_ONLY_LINE = ("Your bot keeps everything on this computer: it connects to "
+                   "nothing on your home network or the internet. "
+                   + NAME_LOOKUP_LINE)
+
+#: What the owner reads when the Bridge stopped something.
+REFUSED_LINE = ("The Bridge is closed to this because it was not switched on, "
+                "so nothing was sent.")
+SEALED_LINE = ("Your bot is set so that nothing reaches the internet, so "
+               "nothing was sent.")
+LOCAL_ONLY_REFUSED_LINE = ("Your bot is set to keep everything on this "
+                           "computer, so nothing was sent.")
+
+
+def _run_egress_of(block: Any) -> str:
+    """``run_egress`` from a manifest's ``posture`` block, normalised the way
+    :func:`puffpai.build_posture.assess_posture` does: an unknown value is the
+    ordinary default (``island``), never a looser one."""
+    raw = (str((block or {}).get("run_egress") or "").strip().lower()
+           if isinstance(block, dict) else "")
+    return raw if raw in _EGRESS_FLOOR else "island"
+
+
+def enforced_from_manifest(manifest: Any) -> dict[str, Any]:
+    """The Bridge as the running bot enforces it, from a manifest dict.
+
+    Pure: reads nothing, opens nothing. ``None`` (no manifest yet: no wizard
+    has run) reads as the default. A manifest that is not a dict, or a Bridge
+    value nobody knows, reads as ``drawbridge_up``. The run setting's floor
+    then applies: a sealed build is never looser than ``drawbridge_up``, and
+    its level is ``sealed``. ``home_network`` says whether the home network
+    may be reached: True at every Bridge setting, False only on a build whose
+    run setting is ``sealed`` (this computer only). The cached reading from
+    disk that the running bot uses is
+    :func:`puffpai.security.bridge_guard.enforced`.
+    """
+    posture_block: Any = {}
+    if manifest is None:
+        chosen, source = DEFAULT_POSTURE, "default"
+    elif not isinstance(manifest, dict):
+        chosen, source = "drawbridge_up", "unreadable"
+    else:
+        bridge = manifest.get("bridge")
+        posture_block = manifest.get("posture")
+        source = "record"
+        if bridge is None:
+            chosen, source = DEFAULT_POSTURE, "default"
+        elif not isinstance(bridge, dict):
+            chosen = "drawbridge_up"
+        else:
+            raw = str(bridge.get("posture") or "").strip().lower()
+            if not raw:
+                chosen, source = DEFAULT_POSTURE, "default"
+            elif raw in RETIRED_POSTURES:
+                chosen = RETIRED_POSTURES[raw]
+            elif raw in _STRICTNESS:
+                chosen = raw
+            else:
+                chosen = "drawbridge_up"
+    run_egress = _run_egress_of(posture_block)
+    floor = _EGRESS_FLOOR.get(run_egress, _UNKNOWN_EGRESS_FLOOR)
+    final = chosen if _STRICTNESS[chosen] >= _STRICTNESS[floor] else floor
+    local_only = run_egress == "sealed"
+    level = LEVEL_SEALED if local_only else _POSTURE_LEVEL[final]
+    return {"posture": final, "chosen": chosen, "run_egress": run_egress,
+            "level": level, "home_network": not local_only, "source": source,
+            "line": LOCAL_ONLY_LINE if local_only else ENFORCED_LINES[level]}
+
+
+def switch_allows_at(level: str, sid: str, get_switch) -> bool:
+    """Does the Bridge at *level* let *sid* be used, given the switches?
+
+    *get_switch* answers True / False / None (never set) for a service id,
+    as :func:`puffpai.security.outside_switches.get` does. Every outside
+    service ships switched off, so at levels ``open`` and ``switched_on``
+    only an explicit ON (or the ON of the row it follows,
+    :data:`SWITCH_FOLLOWS`) lets it be used; the owner's yes in the wizard or
+    in Settings is that ON. ``sealed``: nothing. An unknown level is read as
+    ``switched_on``. The levels still differ in what
+    :mod:`puffpai.security.bridge_guard` lets through at connect time.
+    """
+    got = get_switch(sid)
+    if got is False or level == LEVEL_SEALED:
+        return False
+    if got is True:
+        return True
+    follow = SWITCH_FOLLOWS.get(str(sid or "").strip().lower())
+    return bool(follow) and get_switch(follow) is True
+
+
 __all__ = [
     "DEFAULT_EDGE_KIND",
     "DEFAULT_POSTURE",
     "EDGE_KINDS",
+    "ENFORCED_LINES",
     "EXTERNAL_EDGE_KINDS",
+    "LEVEL_OPEN",
+    "LEVEL_SEALED",
+    "LEVEL_SWITCHED_ON",
+    "LOCAL_ONLY_LINE",
+    "LOCAL_ONLY_REFUSED_LINE",
+    "MOAT_FOLDED_NOTE",
+    "NAME_LOOKUP_LINE",
+    "REFUSED_LINE",
+    "RETIRED_POSTURES",
+    "SEALED_LINE",
+    "SWITCH_FOLLOWS",
     "ZONE3_APPLY_COMMANDS",
     "ZONE3_DOC",
     "ZONE3_DOC_SECTIONS",
     "ZONE3_MONITOR_MODE",
     "bridge_manifest_block",
+    "current_words",
     "edge_manifest_block",
     "edge_options",
     "edge_summary_lines",
+    "enforced_from_manifest",
     "load_postures",
+    "migrate_record",
     "posture_by_id",
     "posture_for_environment",
     "posture_menu",
     "posture_summary_lines",
     "reconcile_with_egress",
+    "switch_allows_at",
 ]

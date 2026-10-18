@@ -118,6 +118,22 @@ def junk_directory_reason(url: str) -> str:
     return ''
 
 
+#: A question-and-answer archive's listing pages: "Highest Voted 'chain'
+#: Questions", "questions_page=12", the tag and user indexes. They hold a list
+#: of other pages' titles, so they match any word and answer nothing; cited,
+#: they made the bot look sourced when it was not.
+_LISTING_PAGE_RE = re.compile(
+    r"^(?:(?:questions|tags|users|badges|unanswered)/?$"
+    r"|(?:questions|tags|users|unanswered)_page="
+    r"|questions/tagged/|tags/|users/|badges/)")
+
+
+def listing_page_reason(url: str) -> str:
+    """A skip reason when *url* is an archive's listing page, else ''."""
+    u = str(url or "").lower().replace('\\', '/').lstrip('/')
+    return "a listing of other pages" if _LISTING_PAGE_RE.match(u) else ''
+
+
 def classify_text_path(url: str) -> str:
     """Decide whether a raw-text entry is prose or web-app machinery.
 
@@ -608,6 +624,42 @@ def shard_status(db_path: str) -> dict[str, Any]:
     return info
 
 
+# ── Book labels ─────────────────────────────────────────────────────────────
+
+#: Meta keys a builder may stamp on a shard from its caller's labels.
+LABEL_KEYS = ('source_id', 'source_label', 'source_license', 'book_name')
+
+_LABEL_JUNK = re.compile(r'[\x00-\x1f\x7f]+')
+
+
+def clean_labels(labels: Any) -> dict[str, str]:
+    """Only the known label keys, each one short line of text. Never raises."""
+    if not isinstance(labels, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key in LABEL_KEYS:
+        value = labels.get(key)
+        if isinstance(value, str):
+            text = _LABEL_JUNK.sub(' ', value).strip()[:200]
+            if text:
+                out[key] = text
+    return out
+
+
+def shard_labels(db_path: str) -> dict[str, str]:
+    """The label keys stored in a shard's meta table ({} when unreadable)."""
+    try:
+        conn = _connect(db_path, read_only=True)
+    except sqlite3.Error:
+        return {}
+    try:
+        return {k: v for k in LABEL_KEYS if (v := _get_meta(conn, k))}
+    except sqlite3.Error:
+        return {}
+    finally:
+        conn.close()
+
+
 # ── Building ────────────────────────────────────────────────────────────────
 
 @dataclass
@@ -644,8 +696,16 @@ class FTSBuilder:
         batch_size: int = 500,
         progress_cb: Optional[Callable[[int, int, int], None]] = None,
         force: bool = False,
+        labels: Optional[dict] = None,
     ) -> BuildSummary:
-        """Build (or resume, or skip) the shard for one ZIM file."""
+        """Build (or resume, or skip) the shard for one ZIM file.
+
+        ``labels`` are short facts about the book written into the shard's
+        meta table (``source_id``, ``source_label``, ``source_license`` and
+        ``book_name``), so an answer can name its book and a book can be
+        removed by id. Only :data:`LABEL_KEYS` are kept, each reduced to one
+        short line of plain text.
+        """
         lib_id = library_id_for(zim_path)
         db_path = shard_path_for(zim_path, fts_dir)
         summary = BuildSummary(library_id=lib_id, zim_path=zim_path,
@@ -701,6 +761,9 @@ class FTSBuilder:
                       error='')
             if resume_from < 0:
                 _set_meta(conn, last_entry_index=-1, article_count=0)
+            clean = clean_labels(labels)
+            if clean:
+                _set_meta(conn, **clean)
             conn.commit()
 
             summary.resumed_from = max(resume_from + 1, 0)

@@ -149,7 +149,7 @@ def _request(url: str, path: str, *, api_key: str, method: str = "GET",
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(base + path, data=payload,
                                      headers=headers, method=method)
-    opener = urllib.request.build_opener(_NoRedirects)  # lan-egress: the owner's own backend, loopback or LAN only, checked by check_local_url above
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirects)  # lan-egress: no proxy; the owner's own backend, loopback or LAN only, checked by check_local_url above
     try:
         with opener.open(request, timeout=timeout) as response:
             raw = response.read(1_000_000)

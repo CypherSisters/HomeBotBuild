@@ -61,8 +61,13 @@ POSTURE = netaddr.HOUSE
 __all__ = ["POSTURE", "lan_request", "lan_get", "lan_post", "validate_url"]
 
 
-def validate_url(url: str) -> tuple[str, int]:
+def validate_url(url: str, *, local_names: bool = False) -> tuple[str, int]:
     """Prove *url* names a host inside this house. Returns ``(host, port)``.
+
+    *local_names*: a ``.local`` name passes when at least one of its answers
+    is inside the house; its outside answers are never connected to
+    (:func:`~puffpai.security.netaddr.house_addresses`, and
+    :func:`lan_request` pins to the same set).
 
     Raises :class:`~puffpai.security.netaddr.AddressRefused` when any address
     the host resolves to is outside the house, :class:`ValueError` when the URL
@@ -82,23 +87,29 @@ def validate_url(url: str) -> tuple[str, int]:
     except ValueError:                       # a port that is not a number
         raise ValueError("URL has an invalid port") from None
     # Validates EVERY answer, not the first: a name with one private and one
-    # public address is a name whose address the client picks.
-    netaddr.validated_addresses(host, port, posture=POSTURE)
+    # public address is a name whose address the client picks. A ``.local``
+    # name (local_names) keeps only its inside answers, and the pinned session
+    # connects to nothing else.
+    if local_names:
+        netaddr.house_addresses(host, port)
+    else:
+        netaddr.validated_addresses(host, port, posture=POSTURE)
     return host, port
 
 
-def lan_request(method: str, url: str, **kwargs):
+def lan_request(method: str, url: str, *, local_names: bool = False, **kwargs):
     """``requests``-shaped call that refuses any destination off this house.
 
     ``kwargs`` are passed through to ``requests`` unchanged except that
     ``allow_redirects`` defaults to False (see the module docstring) and
     ``timeout`` defaults to 10 seconds — an unbounded read against a hung LAN
-    service is a hang in whatever thread called this.
+    service is a hang in whatever thread called this. *local_names*: see
+    :func:`validate_url`.
     """
-    host, _port = validate_url(url)
+    host, _port = validate_url(url, local_names=local_names)
     kwargs.setdefault("allow_redirects", False)
     kwargs.setdefault("timeout", 10)
-    session = netaddr.pinned_session(posture=POSTURE)
+    session = netaddr.pinned_session(posture=POSTURE, local_names=local_names)
     try:
         return session.request(str(method).upper(), url, **kwargs)
     finally:

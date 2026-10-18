@@ -10,14 +10,17 @@
  *
  * When it shows: /api/pair/status says not paired while the gate is on, or any
  * same-origin /api/ call answers 401 with error "pairing_required" (the gate's
- * own body, so other 401s never trigger it). Pairing itself is the existing
- * POST /api/pair (same-origin, rate-limited, sets the device cookie). The code
- * is typed by hand: never prefilled, never shown, never logged here.
+ * own body, so other 401s never trigger it). After "Not now" it stays away for
+ * the rest of this browser session (a flag in sessionStorage, nothing else),
+ * until a page's "Pair this screen" button asks for it. Pairing itself is the
+ * existing POST /api/pair (same-origin, rate-limited, sets the device cookie).
+ * The code is typed by hand: never prefilled, never shown, never logged here.
  *
  * puff puff pass
  */
 import { FormEvent, useEffect, useState } from "react";
 import MsIcon from "../../_components/MsIcon";
+import { PAIR_HOW_LINES, PAIR_OPEN_EVENT, PAIRING_REQUIRED_EVENT } from "../../_lib/pairingWords";
 
 const ERRORS: Record<string, string> = {
   invalid_code: "That code didn't work. Check it and try again.",
@@ -25,6 +28,25 @@ const ERRORS: Record<string, string> = {
 };
 
 let fetchHooked = false;
+
+/** "Not now" was pressed in this browser session. Holds no secret. */
+const NOT_NOW_KEY = "puffpai.pairPrompt.notNow";
+
+function saidNotNow(): boolean {
+  try {
+    return window.sessionStorage.getItem(NOT_NOW_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function rememberNotNow(): void {
+  try {
+    window.sessionStorage.setItem(NOT_NOW_KEY, "1");
+  } catch {
+    /* storage off: the box may come back on the next page */
+  }
+}
 
 export default function PairPrompt() {
   const [open, setOpen] = useState(false);
@@ -37,13 +59,21 @@ export default function PairPrompt() {
     fetch("/api/pair/status", { cache: "no-store" })
       .then((r) => r.json())
       .then((s: { paired?: boolean; enforce?: string }) => {
-        if (live && s && s.paired === false && s.enforce && s.enforce !== "off") setOpen(true);
+        if (live && s && s.paired === false && s.enforce && s.enforce !== "off" && !saidNotNow()) setOpen(true);
       })
       .catch(() => {});
 
-    // Later 401s (a revoked or expired device cookie) open the same box.
-    const show = () => live && setOpen(true);
-    window.addEventListener("puffpai:pairing-required", show);
+    // Later 401s (a revoked or expired device cookie) open the same box,
+    // unless the owner said "Not now" in this session. A page's own "Pair
+    // this screen" button always opens it.
+    const show = () => {
+      if (live && !saidNotNow()) setOpen(true);
+    };
+    const asked = () => {
+      if (live) setOpen(true);
+    };
+    window.addEventListener(PAIRING_REQUIRED_EVENT, show);
+    window.addEventListener(PAIR_OPEN_EVENT, asked);
     if (!fetchHooked) {
       fetchHooked = true;
       const orig = window.fetch.bind(window);
@@ -59,7 +89,7 @@ export default function PairPrompt() {
             if (url.origin === window.location.origin && url.pathname.startsWith("/api/")) {
               const body = await res.clone().json();
               if (body?.error === "pairing_required") {
-                window.dispatchEvent(new Event("puffpai:pairing-required"));
+                window.dispatchEvent(new Event(PAIRING_REQUIRED_EVENT));
               }
             }
           } catch {
@@ -71,7 +101,8 @@ export default function PairPrompt() {
     }
     return () => {
       live = false;
-      window.removeEventListener("puffpai:pairing-required", show);
+      window.removeEventListener(PAIRING_REQUIRED_EVENT, show);
+      window.removeEventListener(PAIR_OPEN_EVENT, asked);
     };
   }, []);
 
@@ -127,8 +158,13 @@ export default function PairPrompt() {
           </h2>
         </div>
         <p className="mt-2" style={{ font: "500 14px var(--font-nunito), sans-serif", color: "var(--text2)" }}>
-          Type the pairing code. It&apos;s on the kiosk under Settings, Paired devices.
+          Type the pairing code.
         </p>
+        {PAIR_HOW_LINES.map((line) => (
+          <p key={line} className="mt-1" style={{ font: "500 14px var(--font-nunito), sans-serif", color: "var(--text2)" }}>
+            {line}
+          </p>
+        ))}
         <input
           type="text"
           inputMode="text"
@@ -166,7 +202,10 @@ export default function PairPrompt() {
           </button>
           <button
             type="button"
-            onClick={() => setOpen(false)}
+            onClick={() => {
+              rememberNotNow();
+              setOpen(false);
+            }}
             className="min-h-[48px] rounded-2xl border px-4"
             style={{ borderColor: "var(--line)", background: "var(--chip)", color: "var(--text)", font: "600 15px var(--font-nunito), sans-serif" }}
           >

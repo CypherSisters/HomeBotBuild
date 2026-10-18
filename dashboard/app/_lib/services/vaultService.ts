@@ -11,6 +11,14 @@ export interface VaultStatus {
    */
   vault_initialized?: boolean;
   mfa_enabled?: boolean;
+  /** How long the server leaves the vault open without use, then locks it. */
+  auto_lock_seconds?: number;
+  auto_lock_minutes?: number;
+  /** The server's own sentence about that, shown as it is. */
+  auto_lock_line?: string;
+  /** The vault's folder or drive is missing (never offer a new vault then). */
+  vault_missing?: boolean;
+  vault_missing_message?: string;
 }
 
 /**
@@ -24,6 +32,47 @@ export async function getVaultStatus(): Promise<VaultStatus> {
 
 export async function unlockVault(pin: string): Promise<{ success: boolean; error?: string }> {
   return apiPost('/vault/unlock', { pin });
+}
+
+/** What POST /vault/recover answers. The fields are the backend's own. */
+export interface VaultRecoverData {
+  success?: boolean;
+  message?: string;
+  session_token?: string;
+  recovery_code?: string;
+  recovery_code_notice?: string;
+  throttled?: boolean;
+  retry_after?: number;
+  weak_password?: boolean;
+  recovery_available?: boolean;
+}
+
+/**
+ * Open the vault with the recovery code and set a new PIN in the same call.
+ *
+ * Both go in the request BODY, never in the address, so neither lands in a
+ * browser history, a proxy log or a server access log. Nothing here keeps
+ * them: no storage, no console, no store. The status is returned with the
+ * body because the page says different things for a cooldown (429), a PIN
+ * the rules refuse (400) and a code that does not match (401).
+ */
+export async function recoverVault(
+  recoveryCode: string,
+  newPin: string,
+): Promise<{ status: number; data: VaultRecoverData }> {
+  const res = await fetch(`${API_URL}/vault/recover`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recovery_code: recoveryCode, new_pin: newPin }),
+    cache: 'no-store',
+  });
+  let data: VaultRecoverData = {};
+  try {
+    data = (await res.json()) as VaultRecoverData;
+  } catch {
+    data = {};
+  }
+  return { status: res.status, data };
 }
 
 export async function lockVault(): Promise<{ success: boolean }> {

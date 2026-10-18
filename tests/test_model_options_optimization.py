@@ -335,6 +335,10 @@ def _ollama_payload_literals():
 #: a path unreachable while a backend is injected.
 def _is_exempt(path, vision_ok=True):
     norm = os.path.normpath(path)
+    # Not an ollama payload: Toolsmith's cloud model body is Anthropic's
+    # Messages API (model + messages too), sent to api.anthropic.com.
+    if norm.endswith(os.path.join('security', 'toolsmith_cloud.py')):
+        return True
     if vision_ok and norm.endswith(os.path.join('puffpai', 'vision.py')):
         return True
     if norm.endswith(os.path.join('ui', 'chat_view.py')):

@@ -75,6 +75,19 @@ egress: ``--unshare-all`` removes the network namespace, so egress is not gated
 for it, it is absent. Reaching the network still means ``web_fetch``, which is
 SSRF-checked on every hop.
 
+The glue path (every platform, Windows included): ``write_glue`` and
+``run_glue`` are the Assemble step's coding tools
+(:mod:`puffpai.assemble.toolsmith_loop`). ``write_glue`` writes one small
+Python file into an assembled app's own glue folder only after Drawbridge's
+``glue`` checklist passes it; ``run_glue`` runs its one function with
+``python -I -B`` in its own process, in a Job Object (or process group), for
+30 seconds, with an audit hook that refuses programs, ``ctypes``, file
+writes outside its scratch folder and any connection or name look-up beyond
+127.0.0.1. That is NOT the bubblewrap jail and is not called a sandbox:
+native code in a planned package is not stopped by it. Both are
+state-changing (Sentinel reviews the envelope) and both work only on an app
+the owner said yes to (its folder exists). Neither holds a key.
+
 Copyright (c) 2025 Cypher Sisters. Apache-2.0 License.
 """
 
@@ -110,7 +123,7 @@ logger = get_logger(__name__)
 # up what needs ``state_changing=True``, and ``handle`` can refuse anything that
 # arrived without it — i.e. anything that skipped Sentinel's veto in ``bus.send``.
 STATE_CHANGING_INTENTS = frozenset({"workspace_write", "workspace_exec",
-                                    "document_convert"})
+                                    "document_convert", "write_glue", "run_glue"})
 
 #: Intents that leave the appliance. Kept separate from the state-changing set
 #: because they are orthogonal questions: a fetch mutates nothing in the house
@@ -125,7 +138,15 @@ EGRESS_INTENTS = frozenset({"web_fetch", "web_search", "search_and_read"})
 TOOL_INTENTS = frozenset({"web_fetch", "web_search", "search_and_read",
                           "workspace_read", "workspace_write", "workspace_list",
                           "workspace_exec", "document_convert",
-                          "registry_read"})
+                          "registry_read", "write_glue", "run_glue"})
+
+#: The Assemble step's coding tools: present on every platform (no bubblewrap
+#: needed; see the module doc for what limits a run).
+GLUE_INTENTS = frozenset({"write_glue", "run_glue"})
+
+#: What ``health()["glue"]`` says.
+GLUE_NOTE = ("connecting code: checked by Drawbridge, run in its own process for "
+             "30 s, 127.0.0.1 only, no keys (not a sandbox)")
 
 
 # ── web_fetch policy ────────────────────────────────────────────────
@@ -851,6 +872,8 @@ class ToolsmithAgent(BaseAgent):
                 return self._document_convert(envelope, p)
             if intent == "registry_read":
                 return self._registry_read(envelope, p)
+            if intent in GLUE_INTENTS:
+                return self._glue(intent, p)
             return {"ok": False, "error": f"toolsmith: unknown intent {intent!r}"}
         except EgressDenied as exc:
             return {"ok": False, "egress_denied": True,
@@ -862,7 +885,9 @@ class ToolsmithAgent(BaseAgent):
         except OSError as exc:
             # Disk full, permission denied, a workspace that will not create.
             # Reported, never raised: a failing tool must not abort the bus.
-            logger.warning("toolsmith %s failed: %s", intent, exc)
+            from puffpai.web_search import log_preview
+            logger.warning("toolsmith %s failed: %s", intent,
+                           log_preview(str(exc), 200))
             return {"ok": False, "error": f"toolsmith: {intent} failed ({exc})"}
 
     # ── web_fetch ───────────────────────────────────────────────────
@@ -2158,10 +2183,34 @@ class ToolsmithAgent(BaseAgent):
                 break
         return total
 
+    # ── the glue path (every platform) ─────────────────────────────
+    @staticmethod
+    def _glue(intent: str, p: dict) -> dict:
+        """``write_glue`` {app_id, name, code} / ``run_glue`` {app_id, name, args}.
+
+        Only for an assembled app that exists (the owner said yes to it)."""
+        from puffpai.assemble import toolsmith_loop
+        from puffpai.assemble.server import host
+        try:
+            folder = host.app_folder(str(p.get("app_id") or ""))
+        except host.AssembleError as exc:
+            raise ToolsmithInputError(f"{intent}: {exc.line}") from None
+        if not os.path.isfile(os.path.join(folder, "spec.json")):
+            raise ToolsmithInputError(f"{intent}: that app has not been put together")
+        if intent == "write_glue":
+            got = toolsmith_loop.write_glue(str(p["app_id"]), str(p.get("name") or ""),
+                                            str(p.get("code") or ""))
+        else:
+            args = p.get("args") if isinstance(p.get("args"), dict) else {}
+            got = toolsmith_loop.run_glue(str(p["app_id"]), str(p.get("name") or ""), args)
+            got["untrusted"] = True
+        return got
+
     # ── health ──────────────────────────────────────────────────────
     def health(self) -> dict:
         base = super().health()
         base["tools"] = sorted(TOOL_INTENTS)
+        base["glue"] = GLUE_NOTE
         # The Agent Team page renders this field verbatim, so it must agree
         # with the two sandboxed capabilities listed directly above it.
         base["sandbox"] = ("bubblewrap — no network, workspace only, "
@@ -2279,6 +2328,8 @@ __all__ = [
     "DEFAULT_MAX_CHARS",
     "DEFAULT_SEARCH_RESULTS",
     "EGRESS_INTENTS",
+    "GLUE_INTENTS",
+    "GLUE_NOTE",
     "HARD_MAX_CHARS",
     "MAX_FILE_BYTES",
     "MAX_REDIRECTS",

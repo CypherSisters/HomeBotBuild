@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from puffpai.security.lan_guard import no_proxies as _no_proxies  # marked home-network calls never use a proxy
 
 from puffpai.inference import model_options as _model_options
 from puffpai.statedir import resolve_runtime_dir
@@ -61,6 +62,12 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # that resolves to the historical in-tree paths.
 _UPLOAD_DIR = None
 _DOC_INDEX = None
+
+
+def _data_root() -> Path:
+    """The data directory of THIS install, where the document catalog lives
+    (and the uploads' word look-up beside it). Resolved per call."""
+    return Path(resolve_runtime_dir(str(_REPO_ROOT / "data")))
 
 
 def _upload_dir() -> Path:
@@ -93,7 +100,8 @@ def _doc_index() -> Path:
 IMAGE_EXTS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff"})
 PDF_EXTS = frozenset({".pdf"})
 DOC_EXTS = frozenset({".docx", ".doc"})
-TEXT_EXTS = frozenset({".txt", ".md", ".markdown"})
+TEXT_EXTS = frozenset({".txt", ".md", ".markdown", ".rst", ".log", ".json",
+                       ".yaml", ".yml", ".ini", ".cfg", ".conf", ".toml"})
 SHEET_EXTS = frozenset({".xlsx", ".xls", ".csv"})
 
 
@@ -174,7 +182,7 @@ def extract_text_from_image(file_path: str) -> str:
     Returns empty string if OCR is unavailable.
     """
     if not _check_ocr_available():
-        return "[OCR NOT AVAILABLE — install Tesseract OCR to enable image text extraction]"
+        return "[OCR NOT AVAILABLE: install Tesseract OCR to enable image text extraction]"
     try:
         import pytesseract
         from PIL import Image, ImageOps, ImageEnhance
@@ -264,7 +272,7 @@ def extract_text_from_docx(file_path: str) -> str:
         paras = [p.text for p in doc.paragraphs if p.text.strip()]
         return "\n".join(paras)
     except ImportError:
-        return "[python-docx not installed — cannot read .docx files]"
+        return "[python-docx not installed: cannot read .docx files]"
     except Exception as e:
         return f"[docx read error: {e}]"
 
@@ -293,7 +301,7 @@ def extract_text_from_xlsx(file_path: str) -> str:
                     out.append("\t".join(vals))
         return "\n".join(out)
     except ImportError:
-        return "[openpyxl not installed — cannot read .xlsx files]"
+        return "[openpyxl not installed: cannot read .xlsx files]"
     except Exception as e:
         return f"[xlsx read error: {e}]"
 
@@ -361,10 +369,11 @@ def _llm_chat(prompt: str, max_tokens: int = 600, temperature: float = 0.1) -> s
         # and returns EMPTY content. The lever is per family (qwen3 boolean,
         # gpt-oss effort level), so it comes from the shared resolver.
         request.update(_model_options.thinking_control(cfg.ollama.model))
-        resp = requests.post(
+        resp = requests.post(  # lan-egress: Ollama chat for classification, LAN
             f"{cfg.ollama.url}/api/chat",
             json=request,
             timeout=120,
+            proxies=_no_proxies(),
         )
         return resp.json().get("message", {}).get("content", "")
     except Exception as e:
@@ -523,6 +532,7 @@ class IngestionResult:
     pii_detected: bool = False
     pii_summary: str | None = None
     vaulted: bool = False
+    waiting_for_vault: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -537,6 +547,7 @@ class IngestionResult:
             "pii_detected": self.pii_detected,
             "pii_summary": self.pii_summary,
             "vaulted": self.vaulted,
+            "waiting_for_vault": self.waiting_for_vault,
         }
 
 
@@ -557,18 +568,30 @@ def _resolve_shared_vault():
 
     Document/PII vaulting must use the SAME Vault instance the API server
     unlocked, because sessions (and their in-memory encryption keys) are
-    instance-scoped — a fresh ``Vault()`` would see no live session and could
-    never encrypt. Falls back to a fresh Vault only if the app server isn't
-    importable; that instance has no sessions, so vault writes fail closed
+    instance-scoped: a fresh ``Vault()`` would see no live session and could
+    never encrypt. The server hands that instance to the key broker at
+    startup (:func:`puffpai.security.keys.set_vault_provider`), so it is
+    read from the loaded server module or from the key broker. The server
+    module is never imported from here: a command-line run would otherwise
+    start a second copy of the server's module, with its own vault. With no
+    server in this process the answer
+    is a fresh Vault, which has no sessions, so vault writes fail closed
     (locked) rather than writing plaintext.
     """
     try:
-        from puffpai.api_server import _get_vault
-        v = _get_vault()
+        import sys
+        server = sys.modules.get("puffpai.api_server")
+        getter = getattr(server, "_get_vault", None) if server else None
+        if callable(getter):
+            v = getter()
+        else:
+            from puffpai.security import keys
+            v = keys._vault()  # noqa: SLF001 - the app's one Vault, when set
         if v is not None:
             return v
     except Exception as e:  # pragma: no cover - defensive
-        logger.debug("Shared vault unavailable, using fresh instance: %s", e)
+        logger.debug("Shared vault unavailable, using fresh instance: %s",
+                     type(e).__name__)
     from puffpai.security.vault import Vault
     return Vault()
 
@@ -590,6 +613,10 @@ def _resolve_shared_vault():
 #   high/critical       vault ORIGINAL text (encrypted) + append PII record,
 #     (SSN/CC/addr/DOB) index REDACTED text
 #
+# Keys, tokens and passwords (security.secret_detector) are found before the
+# PII scan and are always held in the vault, whatever the severity above; the
+# copy that may be indexed never carries them.
+#
 # Fail-closed invariants (never relaxed):
 #   * vault uninitialized/locked while high/critical PII present  → refuse
 #   * secure write fails                                          → refuse
@@ -607,6 +634,15 @@ _HIGH_CRITICAL_LABELS = {
     'date_of_birth': 'DOB',
 }
 
+# Types whose values are not copied into the vault's list of held details.
+_INDEX_AS_IS_TYPES = frozenset({'name'})
+
+
+def _needs_vault(detection) -> bool:
+    """True when the original must go to the vault and only a redacted copy
+    may be indexed: high/critical PII (see the matrix above)."""
+    return detection.severity in _HIGH_CRITICAL_SEVERITIES
+
 _HIGH_CRITICAL_SEVERITIES = ('high', 'critical')
 
 
@@ -620,6 +656,29 @@ class PiiVaultRefusal(Exception):
     def __init__(self, message: str):
         super().__init__(message)
         self.message = message
+
+
+class VaultWaiting(PiiVaultRefusal):
+    """The text holds a key or a personal detail and the vault is not open.
+
+    Raised only for callers that pass ``hold_when_locked=True`` (the data
+    folder, linked folders, uploads). Nothing was indexed; the values were
+    sealed into the vault's write-only inbox when it could take them
+    (``sealed`` is ``vault_inbox.deposit_status``'s answer), and the caller
+    keeps the item waiting until the vault is opened, then runs it again. A
+    subclass of :class:`PiiVaultRefusal`, so a caller that does not know it
+    still refuses (fail closed)."""
+
+    def __init__(self, message: str, sealed: str = ""):
+        super().__init__(message)
+        self.sealed = sealed
+
+
+#: Plain words for an item that waits for the vault.
+WAITING_TEXT = ("This file has a key, a password or a personal detail in it. "
+                "It is waiting for your vault: open your vault with your PIN "
+                "and it is added by itself, with those details kept in the "
+                "vault.")
 
 
 @dataclass
@@ -677,10 +736,11 @@ def _vault_original_text(
     stem = os.path.splitext(os.path.basename(filename))[0]
     vault_copy_name = f"doc_{file_id}_{stem}.txt"
 
-    # ENCRYPTED write only. store_document_secure returns False when the vault
-    # is locked and raises only on a genuine write error — both fail closed.
+    # ENCRYPTED write only. False when the vault is locked; raises only on a
+    # genuine write error: both fail closed.
     try:
-        stored = active_vault.store_document_secure(vault_copy_name, original_text)
+        stored = _store_original_encrypted(
+            active_vault, vault_copy_name, original_text)
     except Exception as e:  # genuine write error
         logger.warning(
             "Secure vaulting failed for %s — refusing (no plaintext written): %s",
@@ -711,10 +771,138 @@ def _vault_original_text(
         'pii_types': detection.pii_types,
         'summary': detection.summary(),
     }
-    if not active_vault.append_auto_pii(pii_record):
+    if not _append_pii_record(active_vault, pii_record):
         logger.warning(
             "PII log append skipped for %s — vault locked or log unwritable "
             "(document is encrypted; index entry missed)", filename)
+
+
+def _store_original_encrypted(vault, name: str, text: str) -> bool:
+    """Write ``text`` into the vault's encrypted document store.
+
+    Returns False (writes nothing) when the vault is locked. Both vault
+    interfaces are accepted: ``store_document_secure`` (text, returns a
+    bool) and ``store_document`` (bytes), so the fail-closed contract does
+    not depend on which one this build carries.
+    """
+    secure = getattr(vault, 'store_document_secure', None)
+    if callable(secure):
+        return bool(secure(name, text))
+    if not getattr(vault, 'is_unlocked', False):
+        return False
+    vault.store_document(name, text.encode('utf-8'))
+    return True
+
+
+def _append_pii_record(vault, record: dict) -> bool:
+    """Append ``record`` to the vault's list of detected details. Never raises."""
+    legacy = getattr(vault, 'append_auto_pii', None)
+    try:
+        if callable(legacy):
+            return bool(legacy(record))
+        if not getattr(vault, 'is_unlocked', False):
+            return False
+        from puffpai.security.vault_inbox import append_pii_record
+        append_pii_record(vault, record)
+        return True
+    except Exception as e:
+        logger.warning("PII record append failed: %s", type(e).__name__)
+        return False
+
+
+def _captured_values(key_hits, detection) -> dict:
+    """``{kind: [values]}`` for everything that must be held: every key and
+    every personal detail except full names. In memory only, then written
+    encrypted."""
+    held: dict[str, list] = {}
+    for h in key_hits or ():
+        held.setdefault("key:" + h.kind, []).append(
+            {"value": h.value, "line": h.line})
+    if detection is not None and detection.has_pii:
+        for kind, values in detection.items().items():
+            if kind in _INDEX_AS_IS_TYPES:
+                continue
+            held.setdefault(kind, []).extend(values)
+    return held
+
+
+def _kinds(key_hits, detection) -> list:
+    kinds = sorted({"key:" + h.kind for h in key_hits or ()})
+    if detection is not None and detection.has_pii:
+        kinds += [t for t in detection.pii_types if t not in kinds]
+    return kinds
+
+
+def _held_summary(key_hits, detection) -> str:
+    """Kinds and counts only: safe for a log line."""
+    parts = []
+    if key_hits:
+        from puffpai.security import secret_detector
+        parts.append("keys: " + secret_detector.summary(key_hits))
+    if detection is not None and detection.has_pii:
+        parts.append(detection.summary())
+    return "; ".join(parts) or "nothing"
+
+
+def _vault_captured(active_vault, key_hits, detection, *, filename: str,
+                    file_id: str, source_path: str | None, source: str) -> None:
+    """Write the captured values plus a pointer (file, path, line) into the
+    vault, encrypted. FAIL CLOSED like :func:`_vault_original_text`."""
+    if not active_vault.is_initialized:
+        raise PiiVaultRefusal(
+            "This file has a key, a password or a personal detail in it, so I "
+            "did not add it. Set up your vault, then add it again.")
+    payload = json.dumps({
+        "schema": "puffpai_held_values/v1",
+        "filename": filename, "file_id": file_id,
+        "path": source_path or "",
+        "found_at": datetime.now(timezone.utc).isoformat(),
+        "held": _captured_values(key_hits, detection),
+    }, ensure_ascii=False)
+    safe_id = re.sub(r"[^\w.\-]", "_", str(file_id))[:120]
+    try:
+        stored = _store_original_encrypted(
+            active_vault, f"held_{safe_id}.json", payload)
+    except Exception as e:  # genuine write error
+        logger.warning("Holding values in the vault failed for %s: %s",
+                       filename, type(e).__name__)
+        raise PiiVaultRefusal(
+            "This file has a key, a password or a personal detail in it, and I "
+            "could not put those in your vault, so I did not add it.") from e
+    if not stored:
+        raise PiiVaultRefusal(
+            "This file has a key, a password or a personal detail in it, and "
+            "your vault is locked, so I did not add it. Open your vault with "
+            "your PIN, then add it again.")
+    _append_pii_record(active_vault, {
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'source': source, 'filename': filename, 'file_id': file_id,
+        'path': source_path or "",
+        'severity': 'high', 'pii_types': _kinds(key_hits, detection),
+        'summary': _held_summary(key_hits, detection),
+    })
+
+
+def _hold_for_vault(active_vault, key_hits, detection, *, filename: str,
+                    file_id: str, source_path: str | None, source: str):
+    """The vault is not open: seal the captured values into its write-only
+    inbox (no PIN needed) and raise :class:`VaultWaiting`. Never indexes."""
+    status = "no_vault"
+    try:
+        from puffpai.security import vault_inbox
+        status = vault_inbox.deposit_status(active_vault.vault_dir, {
+            "source": source, "filename": filename, "file_id": file_id,
+            "path": source_path or "",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "pii_types": _kinds(key_hits, detection),
+            "held": _captured_values(key_hits, detection),
+        })
+    except Exception as e:  # noqa: BLE001 - the item still waits, unindexed
+        logger.info("Vault inbox did not take %s: %s", filename,
+                    type(e).__name__)
+    logger.info("%s waits for the vault (%s; inbox: %s)", filename,
+                _held_summary(key_hits, detection), status)
+    raise VaultWaiting(WAITING_TEXT, sealed=str(status))
 
 
 def _scrub_uploads_medium_enabled() -> bool:
@@ -794,6 +982,62 @@ def _screen_via_scrub_and_vault(
     )
 
 
+def _screen_keys_then_scrub_and_vault(
+    text: str,
+    filename: str,
+    *,
+    file_id: str,
+    vault,
+    source: str,
+    source_path: str | None,
+    hold_when_locked: bool,
+) -> PiiScreenResult:
+    """The scrub-and-vault path, with keys, tokens and passwords pulled first.
+
+    The scrub-and-vault classifier looks for personal details, not key
+    shapes, so the key detector runs before it here exactly as on the legacy
+    path: the values go to the vault with a pointer (or wait for it, when
+    *hold_when_locked*), and only the key-free text is scrubbed and indexed.
+    Fails closed: a detector crash refuses the text.
+    """
+    try:
+        from puffpai.security import secret_detector
+        keyless, key_hits = secret_detector.redact(text)
+    except Exception as e:
+        logger.warning("Key scan failed for %s; refusing (text not indexed): %s",
+                       filename, type(e).__name__)
+        raise PiiVaultRefusal(
+            "PII scan failed: the document was not indexed. No unscanned "
+            "document is ever stored in plaintext. Try re-uploading.") from e
+    if key_hits:
+        active_vault = vault if vault is not None else _resolve_shared_vault()
+        if hold_when_locked and not (
+                active_vault.is_initialized
+                and getattr(active_vault, "is_unlocked", False)):
+            _hold_for_vault(active_vault, key_hits, None, filename=filename,
+                            file_id=file_id, source_path=source_path,
+                            source=source)
+        _vault_captured(active_vault, key_hits, None, filename=filename,
+                        file_id=file_id, source_path=source_path,
+                        source=source)
+    screened = _screen_via_scrub_and_vault(
+        keyless, filename, file_id=file_id, vault=vault, source=source)
+    if not key_hits:
+        return screened
+    kinds = _kinds(key_hits, None)
+    return PiiScreenResult(
+        text_for_index=screened.text_for_index,
+        pii_detected=True,
+        pii_vaulted=True,
+        pii_types=kinds + [t for t in screened.pii_types if t not in kinds],
+        severity=(screened.severity
+                  if screened.severity in _HIGH_CRITICAL_SEVERITIES else "high"),
+        summary="; ".join(p for p in (
+            _held_summary(key_hits, None),
+            screened.summary if screened.pii_detected else "") if p),
+    )
+
+
 def screen_text_for_pii(
     text: str,
     filename: str,
@@ -801,10 +1045,21 @@ def screen_text_for_pii(
     file_id: str | None = None,
     vault=None,
     source: str = "document_upload",
+    source_path: str | None = None,
+    hold_when_locked: bool = False,
+    keep_original: bool = False,
 ) -> PiiScreenResult:
-    """Scan ``text``; vault + redact high/critical PII, pass everything else
-    through. See the module-level matrix. Returns a :class:`PiiScreenResult`
-    whose ``text_for_index`` is the only text the caller may index.
+    """Scan ``text``; vault + redact keys and high/critical PII, pass
+    everything else through. See the module-level matrix. Returns a
+    :class:`PiiScreenResult` whose ``text_for_index`` is the only text the
+    caller may index.
+
+    Keys, tokens and passwords (:mod:`puffpai.security.secret_detector`) are
+    found first and always held: the searchable copy says ``[held in vault]``
+    and the values go into the vault with a pointer (file name, path, line).
+    ``keep_original`` (a file that stays where the owner keeps it: the data
+    folder, a linked folder) holds only the captured values plus that
+    pointer; otherwise the whole original is vaulted too, as before.
 
     Raises :class:`PiiVaultRefusal` on every fail-closed condition (scan crash,
     vault locked/uninitialized while high/critical PII present, secure-write
@@ -821,8 +1076,8 @@ def screen_text_for_pii(
     if file_id is None:
         file_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
 
-    # NEW (Increment 2, flag-gated, default OFF): unify uploads onto the same
-    # scrub-and-vault contract the chat path uses. Skipped entirely when off.
+    # Flag-gated, default OFF: uploads use the same scrub-and-vault contract
+    # the chat path uses. Skipped entirely when off.
     try:
         from puffpai.security.scrub_and_vault import scrub_and_vault_active
         # Go-live interlock: route uploads through the vaulting choke point only
@@ -832,8 +1087,9 @@ def screen_text_for_pii(
     except Exception:
         _sv_on = False
     if _sv_on:
-        return _screen_via_scrub_and_vault(
-            text, filename, file_id=file_id, vault=vault, source=source)
+        return _screen_keys_then_scrub_and_vault(
+            text, filename, file_id=file_id, vault=vault, source=source,
+            source_path=source_path, hold_when_locked=hold_when_locked)
 
     # ── LEGACY behavior (flag OFF): unchanged ──────────────────────────────
     # FAIL CLOSED around the scan. If the classifier can't run (import failure,
@@ -842,37 +1098,55 @@ def screen_text_for_pii(
     # which skipped on ImportError; the classifier is a hard local dependency
     # and a broken import should be loud, not a silent PII bypass.)
     try:
+        from puffpai.security import secret_detector
+        keyless, key_hits = secret_detector.redact(text)
         from puffpai.security.pii_classifier import PIIClassifier
         classifier = PIIClassifier()
-        redacted, detection = classifier.redact_pii(text)
+        # Keys are already out of ``keyless``, so the redacted copy carries
+        # neither keys nor the personal details the classifier finds.
+        redacted, detection = classifier.redact_pii(keyless)
     except Exception as e:
         logger.warning(
             "PII scan failed for %s — refusing (text not indexed): %s",
-            filename, e)
+            filename, type(e).__name__)
         raise PiiVaultRefusal(
             "PII scan failed — the document was not indexed. No unscanned "
             "document is ever stored in plaintext. Try re-uploading."
         ) from e
 
-    if not detection.has_pii:
+    if not key_hits and not detection.has_pii:
         return PiiScreenResult(text_for_index=text)
 
-    if detection.severity in _HIGH_CRITICAL_SEVERITIES:
-        # Vault the ORIGINAL (raises PiiVaultRefusal if it can't be secured),
-        # then index only the REDACTED text.
-        _vault_original_text(
-            text, detection,
-            filename=filename, file_id=file_id, vault=vault, source=source)
-        logger.info(
-            "PII in %s: %s — original vaulted, redacted copy indexed",
-            filename, detection.summary())
+    pii_vault = detection.has_pii and _needs_vault(detection)
+    if key_hits or pii_vault:
+        active_vault = vault if vault is not None else _resolve_shared_vault()
+        held_pii = detection if pii_vault else None
+        if hold_when_locked and not (
+                active_vault.is_initialized
+                and getattr(active_vault, "is_unlocked", False)):
+            _hold_for_vault(active_vault, key_hits, held_pii,
+                            filename=filename, file_id=file_id,
+                            source_path=source_path, source=source)
+        if pii_vault and not keep_original:
+            # Vault the ORIGINAL (raises PiiVaultRefusal if it can't be
+            # secured), then index only the REDACTED text.
+            _vault_original_text(
+                text, detection,
+                filename=filename, file_id=file_id, vault=active_vault,
+                source=source)
+        if key_hits or keep_original:
+            _vault_captured(active_vault, key_hits, held_pii,
+                            filename=filename, file_id=file_id,
+                            source_path=source_path, source=source)
+        logger.info("Held in the vault for %s: %s; redacted copy indexed",
+                    filename, _held_summary(key_hits, held_pii))
         return PiiScreenResult(
-            text_for_index=redacted,
+            text_for_index=redacted if pii_vault else keyless,
             pii_detected=True,
             pii_vaulted=True,
-            pii_types=detection.pii_types,
-            severity=detection.severity,
-            summary=detection.summary(),
+            pii_types=_kinds(key_hits, detection),
+            severity=detection.severity if pii_vault else "high",
+            summary=_held_summary(key_hits, detection),
         )
 
     # Medium/low only (email/phone/name): index as-is, no vault — redacting
@@ -894,6 +1168,10 @@ def ingest_file(
     auto_apply: bool = True,
     *,
     vault=None,
+    file_id: str | None = None,
+    keep_original: bool = False,
+    hold_when_locked: bool = False,
+    source: str = "document_upload",
 ) -> IngestionResult:
     """End-to-end pipeline: extract text, classify, parse, route to apps.
 
@@ -914,7 +1192,11 @@ def ingest_file(
         IngestionResult with the final state.
     """
     filename = original_filename or os.path.basename(file_path)
-    file_id = os.path.basename(file_path)
+    # ``keep_original``: the file is the owner's, where the owner keeps it (the data
+    # folder, a linked folder). It is read, never changed, moved or removed.
+    # ``hold_when_locked``: a closed vault makes it wait, unindexed, instead
+    # of refusing it.
+    file_id = file_id or os.path.basename(file_path)
     result = IngestionResult(
         file_id=file_id,
         filename=filename,
@@ -950,7 +1232,10 @@ def ingest_file(
         def _remove_staging():
             # Best-effort: delete the unencrypted staging copy so the plaintext
             # original does not linger in /uploads once its sensitive values
-            # live only in the vault (or the upload is refused).
+            # live only in the vault (or the upload is refused). Never the
+            # owner's own file.
+            if keep_original:
+                return
             try:
                 staging = Path(file_path)
                 if staging.exists():
@@ -961,13 +1246,23 @@ def ingest_file(
         try:
             screen = screen_text_for_pii(
                 text, filename, file_id=file_id, vault=vault,
-                source="document_upload")
+                source=source, source_path=file_path,
+                hold_when_locked=hold_when_locked,
+                keep_original=keep_original)
+        except VaultWaiting as waiting:
+            # Not refused and not indexed: it waits for the vault. The file
+            # stays where it is; knowledge/my_data.py runs it again once the
+            # vault is open.
+            result.pii_detected = True
+            result.waiting_for_vault = True
+            result.actions_taken.append(waiting.message)
+            return result
         except PiiVaultRefusal as refusal:
             # FAIL CLOSED: high/critical PII that could not be secured, or a
             # scan crash. Index NOTHING; remove the plaintext staging copy.
             result.pii_detected = True
             result.error = refusal.message
-            result.actions_taken.append(f"⚠️ Upload refused — {refusal.message}")
+            result.actions_taken.append(f"⚠️ Upload refused: {refusal.message}")
             _remove_staging()
             return result
 
@@ -977,7 +1272,7 @@ def ingest_file(
         if screen.pii_vaulted:
             result.vaulted = True
             result.actions_taken.append(
-                f"⚠️ PII detected ({screen.summary}) — sensitive values secured "
+                f"⚠️ PII detected ({screen.summary}): sensitive values secured "
                 f"in Zone 1 Vault; a redacted copy is indexed and searchable."
             )
             # The original (unredacted) staging copy must not linger as
@@ -1017,11 +1312,22 @@ def ingest_file(
         # propagate to the outer handler so `result.error` is set honestly.
         _index_study_doc(file_id, filename, text, classification=classification)
 
-        # Parse + (optionally) apply
+        # Parse + (optionally) apply. A first app that is turned off
+        # (puffpai.first_apps) gets nothing written; the line says so.
+        def _app_on(app_id: str) -> bool:
+            try:
+                from puffpai import first_apps
+                if first_apps.is_off(app_id):
+                    result.actions_taken.append(first_apps.turned_off_line(app_id))
+                    return False
+            except Exception:  # noqa: BLE001 - the check never stops an upload
+                pass
+            return True
+
         if classification == "recipe":
             parsed = parse_recipe(text)
             result.structured_data = parsed
-            if auto_apply and parsed:
+            if auto_apply and parsed and _app_on("freshtable"):
                 from puffpai.app_data import AppData
                 app = AppData()
                 app.fresh_create_recipe(
@@ -1034,7 +1340,7 @@ def ingest_file(
         elif classification == "event":
             parsed = parse_event(text)
             result.structured_data = parsed
-            if auto_apply and parsed:
+            if auto_apply and parsed and _app_on("calendar"):
                 from puffpai.app_data import AppData
                 app = AppData()
                 app.cal_add_event(
@@ -1047,7 +1353,7 @@ def ingest_file(
         elif classification == "schedule":
             events = parse_schedule(text)
             result.structured_data = {"events": events}
-            if auto_apply and events:
+            if auto_apply and events and _app_on("calendar"):
                 from puffpai.app_data import AppData
                 app = AppData()
                 for ev in events:
@@ -1075,7 +1381,7 @@ def ingest_file(
             # Parse line-by-line for items
             items = _parse_shopping_lines(text)
             result.structured_data = {"items": items}
-            if auto_apply and items:
+            if auto_apply and items and _app_on("freshtable"):
                 from puffpai.app_data import AppData
                 app = AppData()
                 for item in items:
@@ -1262,6 +1568,9 @@ def get_or_create_upload_collection(
     # and report a confusing race-condition error instead of the true cause.
 
     ef = embedding_function or _get_upload_embedder()
+    if ef is None:
+        from puffpai.knowledge.reading_helper import HelperMissing
+        raise HelperMissing()
     metadata = {"hnsw:space": "cosine"}
     if extra_metadata:
         metadata.update(extra_metadata)
@@ -1298,24 +1607,40 @@ def _get_user_uploads_collection():
 
 def _add_to_user_uploads_collection(
     file_id: str, filename: str, text: str, classification: str
-):
-    """Chunk text and add it to the user_uploads ChromaDB collection.
+) -> str:
+    """Chunk text into the uploads' word look-up, then the ChromaDB collection.
 
-    First removes any existing chunks for this file_id (so re-uploads
-    update cleanly), then adds the new chunks. Raises on any failure so the
-    caller can report the upload as failed rather than falsely "indexed".
+    The word look-up (:mod:`puffpai.knowledge.upload_search`) is the quick
+    stage every upload gets; a failure there raises, so the upload is never
+    reported searchable when it is not. The meaning look-up in ChromaDB is
+    added on top when the reading helper is on this computer. Without the
+    helper, or if the store will not take it, the upload still answers by its
+    own words: it is never refused for that. Returns ``"both"`` or ``"words"``.
     """
-    collection = _get_user_uploads_collection()
-
-    # Remove old chunks for this file (idempotent re-upload). A delete of a
-    # non-existent file_id is a no-op, but a real failure here should surface.
-    collection.delete(where={"file_id": file_id})
-
     chunks = _chunk_text(text)
     if not chunks:
         raise RuntimeError(
             f"No indexable text chunks produced for {filename}"
         )
+    from puffpai.knowledge import upload_search
+    upload_search.add(file_id, filename, chunks)
+    try:
+        _add_upload_meaning(file_id, filename, chunks, classification)
+    except Exception as e:  # noqa: BLE001 - the words already answer
+        logger.info("Upload %s answers by its words only for now: %s",
+                    filename, e)
+        return "words"
+    return "both"
+
+
+def _add_upload_meaning(file_id: str, filename: str, chunks: list[str],
+                        classification: str) -> None:
+    """The ChromaDB half of an upload. Raises when it could not be stored."""
+    collection = _get_user_uploads_collection()
+
+    # Remove old chunks for this file (idempotent re-upload). A delete of a
+    # non-existent file_id is a no-op, but a real failure here should surface.
+    collection.delete(where={"file_id": file_id})
 
     ids = [f"{file_id}_chunk_{i}" for i in range(len(chunks))]
     indexed_at = datetime.now().isoformat()
@@ -1354,7 +1679,13 @@ def _add_to_user_uploads_collection(
 
 
 def _delete_from_user_uploads_collection(file_id: str):
-    """Remove all chunks belonging to a file from the user_uploads collection."""
+    """Remove all chunks belonging to a file from the user_uploads collection
+    and from the uploads' word look-up."""
+    try:
+        from puffpai.knowledge import upload_search
+        upload_search.remove(file_id)
+    except Exception as e:
+        logger.warning("Word look-up delete failed for %s: %s", file_id, e)
     try:
         collection = _get_user_uploads_collection()
         collection.delete(where={"file_id": file_id})
@@ -1368,8 +1699,17 @@ def query_user_uploads(query: str, n_results: int = 5) -> list[dict]:
 
     Returns a list of {filename, classification, snippet, score, file_id}
     dicts, one per matching chunk, sorted by relevance.
+
+    The uploads' word look-up is merged in (one row per passage), so an
+    upload answers by its own words even with no reading helper. A word hit
+    carries ``distance = 1 - relevance`` in cosine space, which the chat's
+    relevance maths turns back into the same number.
     """
+    from puffpai.knowledge import upload_search
+    words = upload_search.search(query, n=max(1, min(n_results, 20)))
     try:
+        if _get_upload_embedder() is None:  # no reading helper: words only
+            return _upload_word_rows(words, [])
         collection = _get_user_uploads_collection()
         # query_embeddings=, not query_texts= — this runs on the main chat RAG
         # path (api_server._get_rag_context). The write side embeds these
@@ -1381,14 +1721,14 @@ def query_user_uploads(query: str, n_results: int = 5) -> list[dict]:
         )
     except Exception as e:
         logger.warning("ChromaDB query failed: %s", e)
-        return []
+        return _upload_word_rows(words, [])
 
     # Expose the collection's distance space so callers can normalize
     # distances to a comparable relevance score (l2 is squared, cosine is not).
     space = (collection.metadata or {}).get("hnsw:space", "l2")
 
     if not results or not results.get("documents"):
-        return []
+        return _upload_word_rows(words, [])
 
     docs = results["documents"][0] if results["documents"] else []
     metas = results["metadatas"][0] if results.get("metadatas") else []
@@ -1408,7 +1748,40 @@ def query_user_uploads(query: str, n_results: int = 5) -> list[dict]:
             "space": space,
             "chunk_index": meta.get("chunk_index", 0),
         })
-    return out
+    return _upload_word_rows(words, out)
+
+
+def _upload_word_rows(words: list[dict], vector_rows: list[dict]) -> list[dict]:
+    """Vector rows plus word rows, one row per (file, passage), best first."""
+    seen = {(r.get("file_id"), int(r.get("chunk_index") or 0)): r for r in vector_rows}
+    catalog: dict = {}
+    for hit in words:
+        key = (hit["file_id"], int(hit["chunk_index"]))
+        rel = float(hit["relevance"])
+        if key in seen:
+            row = seen[key]
+            if rel > row.get("score", 0):
+                row["score"] = round(rel, 3)
+                row["distance"], row["space"] = 1.0 - rel, "cosine"
+            continue
+        if not catalog:
+            catalog = {e.get("id"): e for e in _read_catalog()}
+        meta = catalog.get(hit["file_id"], {})
+        seen[key] = {"file_id": hit["file_id"], "filename": hit["filename"],
+                     "classification": meta.get("classification", "unknown"),
+                     "snippet": hit["snippet"], "score": round(rel, 3),
+                     "distance": 1.0 - rel, "space": "cosine",
+                     "chunk_index": int(hit["chunk_index"])}
+    return sorted(seen.values(), key=lambda r: r.get("score", 0), reverse=True)
+
+
+def _read_catalog() -> list[dict]:
+    try:
+        with open(_doc_index(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def reindex_all_uploads():
@@ -1631,15 +2004,17 @@ def set_doc_title(doc_id: str, title: str) -> bool:
     return True
 
 
-def delete_ingested_doc(doc_id: str) -> bool:
-    """Remove an indexed document by ID — from JSON catalog, ChromaDB,
-    AND the uploads directory on disk.
+def _delete_doc(doc_id: str) -> dict:
+    """Remove an indexed document by ID: from the JSON catalog, ChromaDB, the
+    uploads directory, and an upload kept in My files (never a linked folder:
+    :mod:`puffpai.knowledge.my_data`). ``{found, catalog_removed,
+    file_removed}``.
 
     Some documents only exist as chunks in the user_uploads ChromaDB
     collection (an "index-only" row, e.g. surfaced by
     upload_index.all_uploaded_docs) with no entry in the JSON catalog.
-    For those, fall through to a Chroma-only delete rather than returning
-    False just because the catalog has nothing to remove.
+    For those, fall through to a Chroma-only delete rather than reporting
+    nothing found just because the catalog has nothing to remove.
     """
     doc_index = _doc_index()
     index = []
@@ -1658,9 +2033,8 @@ def delete_ingested_doc(doc_id: str) -> bool:
         with open(doc_index, "w", encoding="utf-8") as f:
             json.dump(new_index, f, indent=2, ensure_ascii=False)
     else:
-        # Not in the catalog — only proceed if there are actually chunks
-        # for this id in the collection, so an unknown id still returns
-        # False.
+        # Not in the catalog: only proceed if there are actually chunks for
+        # this id in the collection, so an unknown id still finds nothing.
         try:
             collection = _get_user_uploads_collection()
             found = collection.get(where={"file_id": doc_id}, limit=1)
@@ -1668,7 +2042,8 @@ def delete_ingested_doc(doc_id: str) -> bool:
         except Exception:
             has_chunks = False
         if not has_chunks:
-            return False
+            return {"found": False, "catalog_removed": False,
+                    "file_removed": False}
 
     # Remove all chunks from ChromaDB
     try:
@@ -1676,11 +2051,36 @@ def delete_ingested_doc(doc_id: str) -> bool:
     except Exception:
         pass
 
-    # Also try to remove the file from uploads dir
+    # The uploaded file: the uploads dir, and an upload kept in My files.
+    file_removed = True
     try:
         upload_path = _upload_dir() / doc_id
         if upload_path.exists():
             upload_path.unlink()
     except Exception:
-        pass
-    return True
+        file_removed = False
+    try:
+        from puffpai.knowledge import my_data
+        my_data.remove_upload_file(doc_id)
+    except Exception:
+        file_removed = False
+    return {"found": True, "catalog_removed": catalog_hit,
+            "file_removed": file_removed}
+
+
+def delete_ingested_doc(doc_id: str) -> bool:
+    """Remove an indexed document by ID (see :func:`_delete_doc`). False only
+    for an id nothing was indexed under."""
+    return bool(_delete_doc(doc_id)["found"])
+
+
+def delete_ingested_doc_report(doc_id: str) -> dict:
+    """:func:`delete_ingested_doc` with a short report: ``{"ok", "doc_id",
+    "catalog_removed", "file_removed", "reason"}``. ``ok`` is False only for
+    an id nothing was indexed under."""
+    done = _delete_doc(doc_id)
+    ok = bool(done["found"])
+    return {"ok": ok, "doc_id": doc_id,
+            "catalog_removed": done["catalog_removed"],
+            "file_removed": done["file_removed"],
+            "reason": "Deleted." if ok else "No indexed document has that id."}

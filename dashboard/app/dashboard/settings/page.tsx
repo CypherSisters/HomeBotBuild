@@ -29,6 +29,8 @@ import HatchCard from "./HatchCard";
 import SkillsCapabilityCard from "./SkillsCapabilityCard";
 import HomePointCard from "./HomePointCard";
 import PairedDevicesCard from "./PairedDevicesCard";
+import HomeAssistantConnect from "../../_components/HomeAssistantConnect";
+import ToolsmithModelCard from "./ToolsmithModelCard";
 import { useAppDispatch, useAppSelector } from "@/app/_stores/hooks";
 import { fetchSystemStatus } from "@/app/_stores/systemSlice";
 import { getFirewallStatus } from "@/app/_lib/services/firewallService";
@@ -650,6 +652,13 @@ export default function SettingsPage() {
               is discarded every 2 seconds unless PuffPAI hears its name.
             </div>
           </div>
+
+          {/* Home Assistant: connect the owner's own, or change its address or token. */}
+          <HomeAssistantConnect />
+
+          {/* Toolsmith's model: this computer by default; a cloud model only
+              if the owner adds one, with its key kept in the Vault. */}
+          <ToolsmithModelCard />
 
           {/* Home point: where the house is. Set once here, kept on the box,
               never shown back. Weather, alerts and directions read it. */}

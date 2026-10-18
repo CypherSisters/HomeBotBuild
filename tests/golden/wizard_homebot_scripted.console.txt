@@ -1,0 +1,98 @@
+============================================================
+  Welcome to HomeBot v<version>
+  Privacy-first, local-first household AI setup wizard
+============================================================
+
+
+Checking this computer...
+
+
+Let's see what we're working with here
+--------------------------------------
+Before any questions, here is what HomeBot found on this computer. Nothing has been downloaded or
+changed.
+
+  Memory: 32 GB
+  Processor: Golden Reference CPU, 8 cores
+  Graphics card: none, so the processor does the thinking
+  Free disk space: 200 GB free of 500 GB
+  The internet: not reachable, so nothing is downloaded while we build
+  Ollama: not answering at http://localhost:11434 yet. It is the free program that runs the thinking
+    model, and your bot needs it running to think.
+
+The thinking model I recommend for this computer: gpt-oss:20b, download size not known.
+  The internet is not reachable, so it cannot be downloaded now. This build cannot tell how much
+  memory it needs.
+  Good for: quick answers, one simple request at a time.
+
+  Press Enter to go on.
+  >
+
+  gpt-oss:20b is not on this computer yet.
+  Downloading it switches on one outside service, Model downloads, for this
+  download only. It goes back off when the download ends. Nothing else is
+  switched on.
+  Download it when the build starts? [y/N]
+  Without it, HomeBot cannot answer yet. The last screen of setup shows how to
+  download it later.
+
+Your private stuff
+------------------
+What this is: HomeBot keeps your private things in a locked vault on this computer. You choose the
+  PIN. It never leaves this computer and is never saved as plain text.
+Where it lives:
+  <data>/vault_data
+
+Choose a vault PIN
+  Use at least 10 digits, or a mix of letters and numbers. Easy ones like 1234567890 are turned
+  down.
+  What you type stays hidden. Press Enter to skip.
+
+Type the same PIN again
+  Both have to match, or no vault is made.
+  What you type stays hidden. Press Enter to skip.
+
+
+Connect your Home Assistant
+---------------------------
+  Optional. If you run Home Assistant, HomeBot can work your lights, switches
+  and sensors through it. Press Enter to skip; you can connect it later on the
+  Smart Home page or in Settings.
+  Skipped. Everything else works the same. Connect it later on
+  the Smart Home page or in Settings.
+
+Now building HomeBot. Big downloads can take a while; leave this window open.
+
+
+What was built
+--------------
+  Your bot: HomeBot
+  This computer: 32 GB of memory
+  Its brain: gpt-oss:20b
+  Helpers: the main team, and up to 5 more for bigger jobs
+  Built without the internet. While it runs, it may use only the outside services you switch on, and none is switched on yet.
+  Pages it will have: every page.
+
+How to start it
+---------------
+Start it with puffpai start; 3 things are still missing.
+Where this build got to: Setup finished, but it is not ready yet: the brain is missing. This build
+  is set to use 'gpt-oss:20b', which is not on Ollama at http://localhost:11434 yet. Do this first,
+  because nothing else can answer until it is done: ollama pull gpt-oss:20b
+Open your bot: puffpai start
+It opens: http://127.0.0.1:3003/ in your web browser
+Let your first device in: the first time, a phone or laptop asks for a pairing code; puffpai pair
+  prints it on this computer.
+Your bot says: Hi! I'm HomeBot. Ask me anything, or ask "what can you do?" to see everything I have
+  for you.
+Proof it works: Of 5 checks: 2 passed, 1 found something missing, 2 did not apply to this build.
+  Once it is running, ask it to prove itself: puffpai prove
+Still to do: An outside service is switched on that this build did not record. the settings have
+  web_fetch, web_search switched on and the plan does not
+  To fix it, run: puffpai setup
+Still to do: The brain this build needs is not downloaded. 'gpt-oss:20b' is not on Ollama at
+  http://localhost:11434 yet.
+  To fix it, run: ollama pull gpt-oss:20b
+Still to do: Knowledge setup was skipped. No source was offered and none was chosen, so this build
+  has only its base model and whatever is already in its knowledge folder.
+  To fix it, run: puffpai setup

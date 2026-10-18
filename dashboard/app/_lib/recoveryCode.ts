@@ -56,7 +56,7 @@ export function recoveryCodeMatches(shown: string, typed: string): boolean {
 /** The one line the CLI wizard uses when a typed-back code is wrong. */
 export const RECOVERY_CONFIRM_FAILED =
   "That does not match the code on the screen. Check what you wrote down and " +
-  "try it again — this is exactly the mistake it is better to catch now.";
+  "try it again. This is exactly the mistake it is better to catch now.";
 
 /** Said plainly when an owner takes the escape hatch. */
 export const RECOVERY_NOT_CONFIRMED =

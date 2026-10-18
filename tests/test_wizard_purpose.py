@@ -99,19 +99,25 @@ def _settled(value, path):
 # -- propose ------------------------------------------------------------------
 
 def test_propose_returns_two_cards_that_validate_and_write_nothing(fresh):
+    """The engine splits the first card in two: goal first, then the name and
+    the age, then the place. Every card validates and none writes."""
     module, package = _module()
-    assert module.PARTS == ("identity", "place")
+    assert module.PARTS == ("goal", "identity", "place")
     args = _args(name="GardenBot", goal=GOAL, scaffold=True)
-    ctx = _ctx(package, args=args)
-    identity = cards.validate_card(module.propose(ctx)["card"])
+    ctx = _ctx(package, args=args, part="goal")
+    goal = cards.validate_card(module.propose(ctx)["card"])
+    identity = cards.validate_card(module.propose(
+        _ctx(package, args=args, part="identity"))["card"])
     place = cards.validate_card(module.propose(
         _ctx(package, args=args, part="place"))["card"])
 
-    for card in (identity, place):
+    for card in (goal, identity, place):
         assert card["skill"] == "purpose" and card["section"] == "persona"
         assert card["estimate"]["bytes"] == 0
-    assert identity["part"] == "identity" and place["part"] == "place"
-    assert {f["id"] for f in identity["fields"]} >= {"name", "goal"}
+    assert goal["part"] == "goal" and identity["part"] == "identity"
+    assert place["part"] == "place"
+    assert {f["id"] for f in goal["fields"]} == {"goal"}
+    assert {f["id"] for f in identity["fields"]} == {"name", "age"}
     assert {f["id"] for f in place["fields"]} >= {"scaffold", "id", "lists"}
     assert ctx._sections == {}, "propose wrote a section"
     assert persona_scaffold.scaffolded_ids() == [], "propose scaffolded"
@@ -144,26 +150,30 @@ def test_the_identity_card_reproposes_from_what_was_applied(fresh):
     """The propose rule: an applied answer is what the card shows next time."""
     module, package = _module()
     sections: dict = {}
-    ctx = _ctx(package, args=_args(), sections=sections)
+    ctx = _ctx(package, args=_args(), sections=sections, part="goal")
     ctx.proposal = module.propose(ctx)
-    assert "no goal given yet" in ctx.proposal["card"]["decided"]
-    sections["persona"] = module.apply(
-        ctx, {"name": "Stargazer", "goal": SPACE_GOAL})["data"]
+    assert ctx.proposal["card"]["part"] == "goal"
+    assert ctx.proposal["card"]["decided"] == ""
+    sections["persona"] = module.apply(ctx, {"goal": SPACE_GOAL})["data"]
+    named = _ctx(package, args=_args(), sections=sections, part="identity")
+    named.proposal = module.propose(named)
+    sections["persona"].update(module.apply(named, {"name": "Stargazer"})["data"])
 
+    goal = cards.validate_card(module.propose(
+        _ctx(package, args=_args(), sections=sections, part="goal"))["card"])
     again = cards.validate_card(module.propose(
-        _ctx(package, args=_args(), sections=sections))["card"])
-    shown = {f["id"]: f for f in again["fields"]}
-    assert shown["name"]["current"] == "Stargazer"
-    assert shown["goal"]["current"] == SPACE_GOAL
-    assert "unnamed" not in again["decided"]
-    assert "no goal given yet" not in again["decided"]
+        _ctx(package, args=_args(), sections=sections, part="identity"))["card"])
+    assert {f["id"]: f for f in goal["fields"]}["goal"]["current"] == SPACE_GOAL
+    assert {f["id"]: f for f in again["fields"]}["name"]["current"] == "Stargazer"
+    assert again["decided"] == "Stargazer"
 
 
 def test_a_card_with_no_goal_says_it_needs_you(fresh):
     module, package = _module()
-    card = cards.validate_card(module.propose(_ctx(package))["card"])
+    card = cards.validate_card(module.propose(_ctx(package, part="goal"))["card"])
+    assert card["part"] == "goal"
     assert card["status"] == "needs_you"
-    assert {f["id"] for f in card["fields"]} >= {"name", "goal"}
+    assert {f["id"] for f in card["fields"]} == {"goal"}
 
 
 def test_a_goal_that_matches_everything_still_draws_one_screen(fresh):
@@ -353,7 +363,7 @@ def test_the_scaffold_is_not_made_when_the_owner_says_no(fresh):
     gap = result["gaps"][0]
     assert gap["fix"] == {"kind": "command", "id": "setup.scaffold", "args": {}}
     from puffpai.wizard import fixes
-    assert fixes.render(gap["fix"]) == "puffpai setup --scaffold"
+    assert fixes.render(gap["fix"]) == "puffpai setup --own-place"
 
 
 def test_the_goal_is_recorded_where_the_model_reads_it_without_a_scaffold(fresh):
@@ -435,7 +445,9 @@ def test_the_runner_walks_both_cards_and_records_what_it_showed(fresh):
     run = wizard_runner.Runner(
         args=_args(name="GardenBot", goal=GOAL, scaffold=True),
         cfg=get_config(), non_interactive=True,
-        schedule=(wizard_runner.Step("purpose.identity", "purpose",
+        schedule=(wizard_runner.Step("purpose.goal", "purpose",
+                                     f"{wizard_runner.V2_PART}:goal"),
+                  wizard_runner.Step("purpose.identity", "purpose",
                                      f"{wizard_runner.V2_PART}:identity"),
                   wizard_runner.Step("purpose.place", "purpose",
                                      f"{wizard_runner.V2_PART}:place")),
@@ -444,9 +456,11 @@ def test_the_runner_walks_both_cards_and_records_what_it_showed(fresh):
 
     assert run.sections["persona"]["bot_name"] == "GardenBot"
     assert run.sections["persona"]["persona"]["app"] == "greenhouse"
-    identity, place = run.log[0], run.log[-1]
-    assert [row["outcome"] for row in (identity, place)] == ["done", "done"]
-    assert identity["shown"]["title"] == "What it is and what it is for"
+    goal, identity, place = run.log[0], run.log[1], run.log[-1]
+    assert [row["outcome"] for row in (goal, identity, place)] == [
+        "done", "done", "done"]
+    assert goal["shown"]["title"] == "Your bot"
+    assert identity["shown"]["title"] == "Its name"
     assert place["shown"]["title"] == "A place of its own"
     assert place["changed"] == {"id": "greenhouse"}
     assert place["verified"]["status"] == "pass"

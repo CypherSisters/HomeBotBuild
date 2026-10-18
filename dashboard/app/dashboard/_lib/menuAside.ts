@@ -23,6 +23,10 @@ import {
   mdiHeartPulse,
   mdiLan,
   mdiDirections,
+  mdiViewGridOutline,
+  mdiKeyVariant,
+  mdiPlusCircleOutline,
+  mdiCodeBraces,
 } from "@mdi/js";
 import { MenuAsideItem } from "../../_interfaces";
 
@@ -85,6 +89,16 @@ const menuAside: MenuAsideItem[] = [
     railGroup: "secondary",
   },
   {
+    // Find more after the build: skills, tools and apps others built, books,
+    // live cards. The page's own title says "Add to <bot>". Every build has
+    // it (no surface mapping).
+    href: "/dashboard/add",
+    label: "Find more",
+    icon: mdiPlusCircleOutline,
+    msIcon: "add_circle",
+    railGroup: "secondary",
+  },
+  {
     href: "/dashboard/vault",
     label: "Vault",
     icon: mdiShieldLock,
@@ -133,8 +147,29 @@ const menuAside: MenuAsideItem[] = [
     msIcon: "shield",
     railGroup: "secondary",
   },
+  {
+    // Free sign-up keys: the steps to get one, a hidden box to paste it into
+    // (it goes straight into the vault), and each key's state. No surface
+    // mapping on purpose: every build can add a key.
+    href: "/dashboard/keys",
+    label: "Sign-up keys",
+    icon: mdiKeyVariant,
+    msIcon: "key",
+    railGroup: "secondary",
+  },
 
   /* ── Settings (bottom, above the security-zone card) ── */
+  {
+    // The Developer area: the vault, the brain and the Bridge, each with the
+    // terminal commands for it. Always shown;
+    // changes still need a paired device, and vault changes the PIN. No
+    // surface mapping on purpose: every build has it.
+    href: "/dashboard/developer",
+    label: "Developer",
+    icon: mdiCodeBraces,
+    msIcon: "code",
+    railGroup: "settings",
+  },
   {
     href: "/dashboard/settings",
     label: "Settings",
@@ -185,8 +220,12 @@ const menuAside: MenuAsideItem[] = [
     icon: mdiDirections,
   },
   {
+    // The submenu keeps its own href so /dashboard/apps, the index, is a real
+    // destination, findable by typing "apps". It lists the built-in apps and
+    // every app the build installed.
     label: "Apps",
-    icon: mdiCog,
+    href: "/dashboard/apps",
+    icon: mdiViewGridOutline,
     menu: [
       {
         label: "AlarmFlow",

@@ -424,6 +424,53 @@ def validated_addresses(host: str, port: int = DEFAULT_PORT, *,
     return tuple(addresses)
 
 
+def is_local_name(host) -> bool:
+    """True for a multicast-DNS name (``homeassistant.local``), never for an
+    address."""
+    name = str(host or "").strip().rstrip(".").lower()
+    return (name.endswith(".local") and len(name) > len(".local")
+            and parse(name) is None)
+
+
+def is_house_answer(address) -> bool:
+    """May a ``.local`` name's answer *address* be connected to? Only what
+    :data:`HOUSE` allows: private, unique-local or loopback. Link-local is
+    not one (169.254.x.x is a cloud machine's instance data, and the home
+    network guard, ``lan_guard``, refuses fe80::/10 too). Never raises; an
+    address it cannot read is not one."""
+    try:
+        return classify(address) in _HOUSE_ALLOWED
+    except UnparseableAddress:
+        return False
+
+
+def house_addresses(host: str, port: int = DEFAULT_PORT, *,
+                    resolver=None) -> tuple[str, ...]:
+    """The addresses inside this house that *host* answers with.
+
+    Any name but a ``.local`` one: :func:`validated_addresses` under
+    :data:`HOUSE`, every answer must be inside the house. A ``.local`` name
+    (multicast DNS) may also answer with addresses outside the house: on an
+    IPv6 home the device has a global (and a link-local) address next to its
+    private one. Those answers are dropped and only the inside ones (private,
+    unique-local, loopback: :func:`is_house_answer`) are returned, so a
+    connection pinned to them never reaches the others. With no inside answer
+    at all it is refused exactly as before.
+    """
+    if not is_local_name(host):
+        return validated_addresses(host, port, posture=HOUSE, resolver=resolver)
+    resolve = resolver or default_resolver
+    addresses = list(resolve(host, port) or [])
+    if not addresses:
+        raise ResolutionError(f"cannot resolve {host!r} (no addresses)")
+    kept = [address for address in addresses if is_house_answer(address)]
+    if kept:
+        return tuple(kept)
+    for address in addresses:
+        check(address, posture=HOUSE, host=host)
+    raise AddressRefused("public", describe("public"), host, "")
+
+
 # ── pinning ──────────────────────────────────────────────────────────────────
 
 def _pinned_adapter_classes(policy):
@@ -539,17 +586,23 @@ def make_pinned_adapter(policy):
     return adapter
 
 
-def pinned_session(*, posture: str = PUBLIC, resolver=None):
+def pinned_session(*, posture: str = PUBLIC, resolver=None,
+                   local_names: bool = False):
     """A ``requests.Session`` that can only connect to validated addresses.
 
     The caller still validates before it calls: this exists to close the window
     *between* that check and the socket, not to replace it. Refusing here is the
     rebinding case, and it is the reason the check cannot simply be "look it up
     once and trust the client to look it up the same way".
+
+    *local_names* (only with :data:`HOUSE`): a ``.local`` name connects only
+    to its inside-the-house answers (:func:`house_addresses`).
     """
     import requests
 
     def policy(host: str, port: int) -> tuple[str, ...]:
+        if local_names and posture == HOUSE:
+            return house_addresses(host, port, resolver=resolver)
         return validated_addresses(host, port, posture=posture,
                                    resolver=resolver)
 
@@ -667,6 +720,9 @@ __all__ = [
     "classify",
     "default_resolver",
     "describe",
+    "house_addresses",
+    "is_house_answer",
+    "is_local_name",
     "make_pinned_adapter",
     "parse",
     "pinned_session",

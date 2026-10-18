@@ -2,7 +2,7 @@
 PuffPAI Multi-Format File Processor — Extract text from various file types.
 
 Supports: .txt, .md, .json, .pdf, .docx, .doc, .pptx, .csv, .xlsx, .html,
-          .jpg, .jpeg, .png, .gif, .bmp, .tiff, .heic, .heif (OCR), .rtf
+          .jpg, .jpeg, .png, .gif, .bmp, .tiff, .heic, .heif (OCR), .rtf, .epub
 
     from puffpai.file_processor import extract_text, SUPPORTED_EXTENSIONS
 
@@ -18,6 +18,7 @@ import io
 import json
 import logging
 import os
+from html.parser import HTMLParser
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ TEXT_EXTENSIONS = {'.txt', '.md', '.log', '.ini', '.cfg', '.yaml', '.yml',
                    '.toml', '.xml', '.py', '.js', '.html', '.css', '.sh',
                    '.bat', '.ps1', '.env'}
 
-DOCUMENT_EXTENSIONS = {'.pdf', '.docx', '.doc', '.pptx', '.rtf', '.odt'}
+DOCUMENT_EXTENSIONS = {'.pdf', '.docx', '.doc', '.pptx', '.rtf', '.odt', '.epub'}
 
 SPREADSHEET_EXTENSIONS = {'.csv', '.tsv', '.xlsx', '.xls'}
 
@@ -360,6 +361,75 @@ def _extract_html(filepath: str) -> tuple[str, dict[str, Any]]:
         return text, {"extractor": "regex_fallback"}
 
 
+#: An EPUB whose files unpack to more than this is refused (a zip bomb).
+EPUB_MAX_BYTES = 200 * 1024 * 1024
+
+
+class _EpubText(HTMLParser):
+    """The words of one EPUB chapter. Nothing in it runs."""
+
+    _BREAKS = ("p", "div", "br", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "section")
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.skip = 0
+
+    def handle_starttag(self, tag, attrs):  # noqa: ANN001
+        if tag in ("script", "style"):
+            self.skip += 1
+        elif tag in self._BREAKS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):  # noqa: ANN001
+        if tag in ("script", "style") and self.skip:
+            self.skip -= 1
+
+    def handle_data(self, data):  # noqa: ANN001
+        if not self.skip:
+            self.parts.append(data)
+
+
+def _extract_epub(filepath: str) -> tuple[str, dict[str, Any]]:
+    """Text of an EPUB book, its chapters in reading order (its spine)."""
+    import posixpath
+    import re
+    import zipfile
+
+    with zipfile.ZipFile(filepath) as book:
+        if sum(i.file_size for i in book.infolist()) > EPUB_MAX_BYTES:
+            raise ValueError("This book unpacks to more than this build reads.")
+        names = set(book.namelist())
+        container = book.read("META-INF/container.xml").decode("utf-8", "replace")
+        found = re.search(r'full-path="([^"]+)"', container)
+        opf_path = found.group(1) if found else ""
+        if opf_path not in names:
+            raise ValueError("This EPUB does not say where its chapters are.")
+        opf = book.read(opf_path).decode("utf-8", "replace")
+        base = posixpath.dirname(opf_path)
+        items = {}
+        for tag in re.findall(r"<item\b[^>]*>", opf):
+            ident = re.search(r'\bid="([^"]+)"', tag)
+            href = re.search(r'\bhref="([^"]+)"', tag)
+            if ident and href:
+                items[ident.group(1)] = posixpath.normpath(posixpath.join(base, href.group(1)))
+        chapters = []
+        for ref in re.findall(r'<itemref\b[^>]*\bidref="([^"]+)"', opf):
+            path = items.get(ref)
+            if path not in names:
+                continue
+            parser = _EpubText()
+            parser.feed(book.read(path).decode("utf-8", "replace"))
+            lines = "".join(parser.parts).splitlines()
+            text = "\n".join(" ".join(line.split()) for line in lines)
+            text = re.sub(r"\n{3,}", "\n\n", text).strip()
+            if text:
+                chapters.append(text)
+    title = re.search(r"<dc:title[^>]*>([^<]+)</dc:title>", opf)
+    return "\n\n".join(chapters), {"extractor": "epub", "chapters": len(chapters),
+                                   "title": title.group(1).strip() if title else ""}
+
+
 def _extract_rtf(filepath: str) -> tuple[str, dict[str, Any]]:
     """Extract text from RTF files."""
     try:
@@ -423,7 +493,7 @@ def extract_text(filepath: str, vision_fn=None,
         if ext == '.doc':
             # .doc (legacy) — try converting to text
             text, meta = _extract_text_file(filepath)
-            meta["warning"] = "Legacy .doc format — text extraction may be incomplete"
+            meta["warning"] = "Legacy .doc format: text extraction may be incomplete"
         else:
             text, meta = _extract_docx(filepath)
     elif ext == '.pptx':
@@ -439,6 +509,8 @@ def extract_text(filepath: str, vision_fn=None,
         text, meta = _extract_html(filepath)
     elif ext == '.rtf':
         text, meta = _extract_rtf(filepath)
+    elif ext == '.epub':
+        text, meta = _extract_epub(filepath)
     else:
         raise ValueError(
             f"Unsupported file type: {ext}. "

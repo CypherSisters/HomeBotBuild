@@ -57,17 +57,26 @@ def _config_file(config_dir: str = "") -> Path:
        one it is building into);
     2. a redirected module global — tests monkeypatch ``_HA_CONFIG_FILE`` and
        that must keep winning over any environment;
-    3. ``$PUFFPAI_CONFIG_DIR``, then the shipped ``<repo>/config``.
+    3. the config directory ``config.py`` resolves
+       (:func:`puffpai.config.resolve_config_dir`): ``$PUFFPAI_CONFIG_DIR``,
+       else ``<data dir>/config`` on an install, else ``<repo>/config``.
 
-    Step 3 matches ``config.py``, which also honours ``$PUFFPAI_CONFIG_DIR``.
-    Without it a scratch install (or a test run) would read ``url``/``enabled``
-    out of the temp config dir while the token fallback read the developer's
-    real file next to the checkout. Reader and writer name the same file.
+    Step 3 is the same answer ``config.py`` gives, which is where the setup
+    wizard writes. Without it a scratch install (or a test run) would read
+    ``url``/``enabled`` out of its own config dir while the token fallback read
+    the developer's real file next to the checkout, and an installed build
+    (config under the data dir) never found the token setup saved. Reader and
+    writer name the same file.
     """
     if config_dir:
         return Path(config_dir) / _DEFAULT_HA_CONFIG_FILE.name
     if _HA_CONFIG_FILE != _DEFAULT_HA_CONFIG_FILE:
         return _HA_CONFIG_FILE
+    try:
+        from puffpai.config import resolve_config_dir
+        return Path(resolve_config_dir()) / _DEFAULT_HA_CONFIG_FILE.name
+    except Exception:            # pragma: no cover - import guard only
+        pass
     override = _config_dir_override()
     if override:
         return Path(override) / _DEFAULT_HA_CONFIG_FILE.name

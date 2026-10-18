@@ -69,8 +69,12 @@ def test_propose_returns_a_card_that_validates_and_writes_nothing(steady):
     card = _card(ctx, module)
 
     assert card["skill"] == "crew" and card["section"] == "crew"
-    assert card["title"] == "Who does what"
-    assert {f["id"] for f in card["fields"]} >= {"specialists", "sized_from"}
+    assert card["title"] == "Its helpers"
+    # The specialists figure is the one field that takes an answer (the
+    # console keeps the card quiet); everything else is plain lines.
+    assert {f["id"] for f in card["fields"]} >= {"team", "specialists"}
+    assert all(f["kind"] == "info" for f in card["fields"]
+               if f["id"] != "specialists")
     assert ctx._sections == {}, "propose wrote a section"
 
 
@@ -94,8 +98,7 @@ def test_the_card_states_the_counted_agent_count(steady):
     # The roster in this tree is seven; the card's number is that roster's
     # length, counted, so adding an eighth agent moves the card with it.
     assert len(registry.ROSTER) == 7
-    match = re.match(r"(\d+) master agents, plus room for up to \d+ "
-                     r"specialists?\.$", card["decided"])
+    match = re.match(r"A team of (\d+) helpers works inside ", card["decided"])
     assert match, card["decided"]
     assert int(match.group(1)) == len(registry.ROSTER) == 7
     # The card lists every one of them by name, so the count is checkable.
@@ -118,7 +121,7 @@ def test_an_unreadable_roster_is_a_gap_on_the_card_not_a_crash(steady,
     monkeypatch.setattr(module, "_roster", lambda: [])
     card = _card(_ctx(steady, package), module)
     assert card["status"] == "gap"
-    assert "owns_nothing" in {f["id"] for f in card["fields"]}
+    assert "could not be read" in card["decided"]
 
 
 # -- apply --------------------------------------------------------------------
@@ -142,11 +145,13 @@ def test_apply_writes_what_the_old_step_wrote(steady, capsys):
 
 
 def test_a_lowered_figure_is_recorded_as_the_owners(steady):
+    """The card no longer asks, but an answer that arrives (an old browser, a
+    script) is still recorded honestly as the owner's."""
     module, package = _module()
     ctx = _ctx(steady, package)
-    card = _card(ctx, module)
-    top = {f["id"]: f for f in card["fields"]}["specialists"]["max"]
-    if top == 0:
+    ctx.proposal = module.propose(ctx)
+    budget = ctx.proposal["budget"]
+    if not budget.get("max_specialists"):
         pytest.skip("this machine's class carries no specialists to give up")
     written = module.apply(ctx, {"specialists": 0})["data"]["sizing"]
     assert written["max_specialists"] == 0
@@ -206,5 +211,5 @@ def test_the_runner_walks_the_lifecycle(steady, tmp_path):
         run.shared["census"])
     row = run.log[-1]
     assert row["outcome"] == "done"
-    assert row["shown"]["title"] == "Who does what"
+    assert row["shown"]["title"] == "Its helpers"
     assert row["verified"]["status"] == "pass"

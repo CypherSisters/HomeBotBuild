@@ -1,4 +1,5 @@
 import { apiGet, apiPostRaw } from '../api';
+import { isVaultLockedReply, VAULT_NEEDED_LINE } from '../vaultSession';
 import type { EgressDoor, EgressLedgerRecord } from '../../_interfaces/api';
 
 /**
@@ -31,6 +32,13 @@ export async function setEgressDoor(
   }>('/system/egress/door', { id, open: Boolean(open) });
 
   if (res.ok && res.data?.door) return { ok: true, door: res.data.door };
+  // After setup, switching one of the build engine's services on (GitHub,
+  // Toolsmith's cloud model, the book sites) needs the unlocked Vault. If the
+  // owner did not unlock it, that is a refusal for now, never "this switch is
+  // not a control" (the 409 rule below).
+  if (isVaultLockedReply(res.status, res.data)) {
+    return { ok: false, status: 403, error: VAULT_NEEDED_LINE };
+  }
   return {
     ok: false,
     status: res.status,

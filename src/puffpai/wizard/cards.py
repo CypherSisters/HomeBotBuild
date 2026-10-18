@@ -112,7 +112,10 @@ _CARD_KEYS = {"schema", "skill", "section", "part", "title", "decided",
               "status", "consequential", "consequential_reasons", "estimate",
               "fields", "gaps"}
 _FIELD_KEYS = {"id", "kind", "label", "help", "current", "proposed", "options",
-               "pattern", "max_length", "min", "max", "free_text", "path_like"}
+               "pattern", "max_length", "min", "max", "free_text", "path_like",
+               "examples"}
+#: Sample answers a text field may show (the browser's buttons fill the box).
+MAX_EXAMPLES = 3
 
 #: Words an owner types when they mean "stop asking", which a folder field used
 #: to take as a folder name. The Integrate card's knowledge folder accepted the
@@ -284,6 +287,13 @@ def _validate_field(raw: Any, seen: set[str]) -> dict:
         out["max_length"] = _max_length(raw, field_id, default=200)
         out["pattern"] = _pattern(raw, field_id)
         out["path_like"] = bool(raw.get("path_like"))
+        examples = raw.get("examples")
+        if examples is not None:
+            if not isinstance(examples, list) or len(examples) > MAX_EXAMPLES or not all(
+                    isinstance(e, str) and e.strip() for e in examples):
+                raise CardError(f"Field '{field_id}': examples are at most "
+                                f"{MAX_EXAMPLES} short sentences.")
+            out["examples"] = [plain(e, min(MAX_HELP, out["max_length"])) for e in examples]
         out["current"] = plain(raw.get("current"), out["max_length"])
         out["proposed"] = plain(raw.get("proposed", raw.get("current")),
                                 out["max_length"])

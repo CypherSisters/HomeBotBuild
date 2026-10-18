@@ -1282,7 +1282,9 @@ class HABridge:
         self._token = token or _resolve_ha_token()
         self._enabled = cfg.ha.enabled
         self._cache = _StateCache(ttl=5.0)
-        self._session = requests.Session()
+        self._session = requests.Session()  # lan-egress: Home Assistant session on the configured LAN url
+        # Marked home-network calls never use a proxy (security.lan_guard).
+        self._session.trust_env = False
         self._session.headers.update({
             # No token (strict mode at a cold boot) -> an EMPTY header, never
             # the string "Bearer None". _ensure_token() fills it in on the
@@ -1341,11 +1343,11 @@ class HABridge:
 
         try:
             if method == "GET":
-                resp = self._session.get(url, **kwargs)
+                resp = self._session.get(url, **kwargs)  # lan-egress: Home Assistant on the configured url; lan_guard refuses an internet address
             elif method == "POST":
-                resp = self._session.post(url, json=data, **kwargs)
+                resp = self._session.post(url, json=data, **kwargs)  # lan-egress: Home Assistant on the configured url; lan_guard refuses an internet address
             elif method == "DELETE":
-                resp = self._session.delete(url, **kwargs)
+                resp = self._session.delete(url, **kwargs)  # lan-egress: Home Assistant on the configured url; lan_guard refuses an internet address
             else:
                 raise HABridgeError(f"Unsupported HTTP method: {method}")
 

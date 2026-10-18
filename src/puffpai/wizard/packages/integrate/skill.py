@@ -66,10 +66,13 @@ def _default_zim_dir(ctx) -> str:
         return str(args_dir)
     knowledge = getattr(ctx.cfg, "knowledge", None)
     configured = str(getattr(knowledge, "zim_dir", "") or "")
-    if configured or ctx.non_interactive:
+    if configured:
         return configured
-    return os.path.join(str(getattr(ctx.cfg, "DATA_DIR", "") or ""),
-                        "knowledge_packs")
+    # Every build gets a knowledge folder under its own data dir, asked or
+    # not: without one, packs downloaded later had nowhere to be found and
+    # `puffpai knowledge sync` answered "No knowledge folder configured".
+    data_dir = str(getattr(ctx.cfg, "DATA_DIR", "") or "")
+    return os.path.join(data_dir, "knowledge_packs") if data_dir else ""
 
 
 def _auto_index(ctx) -> bool:
@@ -141,14 +144,14 @@ def propose(ctx) -> dict:
     by_id = {item["id"]: item for item in items}
 
     fields: list[dict[str, Any]] = [
-        {"id": "zim_dir", "kind": "text", "label": "Where the packs live",
+        {"id": "zim_dir", "kind": "text", "label": "Where the books are kept",
          "current": zim_dir, "max_length": 400, "path_like": True,
-         "help": "Packs dropped in this folder are learned on their own. Blank "
-                 "keeps what is proposed; this field takes a folder path, not "
-                 "yes or no."},
+         "help": "Books put in this folder are learned on their own. Leave it "
+                 "blank to keep this folder; type a folder, not yes or no."},
         {"id": "auto_index", "kind": "toggle",
-         "label": "Learn new packs in the background", "current": auto_index,
-         "help": "Off means nothing is indexed until you run the sync command."},
+         "label": "Learn new books in the background", "current": auto_index,
+         "help": "Off means nothing is learned until you run "
+                 "`puffpai knowledge sync`."},
     ]
     # Only rows the plan actually described can be drawn. An id with no row
     # behind it is still fetched - it came from --fetch-source - but there is
@@ -157,15 +160,15 @@ def propose(ctx) -> dict:
     if shown:
         fields.append({
             "id": "fetch_now", "kind": "multi_choice",
-            "label": "Fetch now, or leave for later",
+            "label": "Download now, or leave for later",
             "options": [{"value": source_id,
                          "label": sources_plan.option_label(by_id[source_id])}
                         for source_id in shown],
             "current": [source_id for source_id in now if source_id in by_id],
             "proposed": [source_id for source_id in recommended_now
                          if source_id in by_id],
-            "help": "Anything left unticked stays in the plan and is recorded "
-                    "with the command that fetches it later.",
+            "help": "Anything left unticked stays in the plan, with the "
+                    "command that downloads it later.",
         })
     elif now or later:
         fields.append({
@@ -188,13 +191,15 @@ def propose(ctx) -> dict:
             "id": "own_data", "kind": "multi_choice",
             "label": "Your own folders", "options": options[:30],
             "current": ticked,
-            "help": "Counted, never opened: the build record keeps counts by "
-                    "file type and no filenames at all.",
+            "help": "A folder you tick here is read and learned, and "
+                    "anything that looks private goes to your vault (or is left "
+                    "out while the vault is locked). The build record keeps "
+                    "counts only, never filenames.",
         })
     if waiting.get("waiting"):
         fields.append({
             "id": "waiting", "kind": "info", "label": "Already waiting to learn",
-            "current": f"{waiting['packs']} pack(s) in that folder are not "
+            "current": f"{waiting['packs']} book(s) in that folder are not "
                        f"learned yet.",
         })
     # Today's words, kept: a run with nobody reading the card never accepted a
@@ -216,12 +221,12 @@ def propose(ctx) -> dict:
                 "current": "Nothing of yours was looked at. A folder nobody "
                            "approved is a folder I have no business reading."})
 
-    egress = bool(now)
+    # A book downloads while building and is read on this computer after
+    # that, so fetching one is never "network access after the build"; the
+    # card used to say it was. Only the size can make this card weigh more.
     reasons = []
     if bytes_now > sources_plan.HEAVY_BYTES:
         reasons.append("heavy_bytes")
-    if egress:
-        reasons.append("runtime_egress")
     card = {
         "skill": "integrate", "section": "knowledge",
         "title": "Getting it in",
@@ -243,9 +248,9 @@ def propose(ctx) -> dict:
 
 def _decided(now: list[str], later: list[str], size: int, known: bool) -> str:
     if not now and not later:
-        return "Nothing to fetch. Packs you drop in the folder are learned on their own."
+        return "Nothing to download. Books you put in the folder are learned on their own."
     where = sources_plan.size_label(size / sources_plan.MB) if known else "size not known"
-    parts = [f"{len(now)} source(s) fetched now ({where})"]
+    parts = [f"{len(now)} book(s) downloaded now ({where})"]
     if later:
         parts.append(f"{len(later)} left for later")
     return ", ".join(parts) + "."
@@ -310,9 +315,10 @@ def apply(ctx, answers: dict) -> dict:
         zim_dir = str(proposal.get("zim_dir", "") or "")
     auto_index = bool(answers.get("auto_index",
                                   proposal.get("auto_index", True)))
-    if zim_dir and not os.path.isdir(zim_dir) and not ctx.non_interactive:
-        # The owner accepted the folder on the card; today's step offered to
-        # create it in the same breath it was named.
+    if zim_dir and not os.path.isdir(zim_dir):
+        # The owner accepted the folder on the card (or it is the default under
+        # this build's own data dir); an empty folder is created so later
+        # downloads and `puffpai knowledge sync` have somewhere to look.
         try:
             os.makedirs(zim_dir, exist_ok=True)
         except OSError:
@@ -351,8 +357,9 @@ def apply(ctx, answers: dict) -> dict:
     named = ([str(p) for p in (answers.get("own_data") or [])]
              if "own_data" in answers
              else list(proposal.get("own_data") or []))
-    own_data = integrate_fetch.own_data_block(
+    folders = integrate_fetch.own_data_and_learn(
         named, skip=bool(getattr(ctx.args, "skip_own_data", False)))
+    own_data = folders["block"]
 
     block = {"sources": record, "own_data": own_data}
     handoff = integrate_fetch.index_handoff(zim_dir, auto_index=auto_index)
@@ -363,6 +370,9 @@ def apply(ctx, answers: dict) -> dict:
         "block": block,
         "sources": record,
         "own_data": own_data,
+        # Counts only: what was learned from the owner's folders, through the
+        # same PII screen as an upload. Never a filename.
+        "own_data_learned": {k: v for k, v in folders["learned"].items()},
         "packs": _packs(ctx),
         "zim_dir": zim_dir,
         "auto_index": auto_index,
@@ -459,10 +469,13 @@ def verify(ctx) -> dict:
                         f"knowledge store yet",
             "gap": {
                 "skill": "integrate",
-                "what": f"{item.get('label')} is downloaded and not searchable "
+                # Prove's own words for the same book, so the closing
+                # screen lists it once (runner.record_gap).
+                "what": f"{item.get('label')} is downloaded but not searchable "
                         f"yet.",
-                "why": "The bytes are on disk and the knowledge store has no "
-                       "chunks from them.",
+                "why": str(item.get("note") or
+                           "The file is on this computer, but your bot has not "
+                           "learned any of it yet."),
                 "impact": "Your bot will not find anything from it until it is "
                           "indexed.",
                 "fix": {"kind": "command", "id": "knowledge.sync", "args": {}},

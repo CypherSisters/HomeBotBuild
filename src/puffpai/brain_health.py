@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import os
 from typing import Any, Callable, Optional
+from puffpai.security.lan_guard import no_proxies as _no_proxies  # marked home-network calls never use a proxy
 
 CONNECTED = "connected"
 MODEL_MISSING = "model_missing"
@@ -176,7 +177,8 @@ def model_missing_message(model: str, url: Optional[str] = None) -> str:
     """What to tell a person whose configured brain was never downloaded."""
     return (
         f"This build is set up to use the model '{model}', which is not "
-        f"installed yet, so there is no brain to answer with. Install it with:"
+        f"on the Ollama at {url or DEFAULT_URL}, so there is no brain to "
+        f"answer with. Install it with:"
         f"\n    {pull_command(model, url)}\n"
         f"then ask again."
     )
@@ -217,11 +219,7 @@ def list_models(url: str, timeout: int = 3) -> Optional[list[str]]:
 
     base = (url or DEFAULT_URL).rstrip("/")
     try:
-        # Inventory read of Ollama at config `ollama.url` — loopback, or the
-        # LAN address the owner configured. Registered non-egress in
-        # tests/test_egress_door_registry.py::_NOT_EGRESS_LINES with that
-        # reason.
-        resp = requests.get(f"{base}/api/tags", timeout=timeout)
+        resp = requests.get(f"{base}/api/tags", timeout=timeout, proxies=_no_proxies())  # lan-egress: Ollama /api/tags on the configured LAN url
         resp.raise_for_status()
         models = resp.json().get("models", [])
         return [m.get("name", "") for m in models if m.get("name")]
@@ -403,7 +401,7 @@ def pull_model(model: str, url: Optional[str] = None,
         # tests/test_egress_door_registry.py::_NOT_EGRESS_LINES.
         resp = requests.post(f"{base}/api/pull",
                              json={"name": model, "stream": True},
-                             stream=True, timeout=timeout)
+                             stream=True, timeout=timeout, proxies=_no_proxies())
         resp.raise_for_status()
         for line in resp.iter_lines():
             if not line:
@@ -455,14 +453,22 @@ def survey(default_url: Optional[str] = None, timeout: int = 2,
             for url in candidate_urls(default_url)]
 
 
-def best_address(looked: list[dict[str, Any]]) -> Optional[str]:
+def best_address(looked: list[dict[str, Any]],
+                 model: Optional[str] = None) -> Optional[str]:
     """The address to use out of a :func:`survey`, or None if none answered.
 
-    An address with models beats one without. This is the validated box: Windows
-    Ollama on 11435 has the models, while 127.0.0.1:11434 is a WSL relay to an
-    EMPTY Ollama - it answers, so "first that answers" picked the one that cannot
-    serve a single prompt.
+    With ``model``, the address that HAS that model wins over everything: an
+    Ollama that answers with other models still cannot serve this one, and a
+    build pointed at it 404s every chat (a relay on 11434 holding one small
+    model, while the chosen brain was only on 11435). Without one, an address
+    with models beats one without: 127.0.0.1:11434 can be a relay to an EMPTY
+    Ollama that answers, so "first that answers" picked one that cannot serve
+    a single prompt.
     """
+    if model:
+        for row in looked:
+            if is_installed(model, row.get("models")):
+                return str(row["url"])
     for row in looked:
         if row.get("models"):
             return str(row["url"])
@@ -470,6 +476,20 @@ def best_address(looked: list[dict[str, Any]]) -> Optional[str]:
         if row.get("models") is not None:
             return str(row["url"])
     return None
+
+
+def address_with_model(model: str, default_url: Optional[str] = None,
+                       timeout: int = 2,
+                       probe: Optional[Callable[..., Optional[list[str]]]] = None
+                       ) -> tuple[Optional[str], list[dict[str, Any]]]:
+    """``(address that has model, the survey)``; the address is None when no
+    known address has it. Only the usual addresses are tried (see
+    :func:`candidate_urls`), never a scan."""
+    looked = survey(default_url, timeout=timeout, probe=probe)
+    for row in looked:
+        if is_installed(model, row.get("models")):
+            return str(row["url"]), looked
+    return None, looked
 
 
 def survey_lines(looked: list[dict[str, Any]]) -> list[str]:
@@ -496,6 +516,7 @@ __all__ = [
     "CONNECTED",
     "survey",
     "best_address",
+    "address_with_model",
     "survey_lines",
     "MODEL_MISSING",
     "UNREACHABLE",

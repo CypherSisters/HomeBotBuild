@@ -25,6 +25,8 @@ Copyright (c) 2025 Cypher Sisters. Apache-2.0 License.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 #: The address an owner may type for a hub. Host or host:port, optional scheme
 #: and path-less; ``setup_ops.set_ha_config`` does the real parsing.
 URL_PATTERN = r"^(?:https?://)?[A-Za-z0-9._-]{1,120}(?::\d{1,5})?/?$"
@@ -33,35 +35,40 @@ DEFAULT_HA_URL = "http://homeassistant.local:8123"
 
 #: The four honest statuses. A row is in exactly one of them.
 AVAILABLE = "available"
-DOOR_SHUT = "needs a door you have not opened"
+DOOR_SHUT = "needs something you have not switched on"
 NOTHING = "nothing here does this"
-NO_KEY = "declared, no key path yet"
+NO_KEY = "needs a key this build cannot keep safely yet"
 
 #: What an integration row needs before it can work **on this build**, read off
 #: the code that implements it rather than off the catalog's prose:
 #:
 #: * ``home_assistant`` -- a URL and a long-lived token, and this wizard step is
 #:   the path that stores them (``setup_ops.set_ha_config``).
-#: * ``weather`` -- the dashboard's weather card reads Home Assistant sensors
-#:   behind the weather door (``api_server.dashboard_weather``), so it is the
-#:   hub's door it needs, not one of its own.
+#: * ``weather`` -- the dashboard's weather card and chat read the built-in
+#:   weather service (Open-Meteo, no key) with the town-level home location
+#:   (``puffpai.weather_service``). It needs that one service switched on and
+#:   nothing else: NOT Home Assistant (most people
+#:   do not have Home Assistant).
 #: * ``media`` -- ``media_bridge`` authenticates with
 #:   ``cfg.media_server.jellyfin_api_key``, and nothing in this build asks for
 #:   one or has anywhere to keep it. That is the keyed case, stated plainly.
 INTEGRATION_NEEDS: dict[str, dict[str, str]] = {
     "integration:home_assistant": {
-        "door": "the hub's address and a long-lived token",
+        "door": "the hub's web address and its key",
         "needs": "hub",
         "without": "it will say it cannot reach the house rather than "
                    "pretending it did",
     },
     "integration:weather": {
-        "door": "the hub, and the weather door on the dashboard",
-        "needs": "hub",
-        "without": "the weather card stays empty and says why",
+        "door": "the weather forecast switched on (in Settings, Bridge "
+                "switches)",
+        "needs": "service",
+        "service": "weather",
+        "without": "the weather card says it is switched off and how to "
+                   "switch it on",
     },
     "integration:media": {
-        "door": "a media-server key this build cannot store yet",
+        "door": "a key for your media server",
         "needs": "key",
         "without": "it will say it has no media server rather than guessing",
     },
@@ -112,12 +119,14 @@ def _declared(ctx) -> list[dict]:
 def _installed_apps() -> set[str]:
     try:
         from puffpai import app_registry
-        return {str(m.get("id") or "") for m in app_registry.load_manifests()}
+        # A first app that is off counts: the plan's Yes turns it on.
+        return {str(m.get("id") or "") for m in app_registry.load_manifests(include_off=True)}
     except Exception:  # noqa: BLE001 - no app scan is "nothing here does this"
         return set()
 
 
-def _row_status(need: dict, *, ha_configured: bool, apps: set[str]) -> dict:
+def _row_status(need: dict, *, ha_configured: bool, apps: set[str],
+                services_on: Optional[set[str]] = None) -> dict:
     """One row: what it does, its status, its door, and what is said without it."""
     tool_id = need["id"]
     label = need["label"] or tool_id
@@ -137,6 +146,14 @@ def _row_status(need: dict, *, ha_configured: bool, apps: set[str]) -> dict:
     if spec["needs"] == "key":
         return {"id": tool_id, "label": label, "status": NO_KEY,
                 "door": spec["door"], "without": spec["without"]}
+    if spec["needs"] == "service":
+        # A built-in outside service: on when the owner said yes to it (on the
+        # summary or its switch), whatever any hub says.
+        if spec.get("service") in (services_on or ()):
+            return {"id": tool_id, "label": label, "status": AVAILABLE,
+                    "door": spec["door"], "without": ""}
+        return {"id": tool_id, "label": label, "status": DOOR_SHUT,
+                "door": spec["door"], "without": spec["without"]}
     if ha_configured:
         return {"id": tool_id, "label": label, "status": AVAILABLE,
                 "door": spec["door"], "without": ""}
@@ -144,10 +161,45 @@ def _row_status(need: dict, *, ha_configured: bool, apps: set[str]) -> dict:
             "door": spec["door"], "without": spec["without"]}
 
 
+def _services_on(ctx) -> set[str]:
+    """Built-in outside services said yes to: on the summary, or already on."""
+    out: set[str] = set()
+    try:
+        from puffpai.wizard import proposal
+        out |= set(proposal.approved_refs(
+            (getattr(ctx, "shared", None) or {}).get("summary"), "door"))
+    except Exception:  # noqa: BLE001 - no summary is "nothing said yes to"
+        pass
+    try:
+        from puffpai.security import egress_doors
+        out |= {d.id for d in egress_doors.DOORS
+                if egress_doors.egress_allowed(d.id)[0]}
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 def _rows(ctx, *, ha_configured: bool) -> list[dict]:
     apps = _installed_apps()
-    return [_row_status(need, ha_configured=ha_configured, apps=apps)
+    services = _services_on(ctx)
+    return [_row_status(need, ha_configured=ha_configured, apps=apps,
+                        services_on=services)
             for need in _declared(ctx) if need["id"]]
+
+
+def _sentence(text: str) -> str:
+    text = str(text or "").strip()
+    return (text[:1].upper() + text[1:] + ("" if text.endswith(".") else ".")
+            if text else "")
+
+
+def _fix_for(row: dict) -> dict:
+    """The one command that fixes a row: its service's switch, else setup."""
+    service = (INTEGRATION_NEEDS.get(row.get("id") or "") or {}).get("service")
+    if service:
+        return {"kind": "command", "id": "outside.on",
+                "args": {"service": service}}
+    return {"kind": "command", "id": "setup.rerun", "args": {}}
 
 
 def _gaps(rows: list[dict]) -> list[dict]:
@@ -158,11 +210,11 @@ def _gaps(rows: list[dict]) -> list[dict]:
         gaps.append({
             "skill": "tools",
             "what": f"Your bot cannot reach {row['label']}.",
-            "why": f"{row['status']}"
-                   + (f" ({row['door']})" if row["door"] else "") + ".",
-            "impact": row["without"] or "that part of the goal has nothing "
-                                        "behind it",
-            "fix": {"kind": "command", "id": "setup.rerun", "args": {}},
+            "why": f"It {row['status']}"
+                   + (f": {row['door']}" if row["door"] else "") + ".",
+            "impact": _sentence(row["without"] or "that part of the goal has "
+                                                  "nothing behind it"),
+            "fix": _fix_for(row),
         })
     return gaps[:MAX_ROWS]
 
@@ -185,8 +237,14 @@ def _remote(ctx) -> bool:
 
 
 def _hub_requested(ctx) -> bool:
-    """Did the owner already say yes to a hub on this card? (the propose rule)"""
-    return bool(ctx.applied("hub_requested", default=False))
+    """Did the owner already say yes to a hub -- on this card, or on the
+    summary? (the propose rule)"""
+    from puffpai.wizard import proposal
+
+    if ctx.applied("hub_requested", default=False):
+        return True
+    return bool(proposal.approved_refs(
+        (getattr(ctx, "shared", None) or {}).get("summary"), "home_assistant"))
 
 
 def _offers_hub(ctx) -> bool:
@@ -226,17 +284,18 @@ def propose(ctx) -> dict:
     fields: list[dict] = []
     if sealed:
         fields.append({"id": "sealed", "kind": "info", "label": "Home Assistant",
-                       "current": "you chose a sealed build, so nothing on the "
-                                  "network is offered here"})
+                       "current": "this build reaches nothing, so nothing on "
+                                  "your network is offered here"})
     elif offer:
         wants = _hub_requested(ctx)
         fields.append({"id": "connect_hub", "kind": "toggle",
-                       "label": "Connect a Home Assistant instance now?",
-                       "current": wants, "proposed": False,
-                       "help": "Say no and re-run `puffpai setup` later; "
+                       "label": "Connect Home Assistant, your smart home "
+                                "hub, now?",
+                       "current": wants, "proposed": wants,
+                       "help": "Say no and run puffpai setup again later; "
                                "nothing is asked for until you say yes."})
         fields.append({"id": "hub_url", "kind": "text",
-                       "label": "Home Assistant URL",
+                       "label": "Home Assistant's web address",
                        "current": str(ctx.applied("hub_url",
                                                   default="") or DEFAULT_HA_URL),
                        "max_length": 200, "pattern": URL_PATTERN})
@@ -247,9 +306,13 @@ def propose(ctx) -> dict:
         # and the owner could not get past it.
         if wants or not _remote(ctx):
             fields.append({"id": "hub_token", "kind": "secret_entry",
-                           "label": "Long-lived access token", "max_length": 400,
-                           "help": "It is written to this machine's config and "
-                                   "never to the card, the run log or the API."})
+                           "label": "Your Home Assistant key",
+                           "max_length": 400,
+                           "help": "In Home Assistant open your profile, then "
+                                   "Security, and make a long-lived access "
+                                   "token. Paste it here. What you type stays "
+                                   "hidden and is kept only in this "
+                                   "computer's settings."})
     else:
         fields.append({"id": "hub", "kind": "info", "label": "Home Assistant",
                        "current": "not being asked for on this run; re-run "

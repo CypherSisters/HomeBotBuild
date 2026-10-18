@@ -17,6 +17,8 @@ import argparse
 import copy
 import types
 
+import os
+
 import pytest
 
 from puffpai import cli, hardware_census, setup_cli, setup_ops
@@ -67,7 +69,7 @@ def test_propose_returns_a_card_that_validates_and_writes_nothing(steady):
     card = cards.validate_card(proposal["card"])
 
     assert card["skill"] == "discover" and card["section"] == "machine"
-    assert card["title"] == "What this machine is"
+    assert card["title"] == "This computer"
     assert {f["id"] for f in card["fields"]} >= {"machine", "memory_gb",
                                                  "ollama_url"}
     assert ctx._sections == {}, "propose wrote a section"
@@ -122,7 +124,7 @@ def test_the_memory_figure_is_shown_and_not_asked_for(steady):
     card = cards.validate_card(module.propose(_ctx(steady, package))["card"])
     field = cards.field_map(card)["memory_gb"]
     assert field["kind"] == "info"
-    assert "measured on this machine" in field["current"]
+    assert "measured on this computer" in field["current"]
     with pytest.raises(cards.CardError):
         cards.validate_answers(card, {"memory_gb": 12})
 
@@ -130,7 +132,7 @@ def test_the_memory_figure_is_shown_and_not_asked_for(steady):
     ctx.args.stated_ram = 12
     ctx.proposal = module.propose(ctx)
     stated = cards.field_map(ctx.proposal["card"])["memory_gb"]
-    assert "you stated this" in stated["current"]
+    assert "you said this" in stated["current"]
     written = module.apply(ctx, {})["data"]["census"]
     assert written["memory"]["total_gb"] == 12
     assert written["memory"]["source"] == "stated"
@@ -183,6 +185,7 @@ def test_an_unreachable_ollama_is_a_gap_and_not_a_failure(steady, monkeypatch):
     assert verdict["gap"]["fix"]["id"] == "setup.rerun"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="a drive-letter path")
 def test_a_disk_that_is_not_there_is_a_gap(steady):
     module, package = _module()
     sections = {"machine": {"ollama_url": "http://127.0.0.1:11434",
@@ -210,7 +213,7 @@ def test_the_runner_walks_the_lifecycle_and_records_what_it_showed(steady,
     assert run.sections["machine"]["ollama_url"] == TYPED_URL
     row = run.log[-1]
     assert row["outcome"] == "done"
-    assert row["shown"]["title"] == "What this machine is"
+    assert row["shown"]["title"] == "This computer"
     assert row["changed"] == {"ollama_url": TYPED_URL}
     assert row["verified"]["status"] == "pass"
     assert run.stale[:1] == ["integrate"] and run.stale[-2:] == ["prove", "handoff"]

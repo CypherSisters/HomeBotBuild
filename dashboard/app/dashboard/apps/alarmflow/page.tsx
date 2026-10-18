@@ -681,7 +681,7 @@ export default function AlarmFlowPage() {
               <button
                 type="button"
                 onClick={handleDismissAll}
-                className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-[var(--puff-red)] transition hover:bg-[color-mix(in_srgb,var(--puff-red)_16%,transparent)]"
+                className="rounded-xl bg-(--card) px-4 py-2 text-sm font-bold text-[var(--puff-red)] transition hover:bg-[color-mix(in_srgb,var(--puff-red)_16%,transparent)]"
               >
                 Dismiss
               </button>

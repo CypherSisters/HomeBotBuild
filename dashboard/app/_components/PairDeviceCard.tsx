@@ -146,7 +146,7 @@ export default function PairDeviceCard() {
           {code}
         </div>
         <div className="mt-1 text-xs" style={{ color: "var(--text3)" }}>
-          This code expires in an hour — a fresh one appears automatically.
+          This code expires in an hour, and a fresh one appears automatically.
         </div>
       </div>
     </div>

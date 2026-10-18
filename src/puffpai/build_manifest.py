@@ -553,6 +553,12 @@ def write_manifest(manifest: dict[str, Any], path: Optional[str] = None) -> str:
     """
     target = path or manifest_path()
     clean = sanitize_manifest(manifest)
+    if path is None:
+        # This bot's first apps on-set is settled from the build as it was,
+        # before the new one is written: a new bot's own page list is never
+        # read as an older bot's use (puffpai.first_apps).
+        from puffpai import first_apps
+        first_apps.settle()
     os.makedirs(os.path.dirname(target), exist_ok=True)
     with open(target, "w", encoding="utf-8") as fh:
         json.dump(clean, fh, indent=2)
@@ -605,7 +611,7 @@ def diff_manifest(old: Optional[dict[str, Any]], new: dict[str, Any]) -> list[st
             _get(new, "posture", "build_network"))
     compare("Runtime egress", _get(old, "posture", "run_egress"),
             _get(new, "posture", "run_egress"))
-    compare("Open doors", _get(old, "posture", "enabled_switches"),
+    compare("Outside services on", _get(old, "posture", "enabled_switches"),
             _get(new, "posture", "enabled_switches"))
     compare("Surfaces loaded", _get(old, "surfaces", "allowlist"),
             _get(new, "surfaces", "allowlist"))
@@ -619,28 +625,64 @@ def diff_manifest(old: Optional[dict[str, Any]], new: dict[str, Any]) -> list[st
 # display
 # ---------------------------------------------------------------------------
 
+def _every_page(allowlist: Any) -> bool:
+    """True when *allowlist* names every page this build knows (a HomeBot
+    build turns them all on), so the summary says so instead of listing them."""
+    try:
+        from puffpai.build_interview import surface_taxonomy
+        known = set(surface_taxonomy() or {})
+    except Exception:
+        return False
+    return bool(known) and known <= {str(s) for s in allowlist or []}
+
+
+def _page_names(allowlist: Any) -> list[str]:
+    """Pages in the owner's words (plain-words rule), not ids."""
+    try:
+        from puffpai.build_interview import surface_taxonomy
+        taxonomy = surface_taxonomy() or {}
+    except Exception:
+        taxonomy = {}
+    return [str((taxonomy.get(str(s)) or {}).get("label")
+                or "your bot's own page") for s in allowlist]
+
+
+def _running_words(run_egress: str, switched: int) -> str:
+    """What the finished bot may reach, in words (never the setting's name)."""
+    if run_egress == "sealed":
+        return "While it runs, it talks to nothing outside this computer."
+    if run_egress == "enumerated":
+        if not switched:
+            return ("While it runs, it may use only the outside services you "
+                    "switch on, and none is switched on yet.")
+        return ("While it runs, it may use only the outside services you said "
+                f"yes to ({switched} of the built-in ones switched on).")
+    return "While it runs, it stays on your home network."
+
+
 def manifest_summary_lines(manifest: dict[str, Any]) -> list[str]:
     """Plain-language lines summarising a manifest, for the CLI/API."""
     lines: list[str] = []
     name = _get(manifest, "build", "name")
     identity = _get(manifest, "build", "identity")
-    lines.append(f"Build: {name or '(unnamed)'} ({identity or 'custom'}, on BuildBot)")
+    lines.append(f"Your bot: {name or 'not named yet'}")
 
     ram = _get(manifest, "hardware", "memory", "total_gb")
-    klass = _get(manifest, "hardware", "hardware_class")
     if ram is not None:
-        lines.append(f"Hardware: {ram} GB, class {klass}")
+        lines.append(f"This computer: {ram:g} GB of memory" if isinstance(
+            ram, (int, float)) else f"This computer: {ram} GB of memory")
 
     brain = _get(manifest, "brain", "model")
     if brain:
-        lines.append(f"Brain: {brain}")
+        lines.append(f"Its brain: {brain}")
 
-    # Only speak to the crew once sizing has actually run. Before it does, the
-    # block defaults to zero specialists, and "up to 0 specialists" reports a
-    # question nobody answered as a limit nobody has.
+    # Only speak to the helpers once sizing has actually run. Before it does,
+    # the block defaults to zero, and "up to 0" reports a question nobody
+    # answered as a limit nobody has.
     specialists = _get(manifest, "crew", "max_specialists")
     if specialists is not None and _get(manifest, "crew", "master_core") is not None:
-        lines.append(f"Crew budget: master team + up to {specialists} specialists")
+        lines.append(f"Helpers: the main team, and up to {specialists} more "
+                     f"for bigger jobs")
 
     # The v2 posture block supersedes the v1 egress block. Printing both makes
     # the summary contradict itself - a build could read "Egress: all-offline"
@@ -650,24 +692,26 @@ def manifest_summary_lines(manifest: dict[str, Any]) -> list[str]:
     stance = _get(manifest, "posture", "run_egress")
     if stance:
         network = _get(manifest, "posture", "build_network")
-        doors = _get(manifest, "posture", "enabled_switches") or []
-        lines.append(
-            f"Posture: built {network}, runs {stance}"
-            + (f", {len(doors)} door(s) open" if doors
-               else ", no doors open")
-        )
+        switched = _get(manifest, "posture", "enabled_switches") or []
+        lines.append(("Built while online. " if network == "online"
+                      else "Built without the internet. ")
+                     + _running_words(str(stance), len(switched)))
     else:
-        posture = _get(manifest, "egress", "posture")
         enabled = _get(manifest, "egress", "enabled") or []
-        lines.append(f"Egress: {posture}" + (f" ({len(enabled)} on)" if enabled
-                                             else " (no outside service switched on)"))
+        lines.append("Internet while it runs: " + (
+            f"{len(enabled)} outside service(s) switched on" if enabled
+            else "no outside service is switched on"))
 
     allowlist = _get(manifest, "surfaces", "allowlist")
+    trimmed = bool(_get(manifest, "surfaces", "derived_from_goal")
+                   or _get(manifest, "surfaces", "owner_edited"))
     if allowlist is not None:
         lines.append(
-            f"Surfaces loaded: {', '.join(str(s) for s in allowlist)}"
+            "Pages it will have: every page." if _every_page(allowlist) else
+            f"Pages it will have: {', '.join(_page_names(allowlist))}"
             if allowlist else
-            "Surfaces loaded: none beyond the master team."
+            "Pages it will have: none of the optional ones." if trimmed else
+            "Pages it will have: every page."
         )
 
     source = _get(manifest, "provenance", "source")

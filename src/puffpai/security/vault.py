@@ -8,6 +8,15 @@ Development mode:  AES-256-GCM via the `cryptography` library (BSD license)
 Production target: LUKS + TPM2.0 full-disk encryption
 
 All vault access is logged through AuditLog.
+
+The build engine reaches the vault through a few more doors, each built on
+the same PIN, DEK and session model: named secrets and the key broker's
+reserved records (:meth:`Vault.store`, :meth:`Vault._reserved_get`) in one
+encrypted record, a lock event for Toolsmith's key lease
+(:meth:`Vault.add_lock_listener`), and the remembered vault place
+(:func:`remember_place`, :meth:`Vault.missing_reason`), so a vault on a drive
+that is not plugged in is reported as missing and a new, empty one is never
+made in its place.
 """
 
 from __future__ import annotations
@@ -18,10 +27,12 @@ import json
 import os
 import secrets
 import stat
+import sys
 import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Callable, Optional
 
 
 def _doc_now_iso() -> str:
@@ -152,8 +163,11 @@ def service_key_candidates() -> list:
     return out
 
 
-def read_service_key():
+def read_service_key(vault_dir=None):
     """Return ``(secret, source_label)`` for the machine-bound service key.
+
+    *vault_dir* is accepted for callers that name a vault folder; the machine
+    key belongs to the appliance, not to a folder, so it is not used.
 
     ``(None, reason)`` when no usable key is present. Never raises, never logs
     or returns the key material itself.
@@ -204,6 +218,38 @@ def read_service_key():
             continue
         return secret, label
     return None, reason
+
+
+def _keyring_user(vault_dir: str) -> str:
+    """The name a per-folder machine key would carry in an OS password store."""
+    digest = hashlib.sha256(os.path.abspath(vault_dir).encode("utf-8"))
+    return "vault-service-key:" + digest.hexdigest()[:12]
+
+
+def _usable_keyring():
+    """Always None: the machine key is never kept in an OS password store.
+
+    It lives in a root-only file the service is handed by systemd (see
+    :func:`service_key_candidates`), so a desktop keyring cannot widen what
+    the unattended tier can open.
+    """
+    return None
+
+
+def create_machine_key(vault_dir: str):
+    """Refused: the machine key is installed by root, not made by the service.
+
+    ``scripts/install_vault_service_key.sh`` writes it where only root can read
+    it and systemd hands the service a copy; letting the running service mint
+    one would let it widen its own unattended access.
+    """
+    raise VaultError("the machine key is installed by the system installer, "
+                     "not made by the running service")
+
+
+def forget_machine_key(vault_dir: str) -> None:
+    """Nothing to forget: no machine key is bound to a vault folder."""
+    return None
 
 _SESSION_TIMEOUT_SECONDS = 900  # 15 minutes
 
@@ -257,6 +303,466 @@ def _check_new_pin(pin) -> None:
         )
     if len(pin) < MIN_PIN_LENGTH:
         raise ValueError(f"PIN must be at least {MIN_PIN_LENGTH} characters")
+
+
+# ── idle lock, in plain words ──────────────────────────────────────────────
+#
+# A session that sits unused for _SESSION_TIMEOUT_SECONDS expires, wherever it
+# was opened; these say so in the owner's words.
+IDLE_LOCK_SECONDS = _SESSION_TIMEOUT_SECONDS
+
+
+def idle_lock_minutes(seconds: float = IDLE_LOCK_SECONDS) -> int:
+    """The idle time in whole minutes (at least 1), for plain words."""
+    return max(1, int(round(float(seconds) / 60.0)))
+
+
+def idle_lock_line(seconds: float = IDLE_LOCK_SECONDS) -> str:
+    """The sentence a page shows about the vault locking itself."""
+    minutes = idle_lock_minutes(seconds)
+    unit = "minute" if minutes == 1 else "minutes"
+    return (f"Your vault locks itself after {minutes} {unit} without use, "
+            f"wherever it was opened: this page, a chat or voice. It locks "
+            f"even when this page is closed.")
+
+
+# ── where the vault should be ──────────────────────────────────────────────
+_PLACE_FILENAME = "vault_place.json"
+_PLACE_SCHEMA = "puffpai_vault_place/v1"
+VAULT_DRIVE_MISSING = "Your vault drive is not plugged in."
+#: What the place record's fingerprint is made from (see
+#: :meth:`Vault.place_fingerprint`).
+_PLACE_FP_CONTEXT = b"puffpai vault place fingerprint v1"
+
+#: The encrypted record holding named secrets and the vault's own reserved
+#: items (:meth:`Vault.store`, :meth:`Vault._reserved_get`).
+_NAMED_SECRETS_FILE = "named_secrets.json"
+
+# ── a new secret's floor, as a check others can call ───────────────────────
+#
+# The vault's own floor when a PIN is SET stays :func:`_check_new_pin` (length
+# only); the patterns below are the wizard's (``zone_vault``) and
+# :func:`validate_vault_secret`'s.
+_MIN_SECRET_LENGTH = 8
+_COMMON_SECRETS = frozenset({
+    "password", "passw0rd", "password1", "12345678", "123456789", "1234567890",
+    "87654321", "qwertyui", "iloveyou", "trustno1", "letmein1", "welcome1",
+    "abcd1234", "11111111", "00000000", "aaaaaaaa", "changeme", "adminadmin",
+    "1qaz2wsx", "1q2w3e4r", "1q2w3e4r5t", "zaq12wsx", "qazwsxedc",
+    "qwertyuiop", "asdfghjkl", "zxcvbnm1",
+})
+
+# -- patterns a guessing program tries first --------------------------------
+#
+# Runs are read on rings (digits and letters wrap around: 7890123, xyzab) and
+# along the keyboard's rows. "1234567890" passed the old check, because 9 -> 0
+# is not a step of one; on the digit ring it is.
+_RINGS = ("0123456789", "abcdefghijklmnopqrstuvwxyz")
+_ROWS = ("1234567890-=", "qwertyuiop[]\\", "asdfghjkl;'", "zxcvbnm,./",
+         "qwertyuiopasdfghjklzxcvbnm")
+
+
+def _steps(a: str, b: str) -> set:
+    """``(sequence, step)`` pairs under which *b* follows *a* by one."""
+    found = set()
+    for ring in _RINGS:
+        i, j = ring.find(a), ring.find(b)
+        if i >= 0 and j >= 0:
+            if (i + 1) % len(ring) == j:
+                found.add((ring, 1))
+            if (i - 1) % len(ring) == j:
+                found.add((ring, -1))
+    for row in _ROWS:
+        i, j = row.find(a), row.find(b)
+        if i >= 0 and j >= 0 and abs(i - j) == 1:
+            found.add((row, j - i))
+    return found
+
+
+def _run_segments(text: str) -> list[int]:
+    """Lengths of the runs *text* splits into, greedily from the left."""
+    out: list[int] = []
+    i = 0
+    while i < len(text):
+        best = 1
+        if i + 1 < len(text):
+            for kind in _steps(text[i], text[i + 1]):
+                j = i + 1
+                while j + 1 < len(text) and kind in _steps(text[j], text[j + 1]):
+                    j += 1
+                best = max(best, j - i + 1)
+        out.append(best)
+        i += best
+    return out
+
+
+# Phone keypad and number-pad columns, top to bottom and bottom to top
+# (1470258369 and 2580147369 are three column walks).
+_PADS = ("147", "2580", "369", "741", "8520", "963")
+
+# Keypad shapes as a class: the two diagonals (the same digits on
+# both pads) and two loops, the diamond through the middle of each side (2, 6,
+# 8, 4) and the four corners (1, 3, 9, 7), either way round from any key.
+# With paths of neighbouring keys (:data:`_KING_RUN`) they count only when the
+# WHOLE secret is cut into such pieces (:func:`_keypad_shape`): the X and the
+# diamond drawn in another order (9517538426) are a shape; a random PIN with
+# one of them inside it is not.
+_KEYPAD_LINES = ("159", "357")
+_LOOPS = ("2684", "1397")
+
+# Shortest run that counts, by kind. A step of one (on a ring, along a row or
+# down a keypad column) counts from three characters. Any other fixed step
+# (24680, 97531, acegi, and 7777 as a step of nothing) counts from four: three
+# characters counting by some step turn up by chance in one random place in
+# ten, which would refuse honest random PINs (about 5% of random
+# ten-digit PINs, mostly as "a pattern with a character or two added").
+_UNIT_RUN = 3
+_STEPPED_RUN = 4
+
+
+def _cover_steps(a: str, b: str) -> set:
+    """Every way *b* can follow *a* inside a run.
+
+    :func:`_steps` (one up or down a ring, one along a row) and one along a
+    keypad column, plus ``("step", ring, k)`` for any other fixed step on a
+    ring, step 0 included. Only the ``"step"`` kinds need :data:`_STEPPED_RUN`
+    characters.
+    """
+    found = set(_steps(a, b))
+    for r, ring in enumerate(_RINGS):
+        i, j = ring.find(a), ring.find(b)
+        if i >= 0 and j >= 0:
+            k = (j - i) % len(ring)
+            if k not in (1, len(ring) - 1):
+                found.add(("step", r, k))
+    for pad in _PADS:
+        i, j = pad.find(a), pad.find(b)
+        if i >= 0 and j >= 0 and abs(i - j) == 1:
+            found.add((pad, j - i))
+    return found
+
+
+def _keypad_steps(a: str, b: str) -> set:
+    """The keypad kinds of :func:`_keypad_shape`: a diagonal, a loop (four
+    long or more) or a path of neighbouring keys (:data:`_KING_RUN` long)."""
+    found = set()
+    for line in _KEYPAD_LINES:
+        i, j = line.find(a), line.find(b)
+        if i >= 0 and j >= 0 and abs(i - j) == 1:
+            found.add((line, j - i))
+    for loop in _LOOPS:
+        i, j = loop.find(a), loop.find(b)
+        if i >= 0 and j >= 0 and (j - i) % 4 in (1, 3):
+            found.add(("loop", loop, (j - i) % 4))
+    return found | _king_steps(a, b)
+
+
+#: A path on a keypad: each move to a key right next to the last one, across,
+#: up, down or corner to corner, turning any way. Seven keys or
+#: more count as a run when the whole secret is cut into runs with nothing
+#: left over; a path of the whole secret is :func:`_keypad_path`. Seven, not
+#: six: the same shapes are caught and fewer random PINs are (measured
+#: on 20,000 random PINs: ten digits 1.31% refused in all, twelve digits
+#: 0.18%).
+_KING_RUN = 7
+
+
+def _king_steps(a: str, b: str) -> set:
+    """``("king", pad)`` for every keypad on which *b* is right next to *a*."""
+    found = set()
+    for n, pad in enumerate(_KEYPADS):
+        if a in pad and b in pad:
+            (r1, c1), (r2, c2) = pad[a], pad[b]
+            if (r1, c1) != (r2, c2) and max(abs(r1 - r2), abs(c1 - c2)) == 1:
+                found.add(("king", n))
+    return found
+
+
+def _cover_and_king(a: str, b: str, king: bool) -> set:
+    """:func:`_cover_steps`, plus the keypad kinds (:func:`_keypad_steps`)
+    when *king*: only ever for a whole secret, never a piece of one."""
+    found = _cover_steps(a, b)
+    return found | _keypad_steps(a, b) if king else found
+
+
+def _keypad_shape(text: str) -> bool:
+    """Eight characters or more drawing keypad shapes from end to end: a
+    path of neighbouring keys (:func:`_keypad_path`), or cut with nothing
+    left over into runs, diagonals, loops and paths (9517538426: the X and
+    the diamond, in another order)."""
+    if len(text) < 8:
+        return False
+    return _keypad_path(text) or _run_cover(text, king=True)[0] == 0
+
+
+def _keypad_path(text: str) -> bool:
+    """Eight digits or more, every move to a key right next to the last one
+    on one keypad (any turns): a path through neighbouring keys. About 0.2%
+    of random ten-digit PINs are one (measured)."""
+    if len(text) < 8 or not text.isdigit():
+        return False
+    kinds = None
+    for a, b in zip(text, text[1:]):
+        here = {k for k in _king_steps(a, b)}
+        kinds = here if kinds is None else kinds & here
+        if not kinds:
+            return False
+    return True
+
+
+def _run_cover(text: str, king: bool = False) -> tuple[int, int]:
+    """How few characters are left over when *text* is cut into runs.
+
+    A run is characters each following the last by the same kind of step
+    (:func:`_cover_steps`), at least :data:`_UNIT_RUN` long for a step of one
+    and :data:`_STEPPED_RUN` long for any other step. Returns
+    ``(left, left_with_long)``: the fewest characters not in any run, and the
+    fewest when at least one run is one character longer than its shortest (a
+    large number when there is no such cut). Exact, not greedy, so a run
+    cannot hide by lending its first character to the run before it.
+    """
+    n = len(text)
+    never = n + 1000
+    left = [never] * (n + 1)
+    left_long = [never] * (n + 1)
+    left[0] = 0
+    for i in range(n):
+        if left[i] >= never:
+            continue
+        left[i + 1] = min(left[i + 1], left[i] + 1)
+        left_long[i + 1] = min(left_long[i + 1], left_long[i] + 1)
+        if i + 1 >= n:
+            continue
+        for kind in _cover_and_king(text[i], text[i + 1], king):
+            shortest = (_KING_RUN if kind[0] == "king" else _STEPPED_RUN
+                        if kind[0] in ("step", "loop") else _UNIT_RUN)
+            j = i + 1
+            while j + 1 < n and kind in _cover_and_king(text[j], text[j + 1], king):
+                j += 1
+                end = j + 1  # text[i:end] is a run of length end - i
+                if end - i < shortest:
+                    continue
+                left[end] = min(left[end], left[i])
+                left_long[end] = min(left_long[end], left_long[i])
+                # A path of neighbouring keys is not "a run longer than its
+                # shortest" (too many random PINs hold one with two over).
+                if end - i > shortest and kind[0] != "king":
+                    left_long[end] = min(left_long[end], left[i])
+    return left[n], left_long[n]
+
+
+# Where each digit sits on a phone keypad (123 on top, 0 under 8) and on a
+# computer's number pad (789 on top, the wide 0 under 2 and under 1).
+_KEYPADS = (
+    {"1": (0, 0), "2": (0, 1), "3": (0, 2), "4": (1, 0), "5": (1, 1),
+     "6": (1, 2), "7": (2, 0), "8": (2, 1), "9": (2, 2), "0": (3, 1)},
+    {"7": (0, 0), "8": (0, 1), "9": (0, 2), "4": (1, 0), "5": (1, 1),
+     "6": (1, 2), "1": (2, 0), "2": (2, 1), "3": (2, 2), "0": (3, 1)},
+    {"7": (0, 0), "8": (0, 1), "9": (0, 2), "4": (1, 0), "5": (1, 1),
+     "6": (1, 2), "1": (2, 0), "2": (2, 1), "3": (2, 2), "0": (3, 0)},
+)
+
+
+def _keypad_strokes(text: str, pad: dict) -> int:
+    """How many straight strokes draw *text* on *pad*, or 0 when none do.
+
+    Each move goes to a key in the same row, column or diagonal, at most two
+    keys away (5 to 0 on a phone passes over 8). A stroke is moves in one
+    direction; the corner key ends one stroke and starts the next.
+    """
+    directions = []
+    for a, b in zip(text, text[1:]):
+        (r1, c1), (r2, c2) = pad[a], pad[b]
+        dr, dc = r2 - r1, c2 - c1
+        if (dr, dc) == (0, 0) or max(abs(dr), abs(dc)) > 2:
+            return 0
+        if dr and dc and abs(dr) != abs(dc):
+            return 0
+        directions.append(((dr > 0) - (dr < 0), (dc > 0) - (dc < 0)))
+    return 1 + sum(1 for x, y in zip(directions, directions[1:]) if x != y)
+
+
+def _keypad_walk(text: str, part: bool = False) -> bool:
+    """True when the digits draw a shape on a phone keypad or number pad.
+
+    Snakes, spirals, the square around the edge, an X (1478963250,
+    1236987410, 1593574862): every move to a key in line with the last, in
+    at most ``len - 3`` strokes (so at least two moves carry straight on)
+    and never more than seven. Six digits or more. About 0.2% of random
+    ten-digit PINs draw such a shape and almost no longer ones (tested),
+    against about 4% of ten-digit PINs if any number of turns were allowed.
+
+    *part* (a PIN's middle, once a character or two is taken off): eight
+    digits or more and one stroke fewer, so a shape with a character added
+    (1478963250x) is still seen while random PINs almost never are (about
+    0.03% more of them).
+    """
+    shortest, slack, most = (8, 4, 6) if part else (6, 3, 7)
+    if len(text) < shortest or not text.isdigit():
+        return False
+    limit = min(len(text) - slack, most)
+    for pad in _KEYPADS:
+        strokes = _keypad_strokes(text, pad)
+        if strokes and strokes <= limit:
+            return True
+    return False
+
+
+#: The patterns the vault's own floor refuses (every path to a new secret
+#: comes through it): one run, runs back to back, digits counting by a fixed
+#: step, or a shape drawn on the keypad.
+FLOOR_PATTERNS = frozenset({"run", "runs", "digit_step", "keypad"})
+
+
+def weak_pattern(secret: str, strict: bool = False) -> str:
+    """The pattern that makes *secret* guessable, or '' when there is none.
+
+    ``run``: one run up or down a ring or a keyboard row (1234567890,
+    0987654321, 7890123456, xyzabcde, qwertyuiop). ``runs``: the whole
+    secret cut into runs, three or more long counting by one on a ring,
+    along a keyboard row or down a keypad column, or four or more long
+    counting by any other fixed step (abcd1234, 1234554321, 123abc456,
+    123456123456123456, qwertqwertqwert, 1234512345123, 2468013579,
+    8642097531, 1470258369, 2580147369, 7418529630, acegi13579), or with at
+    most two characters left over when one run is longer than its shortest
+    (abcdefgh1, 6210401234). ``repeat``: a block of one to three characters
+    said again and again, a part-block at the end included (abcabcabc,
+    121212, abcabcab). ``digit_step``: digits counting by any fixed step,
+    wrapping (1357913579, 9630741852). ``keypad``: digits drawing a shape on
+    a phone keypad or number pad (:func:`_keypad_walk`). Case does not
+    matter. A passphrase with spaces is never one of these.
+
+    *strict* is for a part of a PIN (the middle once a character or two is
+    taken off, or every other character): there the whole part must be the
+    pattern, with no characters left over and a keypad shape held to fewer
+    turns, because a few random characters around something that is only
+    nearly a pattern make no pattern at all.
+
+    The vault's own floor refuses :data:`FLOOR_PATTERNS`; the wizard's PIN
+    rule refuses every kind.
+    """
+    text = str(secret or "").lower()
+    if len(text) < 3:
+        return ""
+    length = len(text)
+    for block in range(1, min(3, length // 2) + 1):
+        if all(text[k] == text[k % block] for k in range(length)):
+            return "repeat"
+    if text.isdigit() and length >= 6:
+        step = (int(text[1]) - int(text[0])) % 10
+        if all((int(text[k + 1]) - int(text[k])) % 10 == step
+               for k in range(length - 1)):
+            return "digit_step"
+    segments = _run_segments(text)
+    if len(segments) == 1:
+        return "run"
+    left, left_long = _run_cover(text)
+    if left == 0 or (not strict and left_long <= 2):
+        return "runs"
+    if _keypad_walk(text, part=strict):
+        return "keypad"
+    if not strict:
+        if _keypad_shape(text) or _keypad_with_marks(text):
+            return "keypad"
+        block = _said_twice_block(text)
+        if block:
+            kind = weak_pattern(block)
+            if kind in FLOOR_PATTERNS:
+                return kind
+    return ""
+
+
+def _keypad_with_marks(text: str) -> bool:
+    """A keypad shape with one or two other characters put in anywhere.
+
+    Without this, 1478963k250, 14789k63250,
+    123698k7410 and 15935k74862 make real vaults. The digits are read on
+    their own when there are at least six of them and at most two other
+    characters, by the same shape rule as a PIN of digits only (so a random
+    PIN is caught about as rarely as a random PIN of digits).
+    """
+    digits = "".join(ch for ch in text if ch.isdigit())
+    others = len(text) - len(digits)
+    if not 0 < others <= 2 or len(digits) < 6:
+        return False
+    # Any keypad shape, drawn in any order (9517538426q)
+    return _keypad_walk(digits) or _keypad_shape(digits)
+
+
+def _said_twice_block(text: str) -> str:
+    """The block of four or more that *text* says again and again, or ''."""
+    n = len(text)
+    for block in range(4, n // 2 + 1):
+        if all(text[k] == text[k % block] for k in range(n)):
+            return text[:block]
+    return ""
+
+
+#: Secret names with this prefix belong to the vault itself (the write-only
+#: inbox key, see :mod:`puffpai.security.vault_inbox`). No public method reads,
+#: writes, lists or deletes them, so no API route can hand one out.
+_RESERVED_PREFIX = "__puffpai."
+
+
+def _is_reserved(name: object) -> bool:
+    return str(name).startswith(_RESERVED_PREFIX)
+
+
+#: Sign-up key records (:mod:`puffpai.security.keys`).
+#: Reserved like the inbox key, so every public method and every generic vault
+#: route refuses or hides them; on top of that ONLY the key broker may read,
+#: write or delete one (:func:`_require_key_broker`).
+_KEY_PREFIX = _RESERVED_PREFIX + "key."
+_KEY_BROKER_MODULE = "puffpai.security.keys"
+
+
+def _is_key_name(name: object) -> bool:
+    return str(name).startswith(_KEY_PREFIX)
+
+
+def _require_key_broker(depth: int = 2) -> None:
+    """Refuse a key-record call from anywhere but the key broker.
+
+    A guard against accident and against a plugin or model-driven call site,
+    not a sandbox: code already running in this process can patch anything.
+    """
+    caller = sys._getframe(depth).f_globals.get("__name__", "")
+    if caller != _KEY_BROKER_MODULE:
+        raise VaultError("sign-up key records belong to the key broker")
+
+
+
+def validate_vault_secret(secret: str) -> tuple[bool, str]:
+    """A floor for an unlocking secret. Returns ``(ok, reason)``.
+
+    Weaker than :func:`puffpai.zone_vault.validate_pin`, the policy the wizard
+    applies, and stricter than :func:`_check_new_pin`: it also refuses one
+    character repeated, a common password and the patterns in
+    :data:`FLOOR_PATTERNS`, while still allowing a spaced passphrase.
+    """
+    if not isinstance(secret, str) or not secret:
+        return False, "a vault password is required"
+    if len(secret) < _MIN_SECRET_LENGTH:
+        return False, (
+            f"a vault password must be at least {_MIN_SECRET_LENGTH} characters; "
+            f"a short numeric PIN can be worked through offline"
+        )
+    if len(set(secret)) == 1:
+        return False, "a vault password cannot be one character repeated"
+    if secret.lower() in _COMMON_SECRETS:
+        return False, "that password is on every published list of common passwords"
+    if len(secret) >= 3:
+        step = ord(secret[1]) - ord(secret[0])
+        if step in (1, -1) and all(
+            ord(secret[i + 1]) - ord(secret[i]) == step for i in range(len(secret) - 1)
+        ):
+            return False, "a vault password cannot be a straight run of characters"
+    if weak_pattern(secret) in FLOOR_PATTERNS:
+        return False, ("a vault password cannot count up or down, by ones or "
+                       "by bigger steps, run along the keyboard or keypad, "
+                       "even when it wraps around, or draw a shape on the "
+                       "keypad")
+    return True, ""
 
 # ── Document-display allowlist + taxonomy (Zone-1 vault doc viewer) ──────────
 # The ONLY MIME types the ephemeral vault viewer will store or serve. Validated
@@ -382,6 +888,37 @@ class VaultError(Exception):
 class AuthenticationError(VaultError):
     """Raised when authentication fails."""
     pass
+
+
+class VaultLocked(VaultError):
+    """Raised when an operation needs an unlocked vault but none is open."""
+
+
+class VaultThrottled(VaultError):
+    """Raised when too many unlock attempts have failed too recently.
+
+    Carries :attr:`retry_after`, the whole seconds remaining, so a caller can
+    tell "your PIN is wrong" from "you are going too fast".
+    """
+
+    def __init__(self, retry_after: float) -> None:
+        self.retry_after = max(0, int(round(retry_after)))
+        super().__init__(
+            f"too many failed attempts; try again in {self.retry_after} seconds"
+        )
+
+
+class WeakSecretError(VaultError):
+    """Raised when a proposed PIN is below the floor or a caller's policy."""
+
+
+class VaultMissing(VaultError):
+    """The vault should be in a folder (or on a drive) that is not there.
+
+    ``str(exc)`` is written to be shown to a person as it is. Nothing is
+    created while this stands: a second, empty vault is never made in the
+    missing one's place.
+    """
 
 
 # -- Keyring read-modify-write lock -----------------------------------------
@@ -567,6 +1104,54 @@ class VaultSession:
         self.last_access = time.time()
 
 
+class _UnlockState:
+    """``vault.is_unlocked``, read both ways.
+
+    Called with a session id it answers for that session
+    (``vault.is_unlocked(sid)``). Read as a truth value (``if
+    vault.is_unlocked:``) it answers whether any live session holds a key, the
+    same as :attr:`Vault.has_live_session`. A plain method here would read as
+    always true, which would make a locked vault look open.
+    """
+
+    __slots__ = ("_vault",)
+
+    def __init__(self, vault) -> None:
+        self._vault = vault
+
+    def __call__(self, session_id: str) -> bool:
+        return self._vault._session_unlocked(session_id)
+
+    def __bool__(self) -> bool:
+        return bool(self._vault.has_live_session)
+
+    def __repr__(self) -> str:
+        return f"<vault unlocked={bool(self)}>"
+
+
+class _UnlockStateDescriptor:
+    def __get__(self, obj, owner=None):
+        if obj is None:
+            return self
+        return _UnlockState(obj)
+
+
+_named_locks_guard = threading.Lock()
+_named_locks: dict = {}
+
+
+def _named_lock_for(vault_dir) -> _KeyringLock:
+    """One lock per vault folder for the named-secrets record's
+    read-modify-write, shared in-process and across processes."""
+    key = str(Path(vault_dir).resolve())
+    with _named_locks_guard:
+        lock = _named_locks.get(key)
+        if lock is None:
+            lock = _KeyringLock(Path(vault_dir) / ".named_secrets.lock")
+            _named_locks[key] = lock
+        return lock
+
+
 class Vault:
     """Zone 1 encrypted storage with session-based authentication.
 
@@ -601,6 +1186,12 @@ class Vault:
         # a future factor (e.g. voice MFA) registers a verifier via
         # register_auth_factor("voice", fn) and is added to required_factors().
         self._factor_verifiers = {"totp": self.verify_totp}
+        #: Called with a reason ("lock", "idle") when the last live session
+        #: ends. A listener's error never stops a lock.
+        self._lock_listeners: list = []
+        #: Only the install's own vault (no folder given) is remembered and
+        #: checked for a missing drive.
+        self._tracked = vault_dir is None
 
         try:
             self._vault_dir.mkdir(parents=True, exist_ok=True)
@@ -1093,6 +1684,7 @@ class Vault:
         """Set up the vault with an initial PIN/password."""
         if self.is_initialized:
             raise VaultError("Vault already initialized. Use change_pin() instead.")
+        self._refuse_if_missing()
         _check_new_pin(pin)
 
         self._salt = secrets.token_bytes(_SALT_LENGTH)
@@ -1116,6 +1708,7 @@ class Vault:
 
         self._audit.log(action="vault_initialize", user="system",
                         result="success", details="Vault initialized")
+        self._adopt_place()
 
     def authenticate(self, pin: str, *, notify: bool = True) -> VaultSession:
         """Authenticate and create a session."""
@@ -1156,14 +1749,34 @@ class Vault:
                         result="success", details=f"Session: {session_id[:8]}...")
         # A PIN-only session is a FULL unlock only when no other factor is
         # enrolled; authenticate_mfa fires its own event after every factor.
-        if notify and not getattr(_UNLOCK_TL, "in_mfa", False):
+        if not getattr(_UNLOCK_TL, "in_mfa", False):
             try:
                 extra = [f for f in self.required_factors() if f != "pin"]
             except Exception:
                 extra = ["unknown"]
             if not extra:
-                _fire_unlock(session_id)
+                self._after_open()
+                if notify:
+                    _fire_unlock(session_id)
         return session
+
+    def _after_open(self) -> None:
+        """Work that waits for the vault to open. Never raises.
+
+        Runs after every full unlock and recovery: the records of sign-up keys
+        removed while the vault was locked are cleared, and a Toolsmith run
+        waiting for the vault goes on.
+        """
+        try:
+            from puffpai.security import keys as _keys
+            _keys.on_vault_opened(self)
+        except Exception:  # pragma: no cover - never block opening the vault
+            pass
+        try:
+            from puffpai.security import toolsmith_cloud as _tc
+            _tc.on_vault_opened(self)
+        except Exception:  # pragma: no cover - never block opening the vault
+            pass
 
     def _validate_session(self, session_id: str) -> VaultSession:
         session = self._sessions.get(session_id)
@@ -1171,6 +1784,7 @@ class Vault:
             raise AuthenticationError("Invalid session")
         if session.is_expired:
             del self._sessions[session_id]
+            self._after_session_end("idle")
             raise AuthenticationError("Session expired -- please re-authenticate")
         session.touch()
         return session
@@ -1265,12 +1879,15 @@ class Vault:
             del self._sessions[session_id]
             self._audit.log(action="vault_logout",
                             user=f"session:{session_id[:8]}", result="success")
+            self._after_session_end("lock")
 
     def cleanup_expired_sessions(self) -> int:
         """Remove all expired sessions."""
         expired = [sid for sid, s in self._sessions.items() if s.is_expired]
         for sid in expired:
             del self._sessions[sid]
+        if expired:
+            self._after_session_end("idle")
         return len(expired)
 
     # ── Recovery code + PIN change (wrapped-key layer) ────────────────────
@@ -1441,6 +2058,7 @@ class Vault:
         self._audit.log(action="vault_recovery", user="authenticated",
                         result="success",
                         details=f"PIN reset via recovery; session {session_id[:8]}...")
+        self._after_open()
         return session
 
     def change_pin(self, session_id: str, old_pin: str, new_pin: str) -> None:
@@ -1623,6 +2241,7 @@ class Vault:
                             result="success",
                             details=f"MFA complete: {'+'.join(extra_factors)}")
 
+        self._after_open()
         if notify:
             _fire_unlock(session.session_id)
         return session
@@ -1711,7 +2330,9 @@ class Vault:
             raise VaultError("Vault is locked: no session encryption key available")
         return key
 
-    def is_unlocked(self, session_id: str) -> bool:
+    is_unlocked = _UnlockStateDescriptor()
+
+    def _session_unlocked(self, session_id: str) -> bool:
         """True if the session is valid and carries a usable encryption key."""
         try:
             self._session_key(session_id)
@@ -2263,3 +2884,462 @@ class Vault:
             return rec
         except (VaultError, AuthenticationError):
             return None
+
+    # ── the build engine's doors ───────────────────────────────────────────
+
+    @property
+    def vault_dir(self) -> str:
+        """The folder this vault lives in."""
+        return str(self._vault_dir)
+
+    def add_lock_listener(self, callback: Callable[[str], None]) -> None:
+        """Call ``callback(reason)`` whenever the last live session ends
+        (``"lock"`` or ``"idle"``). A listener's error never stops a lock."""
+        if callable(callback) and callback not in self._lock_listeners:
+            self._lock_listeners.append(callback)
+
+    def _fire_lock(self, reason: str) -> None:
+        for fn in list(self._lock_listeners):
+            try:
+                fn(reason)
+            except Exception:
+                pass
+
+    def _after_session_end(self, reason: str) -> None:
+        """Tell the lock listeners when no live session is left."""
+        if self._first_live_session_id() is None:
+            self._fire_lock(reason)
+
+    def unlock(self, pin: str) -> VaultSession:
+        """Open the vault with *pin* alone and return the session.
+
+        For the build engine's own steps (the key broker's terminal commands,
+        moving the vault). Same lockout as :meth:`authenticate`, reported as
+        :class:`VaultThrottled`. Refused when another factor is enrolled: those
+        paths go through :meth:`authenticate_mfa`. Unlock listeners are not
+        told, because this is not the household opening its vault.
+        """
+        if not self.is_initialized:
+            self._refuse_if_missing()
+            raise VaultError("Vault not initialized. Call initialize() first.")
+        if time.time() < self._lockout_until:
+            raise VaultThrottled(self._lockout_until - time.time())
+        try:
+            extra = [f for f in self.required_factors() if f != "pin"]
+        except Exception:
+            extra = ["unknown"]
+        if extra:
+            raise AuthenticationError(
+                "this vault also needs your second factor; open it from the "
+                "Vault page")
+        return self.authenticate(pin, notify=False)
+
+    def lock(self) -> None:
+        """End every live session now. The data key is dropped from memory."""
+        if not self._sessions:
+            return
+        self._sessions.clear()
+        self._audit.log(action="vault_lock", user="system", result="success",
+                        details="every session ended")
+        self._fire_lock("lock")
+
+    def check_pin(self, pin: str) -> bool:
+        """Is *pin* this vault's PIN? Never opens the vault.
+
+        Counts against the same lockout as :meth:`authenticate` (checked
+        before any key derivation), so it is never a faster way to guess.
+        Raises :class:`VaultThrottled` in a lockout, :class:`VaultMissing` for
+        a vault whose drive is not plugged in, and :class:`VaultError` when
+        there is no vault.
+        """
+        if not self.is_initialized:
+            self._refuse_if_missing()
+            raise VaultError("Vault not initialized. Call initialize() first.")
+        if time.time() < self._lockout_until:
+            raise VaultThrottled(self._lockout_until - time.time())
+        if not isinstance(pin, str) or not pin:
+            return False
+        candidate_hash = self._hash_pin(pin, self._salt)
+        if not hmac.compare_digest(candidate_hash, self._pin_hash):
+            self._failed_attempts += 1
+            self._audit.log(action="vault_auth", user="unknown", result="failed",
+                            details=(f"pin check, attempt {self._failed_attempts}"
+                                     f"/{_MAX_FAILED_ATTEMPTS}"))
+            if self._failed_attempts >= _MAX_FAILED_ATTEMPTS:
+                self._lockout_until = time.time() + _LOCKOUT_SECONDS
+                self._failed_attempts = 0
+            return False
+        self._failed_attempts = 0
+        self._audit.log(action="vault_auth", user="authenticated",
+                        result="success", details="pin check")
+        return True
+
+    def redeem_recovery_code(
+        self, code: str, new_password: str, *,
+        policy: Optional[Callable[[str], tuple[bool, str]]] = None,
+    ) -> tuple[VaultSession, str]:
+        """Recover with the recovery code, set a new PIN, and get a new code.
+
+        :meth:`recover_with_code` (the used code stops working) followed by
+        :meth:`generate_recovery_code`, so the caller has a fresh code to show
+        once. *policy* is an optional stricter rule for the new PIN, checked
+        first, along with :func:`_check_new_pin`, so a refused PIN costs no
+        key derivation and changes nothing.
+        """
+        if policy is not None:
+            ok, reason = policy(new_password)
+            if not ok:
+                raise WeakSecretError(reason or "that PIN is not allowed")
+        try:
+            _check_new_pin(new_password)
+        except ValueError as exc:
+            raise WeakSecretError(str(exc)) from None
+        session = self.recover_with_code(code, new_password)
+        new_code = self.generate_recovery_code(session.session_id)
+        return session, new_code
+
+    # -- where the vault should be ---------------------------------------
+
+    def missing_reason(self) -> str:
+        """Plain words when this vault's folder or drive is missing, else ''.
+
+        Only for the install's own vault, and only once a vault was made (or
+        opened) here before: see :func:`remember_place`. A fresh install has
+        nothing remembered and nothing missing.
+        """
+        if not self._tracked:
+            return ""
+        if self.is_initialized:
+            self._adopt_place()
+            return ""
+        recorded = read_place()
+        if not recorded:
+            return ""
+        here = os.path.normcase(os.path.abspath(self._vault_dir))
+        there = os.path.normcase(os.path.abspath(recorded))
+        if here != there and _vault_files_present(recorded):
+            return (f"Your vault is in {recorded}, but this computer is set to "
+                    f"use {self._vault_dir}, where there is none. No second "
+                    f"vault was made. Set it back to {recorded} to use your "
+                    f"vault.")
+        return (f"{VAULT_DRIVE_MISSING} Your vault was made in {recorded}, "
+                f"and that folder is not there now. Plug in the drive that "
+                f"holds it and try again. A new, empty vault is never made in "
+                f"its place. If that drive is gone for good and you want to "
+                f"start a new, empty vault, delete {_PLACE_FILENAME} from the "
+                f"state folder first (puffpai where shows that folder).")
+
+    def _refuse_if_missing(self) -> None:
+        why = self.missing_reason()
+        if why:
+            self._audit.log(action="vault_missing", user="system",
+                            result="refused", details="vault folder missing")
+            raise VaultMissing(why)
+
+    def _adopt_place(self) -> None:
+        """Remember where the install's own vault is, once it exists."""
+        if self._tracked and self.is_initialized:
+            remember_place(str(self._vault_dir))
+
+    def place_fingerprint(self) -> str:
+        """Which vault this is, as only its PIN can show; ``""`` when locked.
+
+        An HMAC of a fixed text under the open vault's data key: nobody
+        without the key can make a vault that gives the same answer.
+        """
+        for session in list(self._sessions.values()):
+            key = getattr(session, "key", None)
+            if not session.is_expired and key:
+                return hmac.new(bytes(key), _PLACE_FP_CONTEXT,
+                                hashlib.sha256).hexdigest()
+        return ""
+
+    # -- named secrets and the vault's own reserved items ------------------
+    #
+    # One encrypted record (:data:`_NAMED_SECRETS_FILE`) under the data key,
+    # read from disk on every call (a terminal and the server may both hold a
+    # handle on the same folder) and rewritten under a per-folder lock.
+    # Names starting with ``__puffpai.`` belong to the vault itself: no public
+    # method reads, writes, lists or deletes them, and sign-up key records
+    # (``__puffpai.key.*``) only the key broker may touch.
+
+    def _open_key(self, *, touch: bool = True) -> bytes:
+        for session in list(self._sessions.values()):
+            key = getattr(session, "key", None)
+            if not session.is_expired and key is not None:
+                if touch:
+                    session.touch()
+                return key
+        raise VaultLocked("the vault is locked")
+
+    def _named_load(self, key: bytes) -> dict:
+        path = self._vault_dir / _NAMED_SECRETS_FILE
+        if not path.exists():
+            return {}
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        try:
+            data = json.loads(self.decrypt_data(raw, key).decode("utf-8"))
+        except Exception:
+            raise VaultError("Cannot decrypt vault file: " + _NAMED_SECRETS_FILE)
+        return data if isinstance(data, dict) else {}
+
+    def _named_save(self, key: bytes, data: dict) -> None:
+        plaintext = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self._atomic_write(self._vault_dir / _NAMED_SECRETS_FILE,
+                           self.encrypt_data(plaintext, key))
+
+    def store(self, name: str, value: str) -> None:
+        """Store (or replace) a named secret string. Requires an open vault."""
+        if _is_reserved(name):
+            raise VaultError("that name is reserved for the vault itself")
+        key = self._open_key()
+        with _named_lock_for(self._vault_dir):
+            data = self._named_load(key)
+            data[str(name)] = str(value)
+            self._named_save(key, data)
+        self._audit.log(action="vault_store_secret", user="system",
+                        result="success", details="named secret stored")
+
+    def retrieve(self, name: str) -> Optional[str]:
+        """Return a named secret, or ``None`` if it is not present."""
+        key = self._open_key()
+        if _is_reserved(name):
+            return None
+        value = self._named_load(key).get(str(name))
+        return value if isinstance(value, str) else None
+
+    def list_secrets(self) -> list:
+        """The sorted names of stored secrets (names only, never values)."""
+        key = self._open_key()
+        return sorted(k for k in self._named_load(key) if not _is_reserved(k))
+
+    def delete(self, name: str) -> bool:
+        """Delete a named secret. Returns True if it existed."""
+        if _is_reserved(name):
+            return False
+        key = self._open_key()
+        with _named_lock_for(self._vault_dir):
+            data = self._named_load(key)
+            existed = data.pop(str(name), None) is not None
+            if existed:
+                self._named_save(key, data)
+        if existed:
+            self._audit.log(action="vault_delete_secret", user="system",
+                            result="success", details="named secret deleted")
+        return existed
+
+    def _reserved_get(self, name: str) -> Optional[str]:
+        """Read a reserved item. Internal: for :mod:`vault_inbox` and, for
+        ``__puffpai.key.*`` names only, :mod:`puffpai.security.keys`."""
+        # An automatic job reading a key is not the owner using the vault.
+        key = self._open_key(touch=False)
+        if not _is_reserved(name):
+            raise VaultError("not a reserved name")
+        if _is_key_name(name):
+            _require_key_broker()
+        value = self._named_load(key).get(str(name))
+        return value if isinstance(value, str) else None
+
+    def _reserved_set(self, name: str, value: str) -> None:
+        """Write a reserved item. Internal: for :mod:`vault_inbox` and, for
+        ``__puffpai.key.*`` names only, :mod:`puffpai.security.keys`."""
+        key = self._open_key()
+        if not _is_reserved(name):
+            raise VaultError("not a reserved name")
+        if _is_key_name(name):
+            _require_key_broker()
+        with _named_lock_for(self._vault_dir):
+            data = self._named_load(key)
+            data[str(name)] = str(value)
+            self._named_save(key, data)
+        self._audit.log(action="vault_store_secret", user="system",
+                        result="success", details="reserved")
+
+    def _reserved_delete(self, name: str) -> bool:
+        """Delete a sign-up key record. Internal: for the key broker only."""
+        key = self._open_key()
+        if not _is_key_name(name):
+            raise VaultError("only a sign-up key record can be deleted here")
+        _require_key_broker()
+        with _named_lock_for(self._vault_dir):
+            data = self._named_load(key)
+            existed = data.pop(str(name), None) is not None
+            if existed:
+                self._named_save(key, data)
+        if existed:
+            self._audit.log(action="vault_delete_secret", user="system",
+                            result="success", details="reserved")
+        return existed
+
+    def _reserved_key_names(self) -> list:
+        """Names (never values) of the sign-up key records. Broker only."""
+        key = self._open_key(touch=False)
+        _require_key_broker()
+        return sorted(n for n in self._named_load(key) if _is_key_name(n))
+
+    def delete_service_secret(self, filename: str) -> bool:
+        """Remove one service-tier key record. Needs no key: removing is "off".
+
+        Only ``key_*`` names, and only for the key broker. The service tier
+        holds :data:`SERVICE_SECRET_FILES` alone, so on this build there is
+        normally nothing of that name to remove.
+        """
+        safe = os.path.basename(str(filename or ""))
+        if safe != filename or not safe.startswith("key_") or ".." in safe:
+            raise VaultError("not a service-tier key record")
+        _require_key_broker()
+        path = self._vault_dir / safe
+        existed = path.is_file()
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        if existed:
+            self._audit.log(action="vault_service_secret_delete", user="system",
+                            result="success", details=safe)
+        return existed
+
+
+
+# ---------------------------------------------------------------------------
+# where the vault should be
+# ---------------------------------------------------------------------------
+
+def _write_file_atomic(path: str, data: bytes) -> None:
+    """Write *data* to *path* through a temp file and ``os.replace``."""
+    tmp = f"{path}.tmp-{secrets.token_hex(4)}"
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def place_record_path() -> Optional[str]:
+    """``<state>/vault_place.json``, or None when there is no state folder."""
+    try:
+        from puffpai.config import get_state_dir
+        return os.path.join(get_state_dir(), _PLACE_FILENAME)
+    except Exception:
+        return None
+
+
+def read_place() -> Optional[str]:
+    """The folder the install's vault was made (or last opened) in, or None.
+
+    A record that cannot be read is read as "somewhere, unknown": the
+    install's own folder is then treated as missing rather than as fresh, so
+    a damaged record can never lead to a silent second vault: the configured
+    folder is returned in that case.
+    """
+    path = place_record_path()
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        folder = data.get("vault_dir") if isinstance(data, dict) else None
+        if isinstance(folder, str) and folder.strip() and os.path.isabs(folder):
+            return folder
+    except (OSError, ValueError):
+        pass
+    return _default_vault_dir()
+
+
+def remember_place(vault_dir: str, *, fingerprint: Optional[str] = None) -> bool:
+    """Record where the install's vault is, and (when known) which vault it
+    is (:meth:`Vault.place_fingerprint`). Never raises; True when written.
+
+    A record for the same folder keeps its fingerprint when none is given. A
+    record for another folder never inherits one: a fingerprint is only ever
+    written by a caller that has the vault open.
+    """
+    path = place_record_path()
+    if not path:
+        return False
+    folder = os.path.abspath(vault_dir)
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if (isinstance(data, dict) and data.get("vault_dir") == folder
+                    and (not fingerprint or data.get("fingerprint") == fingerprint)):
+                return False
+    except (OSError, ValueError):
+        pass
+    record: dict = {"schema": _PLACE_SCHEMA, "vault_dir": folder,
+                    "at": time.time()}
+    if fingerprint:
+        record["fingerprint"] = str(fingerprint)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        _write_file_atomic(path, json.dumps(record, indent=2).encode("utf-8"))
+        return True
+    except OSError:
+        return False
+
+
+def remembered_fingerprint() -> str:
+    """The remembered vault's fingerprint, or ``""`` when none is known."""
+    path = place_record_path()
+    if not path or not os.path.exists(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        fp = data.get("fingerprint") if isinstance(data, dict) else None
+        return fp if isinstance(fp, str) else ""
+    except (OSError, ValueError):
+        return ""
+
+
+def forget_place() -> bool:
+    """Stop waiting for the remembered vault: delete the record (never the
+    vault). Only for a choice made at this computer's command line. True
+    when a record was removed."""
+    path = place_record_path()
+    if not path or not os.path.exists(path):
+        return False
+    try:
+        os.remove(path)
+        return True
+    except OSError:
+        return False
+
+
+def missing_words(vault: Any) -> str:
+    """The owner's words when *vault*'s folder or drive is missing, else ''.
+
+    For the places that say "there is no vault yet": when the vault is on a
+    drive that is not plugged in, they say that instead, and never offer to
+    make a new one. Never raises.
+    """
+    try:
+        why = getattr(vault, "missing_reason", None)
+        return str(why() or "") if callable(why) else ""
+    except Exception:
+        return ""
+
+
+def _vault_files_present(folder: str) -> bool:
+    """True when *folder* already holds a vault (this build's files, or the
+    files of the simpler vault format)."""
+    names = (".vault_key_salt", _KEYRING_FILE, "vault.meta.json")
+    if any(os.path.isfile(os.path.join(folder, n)) for n in names):
+        return True
+    return (os.path.isfile(os.path.join(folder, "vault.salt"))
+            and os.path.isfile(os.path.join(folder, "vault.enc")))
+
+
+def _default_vault_dir() -> str:
+    """The configured vault folder, as text."""
+    return str(default_vault_dir())

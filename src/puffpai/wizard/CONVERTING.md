@@ -1,8 +1,8 @@
 # A skill's card
 
-How a wizard skill is written. Every built-in skill except Prove decides
-through `propose` / `apply` / `verify`, and both
-renderers — the console and the dashboard — draw the card that comes out.
+How a wizard skill decides and shows its decision. Every built-in skill except
+Prove decides through `propose` / `apply` / `verify`, and both renderers (the
+console and the dashboard) draw the card that comes out.
 Discover (`packages/discover/skill.py`) is the worked example; Secure
 (`packages/secure/skill.py`) is the example of a skill that asks more than one
 question.
@@ -18,11 +18,11 @@ def verify(ctx) -> dict     # {"status": "pass"|"gap", "evidence": str, "gap": {
 ```
 
 * `propose` is **read-only**: measure, survey, read config. No writes, no
-  downloads, no doors. It returns the card plus whatever it worked out; the
+  downloads, no outside calls. It returns the card plus whatever it worked out; the
   runner puts the return value on `ctx.proposal` for `apply` and `verify`.
 * **`propose` starts from its own applied section.** `ctx.applied()` (and
   `ctx.applied("choice", "model")` for a nested value) is that section as it
-  stands, read-only — unlike `ctx.own()` it never creates it. The order is:
+  stands, read-only; unlike `ctx.own()` it never creates it. The order is:
   what the owner already applied, then flags, then detection. `current` is the
   applied value and `proposed` stays your fresh recommendation, so a card drawn
   again after an apply shows the answer and still says what this build would
@@ -38,7 +38,7 @@ def verify(ctx) -> dict     # {"status": "pass"|"gap", "evidence": str, "gap": {
   a *provisional* notebook instead: an optional `shared_preview` dict in your
   propose's return value is what your `apply` would put in `shared` if this
   proposal were accepted, and the cards below yours read it. It writes nothing
-  — not the run's notebook, not the state, not the config — so `GET
+  (not the run's notebook, not the state, not the config), so `GET
   /wizard/cards` stays side-effect free, and a card the owner has already
   applied contributes nothing because the real values are in the run state.
   Without it the Brain row would size a download against the configured
@@ -47,14 +47,14 @@ def verify(ctx) -> dict     # {"status": "pass"|"gap", "evidence": str, "gap": {
   Discover previews
   `census`/`ollama_url`/`installed_models`, `secure:posture` previews
   `posture`/`gates`/`build_network`, Brain previews `chosen_model` and
-  `purpose:identity` previews `bot_name`/`interview` — between them, every key
+  `purpose:identity` previews `bot_name`/`interview`; between them, every key
   the schedule's `requires` names. Preview what a later card needs; anything
   expensive or unknowable stays out of it.
-* `apply` gets the *changed* fields only — an empty dict means "the proposal
+* `apply` gets the *changed* fields only; an empty dict means "the proposal
   stands". Return `{"section": <yours>, "data": {...}, "shared": {...}}`, plus
   `gap`/`gaps`/`status`/`note` if needed. The runner refuses a `section` your
   `manifest.json` does not declare in `writes`.
-* `verify` **observes the world** — a file on disk, a route answering, a model
+* `verify` **observes the world**: a file on disk, a route answering, a model
   replying. Re-reading your own proposal is not verification, and the review
   before your package ships rejects it. Unreachable is a `gap`, not a failure.
 
@@ -64,23 +64,22 @@ def verify(ctx) -> dict     # {"status": "pass"|"gap", "evidence": str, "gap": {
 live), `applied(...)` (the same section, read-only, never created) and `face()`.
 
 `non_interactive` and `remote` are two different facts, and conflating them
-loses the Tools card its question. `non_interactive` means **nobody typed an
-answer for this call** — true of `--yes` and true of every HTTP request,
-because a browser's answers arrive in the *next* request. `remote` means **a
-person is there, in a browser**. So: `--yes` is `non_interactive and not
-remote` (decide nothing on the owner's behalf), and the dashboard is
-`non_interactive and remote` (ask, and expect the answer in the next apply).
-Neither is permission to show a secret once — that is `face()`, and an HTTP run
-has none, ever.
+loses the Tools card its question. `non_interactive` means **nobody typed an answer
+for this call**: true of `--yes` and true of every HTTP request, because a
+browser's answers arrive in the *next* request. `remote` means **a person is
+there, in a browser**. So: `--yes` is `non_interactive and not remote` (decide
+nothing on the owner's behalf), and the dashboard is `non_interactive and
+remote` (ask, and expect the answer in the next apply). Neither is permission
+to show a secret once: that is `face()`, and an HTTP run has none, ever.
 
 ## The card
 
-Built as a plain dict and validated by `cards.validate_card` — strict, so a
+Built as a plain dict and validated by `cards.validate_card`, strict, so a
 typo is a test failure and not an owner's screen. Keys:
 
 `skill`, `section` (must match your manifest), `part` (empty unless your
-package asks more than one question — see below), `title` (the owner's words —
-"What this machine is" — with the id as small type in the renderer), `decided`
+package asks more than one question, see below), `title` (the owner's words,
+"What this machine is", with the id as small type in the renderer), `decided`
 (one line), `status` (`ready`/`needs_you`/`gap`/`blocked`/`not_built`),
 `consequential` + `consequential_reasons` (from `cards.CONSEQUENTIAL_REASONS`;
 true needs at least one), `estimate` `{bytes, seconds, basis}` with basis in
@@ -91,11 +90,11 @@ Field kinds: `choice` (add `free_text: true` + `pattern` to allow a typed
 answer), `multi_choice`, `text` (`max_length`, optional `pattern`), `toggle`,
 `number` (`min`, `max`), `secret_entry`, `info`. Every field needs `id` and
 `label`; `help` is a sentence.
-**`secret_entry` carries no value, ever.** No `current`, no `proposed` — a card
+**`secret_entry` carries no value, ever.** No `current`, no `proposed`: a card
 holding one is refused. Its answer reaches your `apply` and nowhere else: the
 run log and the API response get `cards.redact_answers`.
 
-A card is named by `cards.card_id` — `discover`, or `secure:vault` for a
+A card is named by `cards.card_id`: `discover`, or `secure:vault` for a
 package with parts. That id is what the schedule, the API's `order`, the
 dashboard's rows and `/wizard/apply` all use.
 
@@ -103,7 +102,7 @@ dashboard's rows and `/wizard/apply` all use.
 
 Declare `PARTS = ("posture", "vault", "bridge")` at module level (Purpose:
 `("identity", "place")`), take `ctx.part` (fall back to inferring it), and set
-`card["part"]` to the part you proposed — the runner refuses a card that answers a different question from the
+`card["part"]` to the part you proposed; the runner refuses a card that answers a different question from the
 one it was asked. The schedule names the part as `card:<part>`; the API accepts
 `skill:<part>`, and **refuses a bare skill id** for such a package, because
 "whichever question the run was up to" is not something a browser should be
@@ -122,22 +121,22 @@ a package with **one** card.
 ## What a browser may run: `POST /wizard/run`
 
 "Accept the rest" applies every card the owner has not answered, and it also
-runs the schedule's non-card entries at their scheduled positions — the Ollama
-config, the build manifest, Prove's static checks — because they ask the owner
+runs the schedule's non-card entries at their scheduled positions (the Ollama
+config, the build manifest, Prove's static checks), because they ask the owner
 nothing and skipping them would leave a build made in a browser with no
 `config/build_manifest.json` at all. Three rules hold there and they are in
 `service._run_support_step` / `_run_rest_locked`:
 
 * an entry runs only when the `requires` it names are in the run's shared
   notebook, otherwise it is reported as waiting;
-* its output is captured and dropped — the caller is an HTTP request, and
+* its output is captured and dropped: the caller is an HTTP request, and
   stdout is a server log;
 * the run has a renderer, so `show_once()` is `None`: no face, so no secret is
   created from a request.
 
 First-run setup is **not** marked complete while a card that blocks (a package
 whose manifest says `blocking`) is still `needs_you`. The manifest is still
-written — a record of what was decided is the honest artefact — and the reply
+written (a record of what was decided is the honest artefact), and the reply
 carries `complete: false` with `outstanding: ["secure:vault"]`.
 
 ## Showing a value exactly once
@@ -146,19 +145,19 @@ A recovery code or a pairing code may not go on the card, in the run log or in
 an API response. It goes to the run's show-once face: `ctx.face()`, which is
 `None` unless something is drawing this wizard on a console.
 
-**Fail closed.** No face means no secret is created — the vault card says where
+**Fail closed.** No face means no secret is created; the vault card says where
 the PIN can be set instead. The face is per run (`Runner.show_once`), never a
 module global: otherwise a server that had once rendered a card on a terminal
 would answer "yes, somebody can see this" to every later HTTP request.
 
 **Scripted runs must budget lines for the recovery ceremony.** On a console
 run, the show-once face does not just print: after the vault card it shows the
-recovery code and then *reads from stdin* — it asks the owner to type the code
+recovery code and then *reads from stdin*: it asks the owner to type the code
 back, and on a mismatch it burns that code, shows a fresh one and asks again.
 That is **0 to 3 extra lines consumed from stdin** (none when there is no face
 or no code, up to `_RECOVERY_MAX_SHOWS` when codes are re-issued), taken from
 the same stream the card answers come from. A file of scripted answers that
-does not account for them has every later card answered one line out of step —
+does not account for them has every later card answered one line out of step,
 which, because end-of-file is sticky (`cli._read_line`), shows up as the rest
 of the wizard silently taking defaults rather than as an error.
 
@@ -171,7 +170,7 @@ of the wizard silently taking defaults rather than as an error.
    `requires` names keys in the run's shared notebook, and every one of them
    must be written by an entry **above** yours.
 3. Add rows to `stale.FIELD_STALENESS` for every answerable field of your card,
-   keyed `"<section>.<field id>"` — or put the field on
+   keyed `"<section>.<field id>"`, or put the field on
    `stale.MAKES_NOTHING_STALE` with the reason. A field on neither is a test
    failure (`tests/test_wizard_stale_and_hosts.py`). Prove and Handoff are
    added for you.
@@ -188,17 +187,17 @@ Copy `tests/test_wizard_discover.py`: it pins the machine (a fixed census, a
 stubbed `setup_ops.list_models`) so nothing depends on the machine running
 the suite. Cover propose
 returning a card `validate_card` accepts (detection failing as well as
-working); `apply` writing the section contents the card promises — 
-`tests/test_wizard_golden.py` holds a checked-in manifest per scripted run and
+working); `apply` writing the section contents the card promises
+(`tests/test_wizard_golden.py` holds a checked-in manifest per scripted run and
 fails when any section's contents change, so a change to your `apply` is a
-diff you either explain or revert; and `verify` returning a gap, not an
+diff you either explain or revert); and `verify` returning a gap, not an
 exception, when what it checks is absent.
 
 ## What not to touch
 
 `build_manifest/v2` and its section names; `RESERVED_SECTIONS`; another
 package's section; the runner's order or blocking rules (only Brain and Secure
-may block, from their manifests). Do not print from a skill — the renderer
+may block, from their manifests). Do not print from a skill: the renderer
 prints and the face shows. Do not put a command string in a gap: name a
 registered id in `fixes.COMMANDS` and let the runner render the line.
 
@@ -213,7 +212,7 @@ rest (`setup_cli.SETUP_STEPS` lists all eighteen in order).
 Those `_step_*` functions are the controls here, with one caveat worth reading
 before you lean on one: they are an **earlier generation**, not the same code
 under a different name. They write HomeBot defaults and richer recommendation
-blocks, so several of them cannot stand in as a control at all — the Secure
+blocks, so several of them cannot stand in as a control at all: the Secure
 card's bridge block is the worked example (`tests/test_wizard_secure.py`),
 where the control is `setup_ops.bridge_block` itself rather than any step.
 Where a step genuinely is the same behaviour, compare against it; where it is
@@ -223,7 +222,7 @@ no control.
 
 Two names the packages reach for exist only as the host's port:
 `cli._setup_manifest_step` (the runner's own manifest entry) and
-`cli._setup_knowledge_step` (Zone 2 — this tree has no `_step_knowledge`, so
+`cli._setup_knowledge_step` (Zone 2: this tree has no `_step_knowledge`, so
 the host answers the skip branch and hands the rest to the Integrate card).
 Both live in `puffpai/wizard/host.py`, which is the one place a name the
 packages need may be added: alias this tree's implementation where there is
@@ -233,6 +232,6 @@ one, and port it once where there is not.
 (Brain, Secure), a resumed run does not skip your card because a file says it
 finished: `Runner.reverify_blocking` calls your `verify` again against the
 machine as it is now, and anything that is not `pass` is asked again. Write
-`verify` so that it is true of the machine and not of the record — the vault
+`verify` so that it is true of the machine and not of the record. The vault
 is checked on disk on top of verify, because Secure's verify only looks at the
 vault when the *recorded* block claims one.

@@ -33,11 +33,20 @@
  *    and a wall display that needs someone to walk over with a code.
  *  - A caller holding a legacy v1 cookie has no device id, so it cannot show
  *    "this device" and says so plainly instead of guessing.
+ *
+ * PROPS
+ * -----
+ *  - `botName`: the bot's own name, so the card says what the devices talk to.
+ *  - `showAddDevice={false}` leaves the pairing code off this card. The
+ *    Developer Bridge page uses it: nothing secret appears on a Developer page,
+ *    and it links to the pairing page (/pair) instead, which shows the code
+ *    only to a device that is already paired, as it always has.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import MsIcon from "../../_components/MsIcon";
 import PairDeviceCard from "../../_components/PairDeviceCard";
+import { PAIR_HOW_HERE } from "../../_lib/pairingWords";
 
 const FREDOKA = "var(--font-fredoka), sans-serif";
 const NUNITO = "var(--font-nunito), sans-serif";
@@ -145,7 +154,14 @@ function shortDate(iso: string): string {
   });
 }
 
-export default function PairedDevicesCard() {
+export default function PairedDevicesCard({
+  botName,
+  showAddDevice = true,
+}: {
+  botName?: string;
+  showAddDevice?: boolean;
+} = {}) {
+  const talksTo = botName && botName.trim() ? botName.trim() : "PuffPAI";
   const [devices, setDevices] = useState<PairedDevice[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [state, setState] = useState<LoadState>("loading");
@@ -172,9 +188,11 @@ export default function PairedDevicesCard() {
       const data = (await res.json()) as {
         devices?: PairedDevice[];
         currentDeviceId?: string | null;
+        self?: string | null;
       };
       setDevices(Array.isArray(data?.devices) ? data.devices : []);
-      setCurrentId(data?.currentDeviceId ?? null);
+      const mine = data?.currentDeviceId ?? data?.self;
+      setCurrentId(typeof mine === "string" && mine ? mine : null);
       setState("ready");
     } catch {
       setState("error");
@@ -268,6 +286,17 @@ export default function PairedDevicesCard() {
         >
           Pair this screen to see and manage the household&rsquo;s devices.
         </p>
+        <p
+          style={{
+            margin: "6px 0 0",
+            fontFamily: NUNITO,
+            fontWeight: 500,
+            fontSize: 15,
+            color: "var(--text3)",
+          }}
+        >
+          {PAIR_HOW_HERE}
+        </p>
       </div>
     );
   }
@@ -294,8 +323,8 @@ export default function PairedDevicesCard() {
           color: "var(--text2)",
         }}
       >
-        Every screen and phone that can talk to PuffPAI. Remove one and it stops
-        working straight away.
+        Every screen and phone that can talk to {talksTo}. Remove one and it
+        stops working straight away.
       </p>
 
       {state === "loading" && (
@@ -486,7 +515,7 @@ export default function PairedDevicesCard() {
                     }}
                   >
                     This is the screen you are using. Removing it signs this
-                    screen out — you will need the pairing code to get back in.
+                    screen out, and you will need the pairing code to get back in.
                   </div>
                 )}
               </div>
@@ -525,9 +554,14 @@ export default function PairedDevicesCard() {
         </div>
       )}
 
-      {/* Add a device: the household code + QR, previously only on Knowledge. */}
-      <div style={{ ...microLabel, margin: "20px 4px 0" }}>Add a device</div>
-      <PairDeviceCard />
+      {/* Add a device: the household code + QR, previously only on Knowledge.
+          Left off where the page links to /pair instead (Developer Bridge). */}
+      {showAddDevice && (
+        <>
+          <div style={{ ...microLabel, margin: "20px 4px 0" }}>Add a device</div>
+          <PairDeviceCard />
+        </>
+      )}
     </div>
   );
 }

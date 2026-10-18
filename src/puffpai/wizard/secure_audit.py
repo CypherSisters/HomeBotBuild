@@ -59,10 +59,10 @@ def _violations_for(package: Any, posture: dict, gates: dict) -> list[str]:
     # every build is an audit nobody reads.
     if hosts and egress != "build_only" and run_egress == "sealed":
         out.append(f"declares the host(s) {', '.join(hosts)} while this build "
-                   f"is sealed")
+                   f"reaches nothing at all")
     if egress == "runtime" and run_egress == "sealed":
-        out.append("reaches the network while it runs, and this build is "
-                   "sealed")
+        out.append("reaches the network while it runs, and this build "
+                   "reaches nothing at all")
     # Deliberately NOT a violation: a ``build_only`` package declaring hosts on
     # an offline build. The build-network gate is what stops the fetch, the
     # skill records a gap saying nothing was downloaded, and a declaration of
@@ -126,8 +126,8 @@ def gaps_for(result: dict) -> list[dict]:
                     f"build allows.",
             "why": f"It {row['why']}.",
             "impact": "Nothing was granted -- the permission is recorded and "
-                      "not enforced in v1, so this is a line to read, not a "
-                      "door that opened.",
+                      "not enforced yet, so this is a line to read, not "
+                      "something that was switched on.",
             "fix": {"kind": "command", "id": "setup.rerun", "args": {}},
         })
     return out

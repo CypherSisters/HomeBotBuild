@@ -54,6 +54,9 @@ CEREMONY_RULES: list[driver.Rule] = [
     (r"the id it lives under", ""),
     (r"a place of its own", "yes"),
     (r"your vault PIN|choose a vault PIN", PIN),
+    # The PIN questions are asked under their own heading; the line that
+    # takes the answer only says the typing is hidden.
+    (r"what you type stays hidden", PIN),
     (r"type it (again|once more)", PIN),
     (r"type the recovery code back|type the code back",
      lambda ask: ask.recovery_code()),
@@ -83,44 +86,38 @@ def _manifest(root):
 def test_the_ceremony_finishes(ceremony):
     root, result = ceremony
     assert result.returncode == 0, result.log_text() + result.transcript[-4000:]
-    assert _manifest(root)["build"]["name"] == BOT_NAME
+    # HomeBot asks no name: the build is HomeBot whatever a script would type.
+    assert _manifest(root)["build"]["name"] == "HomeBot"
 
 
 def test_the_persona_the_owner_named_has_a_folder_of_its_own(ceremony, monkeypatch):
-    """Scaffolded where a pip-installed build can write: the data dir, not here."""
+    """HomeBot is the HomeBot pack's persona: no name is asked, so no folder
+    is made for one, and nothing is written into the checkout."""
     from puffpai import app_registry
 
     root, _result = ceremony
     monkeypatch.setenv("PUFFPAI_DATA_DIR", str(root / "state"))
     apps_dir = app_registry.user_apps_dir()
-    assert os.path.isdir(os.path.join(apps_dir, BOT_ID)), (
-        f"no {BOT_ID!r} folder under {apps_dir}: "
-        f"{os.listdir(apps_dir) if os.path.isdir(apps_dir) else 'no apps dir'}")
-    app_json = os.path.join(apps_dir, BOT_ID, "app.json")
-    assert os.path.isfile(app_json)
-    assert json.loads(open(app_json, encoding="utf-8").read())["id"] == BOT_ID
-
-    scaffolded = _manifest(root)["persona"]["scaffolded"]
-    assert scaffolded["scaffolded"] is True
-    assert scaffolded["app"] == BOT_ID
-    # The id was the wizard's suggestion and it came from the typed name, not
-    # from the fallback: taking the suggestion is what the blank line meant.
-    assert scaffolded["name"] == BOT_NAME
+    assert not os.path.isdir(os.path.join(apps_dir, BOT_ID))
+    persona = _manifest(root)["persona"]
+    assert persona["id"] == "homebot" and persona["pack"] == "homebot"
+    assert persona["scaffolded"] is False
 
 
 def test_the_personas_surface_is_on_the_allowlist_it_was_trimmed_to(ceremony):
     """A trimmed build that hides its own persona is the bug this guards."""
     from puffpai import persona_scaffold
 
+    from puffpai import build_interview
+
     root, _result = ceremony
     surfaces = _manifest(root)["surfaces"]
     allowlist = list(surfaces.get("allowlist") or [])
-    surface = persona_scaffold.persona_surface(BOT_ID)
-    assert surface == f"persona.{BOT_ID}"
-    if not allowlist:
-        pytest.skip("this build was not trimmed, so there is no allowlist")
-    assert surface in allowlist, allowlist
-    assert surfaces["reasons"][surface], "a surface on the list with no reason"
+    assert persona_scaffold.persona_surface(BOT_ID) == f"persona.{BOT_ID}"
+    # HomeBot is not trimmed: every page is on, each with its reason.
+    assert sorted(allowlist) == sorted(build_interview.surface_taxonomy())
+    for surface in allowlist:
+        assert surfaces["reasons"][surface], "a surface on the list with no reason"
 
 
 def test_the_vault_is_sealed_on_disk_and_the_code_came_back(ceremony):
@@ -162,17 +159,32 @@ def test_the_cards_came_up_in_the_order_the_schedule_names(ceremony):
     order is decided, and a card that quietly moves (or stops being drawn)
     changes what the owner is asked before they have the answer to it.
     """
-    from puffpai.wizard import runner
+    from puffpai.wizard import host, runner
 
-    _root, result = ceremony
+    root, _result = ceremony
     expected = []
-    for step in runner.SCHEDULE:
+    for step in host.setup_schedule():
         part = runner.lifecycle_part(step.part)
         if not step.skill or part is None:
             continue                      # a runner entry, or a part_* wrapper
         expected.append(f"{step.skill}:{part}" if part else step.skill)
 
-    shown = re.findall(r"^.+?   \[([a-z0-9_.:]+)\]$", result.transcript,
-                       re.MULTILINE)
+    # The console prints no card ids (the owner's words only), so the order is
+    # read from the run record, which logs every card as it is proposed.
+    records = sorted(root.rglob("wizard_run.json"))
+    assert records, "the run left no record"
+    state = json.loads(records[0].read_text(encoding="utf-8"))
+    shown = []
+    for row in state.get("log") or ():
+        entry = str(row.get("entry") or "")
+        if not row.get("shown") or "." not in entry:
+            continue
+        # The record writes "secure.posture" for the "card:posture" part and
+        # "<skill>.card" for a skill's one card.
+        skill, step_part = entry.split(".", 1)
+        part = "" if step_part == "card" else step_part
+        card = f"{skill}:{part}" if part else skill
+        if card not in shown:
+            shown.append(card)
     assert shown == expected, (
         f"cards drawn: {shown}\nschedule says: {expected}")

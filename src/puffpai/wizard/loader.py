@@ -73,10 +73,22 @@ def _is_builtin_dir(path: str) -> bool:
     return os.path.dirname(real) == root and os.path.isdir(real)
 
 
-def _check_shape(path: str, package_id: str) -> None:
-    """Regular files only, no symlinks, no subdirectory except ``data/``."""
+#: Python writes its bytecode cache next to any module it imports. A built-in
+#: package's skill.py is imported, so this folder appears on every machine
+#: that does not set PYTHONDONTWRITEBYTECODE -- refusing it would break the
+#: wizard the second time it runs. Tolerated for built-in packages only: their
+#: code already shipped with the build, and nothing else is ever executed.
+_BYTECODE_DIR = "__pycache__"
+
+
+def _check_shape(path: str, package_id: str, builtin: bool = False) -> None:
+    """Regular files only, no symlinks, no subdirectory except ``data/``
+    (and, for a built-in package, Python's own ``__pycache__``)."""
     for name in sorted(os.listdir(path)):
         full = os.path.join(path, name)
+        if (builtin and name == _BYTECODE_DIR and os.path.isdir(full)
+                and not os.path.islink(full)):
+            continue
         if os.path.islink(full):
             raise PackageError(
                 f"Package '{package_id}': '{name}' is a symlink. A package is "
@@ -112,7 +124,7 @@ def load_package(path: str) -> Package:
             f"letters, digits and underscore, starting with a letter.")
 
     builtin = _is_builtin_dir(path)
-    _check_shape(path, folder)
+    _check_shape(path, folder, builtin=builtin)
 
     manifest_path = os.path.join(path, "manifest.json")
     if os.path.getsize(manifest_path) > pkg_manifest.MAX_MANIFEST_BYTES:

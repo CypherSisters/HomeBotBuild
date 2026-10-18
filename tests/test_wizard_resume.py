@@ -324,9 +324,9 @@ def test_the_screen_says_when_it_stopped_where_and_what_was_decided(cfg,
     assert [row["card"] for row in summary["decided"]] == ["discover", "brain"]
     lines = render_cli.resume_lines(summary)
     text = "\n".join(lines)
-    assert text.startswith("A setup from ")
-    assert "Continue from there, or start over?" in text
-    assert "Already decided:" in text
+    assert text.strip().startswith("A setup from ")
+    assert "Pick up where it stopped, or start over?" in text
+    assert "Already answered:" in text
     assert "discover card" in text and "brain card" in text
 
 
@@ -490,7 +490,8 @@ def test_the_service_refuses_a_choice_it_does_not_understand(cfg, monkeypatch):
 # -- the banner ---------------------------------------------------------------
 
 def test_the_review_screen_draws_the_same_choice_as_a_banner():
-    """One question, two renderers -- the console screen and the review banner.
+    """One question, two renderers -- the console screen and the browser's
+    banner (the engine's browser screen draws it; the review screen is gone).
 
     Checked at the source, because the alternative is a browser harness for one
     conditional. What it asserts is the wiring that cannot be faked: the banner
@@ -498,8 +499,8 @@ def test_the_review_screen_draws_the_same_choice_as_a_banner():
     them to ``POST /wizard/resume`` rather than deciding anything itself.
     """
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    screen = os.path.join(root, "dashboard", "app", "onboarding", "review",
-                          "ReviewScreen.tsx")
+    screen = os.path.join(root, "dashboard", "app", "onboarding",
+                          "Conversation.tsx")
     with open(screen, encoding="utf-8") as handle:
         source = handle.read()
 

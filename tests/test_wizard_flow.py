@@ -67,6 +67,23 @@ def _manifest() -> dict:
     return build_manifest.read_manifest() or {}
 
 
+def _shown_fields(entry: str) -> list[str]:
+    """The field ids a card carried in this run, from the run record.
+
+    Most cards are no longer drawn on the console (they answer
+    from the one summary), so what a card offered is read from the record the
+    runner keeps of every card it proposed, not from the screen.
+    """
+    from puffpai.config import get_config as _cfg
+    record = os.path.join(_cfg().CONFIG_DIR, "wizard_run.json")
+    with open(record, encoding="utf-8") as handle:
+        log = json.load(handle)["log"]
+    for row in log:
+        if row.get("entry") == entry and row.get("shown"):
+            return list(row["shown"].get("fields") or [])
+    return []
+
+
 # -- the posture step comes first, and its gates close later menus ------------
 
 def test_posture_is_recorded_with_stated_vs_defaulted(scratch, no_ollama, capsys):
@@ -78,31 +95,43 @@ def test_posture_is_recorded_with_stated_vs_defaulted(scratch, no_ollama, capsys
     # Posture is printed before the census, not after it. The census is the
     # Discover card's own title rather than a step banner; where it comes in
     # the run is what this asserts.
+    # HomeBot's setup has no plan screen: the machine comes first, what was
+    # built next, and the closing screen last.
     out = capsys.readouterr().out
-    assert (out.index("What this build may reach")
-            < out.index("What this machine is"))
+    assert (out.index("Let's see what we're working with here")
+            < out.index("What was built") < out.index("How to start it"))
 
 
 def test_skipped_posture_records_the_default_as_defaulted(scratch, no_ollama):
     assert _run_setup() == 0
     posture = _manifest()["posture"]
     assert posture["build_network"] == "online"
-    assert posture["run_egress"] == "island"
     assert posture["build_network_source"] == "defaulted"
+    # HomeBot's preset puts its own run-time reach on the run's arguments:
+    # Moat, only the outside services the owner switched on, all of them off.
+    # Nobody stated it, so it is recorded as defaulted.
+    assert posture["run_egress"] == "enumerated"
     assert posture["run_egress_source"] == "defaulted"
+    assert posture["enabled_switches"] == []
+    assert _manifest()["bridge"]["chosen_by"] == "default"
 
 
 def test_offline_build_is_never_offered_a_download(scratch, no_ollama, capsys):
     assert _run_setup("--build-network", "offline") == 0
-    out = capsys.readouterr().out
-    assert "You chose an offline build" in out
-    assert "re-run setup where downloads are allowed" in out
-    assert "GB to download" not in out
+    out = " ".join(capsys.readouterr().out.split())
+    assert "nothing is downloaded while we build" in out
+    assert "it cannot be downloaded now" in out
+    assert "Download it when the build starts?" not in out
+    assert "registry.ollama.ai" not in out
 
 
 def test_online_build_still_sees_downloadable_brains(scratch, no_ollama, capsys):
     assert _run_setup("--build-network", "online") == 0
-    assert "GB to download" in capsys.readouterr().out
+    out = " ".join(capsys.readouterr().out.split())
+    # The first screen lists the brains that fit with their download sizes; a
+    # --yes run with nobody reading downloads none and says how to.
+    assert "GB download" in out
+    assert "To fix it, run: ollama pull" in out
 
 
 def test_sealed_build_is_not_offered_home_assistant_and_is_told_why(
@@ -111,22 +140,24 @@ def test_sealed_build_is_not_offered_home_assistant_and_is_told_why(
     assert cli.main(["setup", "--yes", "--skip-knowledge",
                      "--run-egress", "sealed"]) == 0
     out = capsys.readouterr().out
-    assert "you chose a sealed build, so nothing on the network is offered" in out
-    assert "Connect a Home Assistant instance" not in out
+    assert "Home Assistant" not in out
+    assert "sealed" in _shown_fields("tools.card")
+    assert "connect_hub" not in _shown_fields("tools.card")
 
 
 def test_island_build_still_reaches_the_home_assistant_step(
         scratch, no_ollama, capsys):
     assert cli.main(["setup", "--yes", "--skip-knowledge", "--skip-ha",
                      "--run-egress", "island"]) == 0
-    assert "not being asked for on this run" in capsys.readouterr().out
+    assert "hub" in _shown_fields("tools.card")
+    assert "sealed" not in _shown_fields("tools.card")
 
 
 def test_brain_step_discloses_the_routing_tier(scratch, no_ollama, capsys):
     assert _run_setup("--model", "llama3.2:3b") == 0
-    out = capsys.readouterr().out
-    assert "Routing tier:" in out
-    assert "single steps" in out  # what the tier costs, said out loud
+    out = " ".join(capsys.readouterr().out.split())
+    # What this brain cannot do, said on the first screen in plain words.
+    assert "one simple request at a time" in out
     brain = _manifest()["brain"]
     assert brain["routing_tier"] in ("light", "guided", "rails")
     assert brain["supports_planning"] is False
@@ -186,7 +217,8 @@ def test_non_interactive_without_a_pin_skips_the_vault_and_says_so(
         scratch, no_ollama, capsys):
     assert _run_setup() == 0
     out = capsys.readouterr().out
-    assert "recovery code nobody reads is not a recovery code" in out
+    assert "No one is here to type a PIN, so no vault is made" in " ".join(
+        out.split())
     assert setup_ops.vault_initialized() is False
     assert _manifest()["vault"]["configured"] is False
 
@@ -195,7 +227,7 @@ def test_non_interactive_with_a_pin_states_that_nobody_confirmed(
         scratch, no_ollama, capsys):
     assert _run_setup("--vault-pin", GOOD_PIN) == 0
     out = capsys.readouterr().out
-    assert "NO ONE CONFIRMED THIS RECOVERY CODE." in out
+    assert "Nobody typed this recovery code back." in out
 
 
 def test_manifest_never_carries_the_pin_or_the_code(scratch, no_ollama, capsys):
@@ -260,7 +292,7 @@ def test_an_existing_vault_is_left_alone_on_a_re_run(scratch, no_ollama, capsys)
     capsys.readouterr()
     assert _run_setup("--vault-pin", GOOD_PIN) == 0
     out = capsys.readouterr().out
-    assert "left untouched" in out
+    assert "A vault is already set up on this computer. It is left as it is." in " ".join(out.split())
     # The second run reports what the first one did, not a fresh "none issued".
     assert _manifest()["vault"]["recovery_issued"] is True
 
@@ -268,11 +300,13 @@ def test_an_existing_vault_is_left_alone_on_a_re_run(scratch, no_ollama, capsys)
 # -- Step 3b: surfaces -------------------------------------------------------
 
 def test_the_goal_derives_a_surface_allowlist(scratch, no_ollama):
+    # HomeBot asks no goal: a goal on the command line does not narrow its
+    # pages, and every page is on with a reason recorded.
     assert _run_setup("--goal", "a bot that helps a beginner learn the night sky and space with a small telescope") == 0
     surfaces = _manifest()["surfaces"]
     assert "instruments.telescope" in surfaces["allowlist"]
-    assert "house.cameras" not in surfaces["allowlist"]
-    assert surfaces["derived_from_goal"] is True
+    assert "house.cameras" in surfaces["allowlist"]
+    assert surfaces["derived_from_goal"] is False
     assert surfaces["reasons"]["instruments.telescope"]
 
 
@@ -286,8 +320,13 @@ def test_the_owner_can_drop_a_proposed_surface(scratch, no_ollama):
 
 def test_no_goal_leaves_an_empty_allowlist_rather_than_everything(
         scratch, no_ollama):
+    # HomeBot asks no goal and turns every page on (the browser's build does
+    # the same), so the record names every page rather than none: the
+    # allowlist is never left empty, and never a guess from a goal.
+    from puffpai import build_interview
     assert _run_setup() == 0
-    assert _manifest()["surfaces"]["allowlist"] == []
+    assert sorted(_manifest()["surfaces"]["allowlist"]) == sorted(
+        build_interview.surface_taxonomy())
 
 
 # -- Step 6: the Bridge ------------------------------------------------------

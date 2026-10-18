@@ -342,7 +342,7 @@ RECOVERY_NOTICE_LINES: tuple[str, ...] = (
     "We cannot recover it for you. It is not sent anywhere and no copy of it is kept.",
     "There is no reset email, because there is no us. Nobody is holding a spare.",
     "Write it on paper and keep the paper where you would keep a spare house key.",
-    "You will be asked to type it back on the next screen. That is on purpose.",
+    "You will be asked to type it back before you go on. That is on purpose.",
 )
 
 RECOVERY_SHOWN_ONCE_WARNING = (

@@ -1,11 +1,15 @@
 """Purpose: what this bot is for, and what it is called.
 
-One skill, one section, **two cards**, because one of the
-two questions is derived from the answer to the other:
+The **goal is the first question**. One skill, one section, **three cards**, because each later
+question is derived from the answer before it:
 
-* ``purpose:identity`` -- the name and the goal, in the owner's words. This is
-  where the interview happens: the goal is matched against the starter catalog
-  and the match is shown as information, not as a question.
+* ``purpose:goal`` -- "What kind of bot do you want? Say it in your own words."
+  The goal is matched against the starter list here, quietly: the match feeds
+  the summary, it is not shown as a question.
+* ``purpose:identity`` -- the name, *suggested from the goal*
+  (:func:`suggest_name`), and the builder's age, which is kept only as a band
+  (under 13 / 13-17 / adult) and only changes how the wizard words its
+  questions. The finished bot never reads it.
 * ``purpose:place`` -- whether the bot gets a place of its own, the id it lives
   under, and the lists it keeps. The id is *proposed from the name and the goal
   that were just applied* (:func:`persona_scaffold.suggest_id`), which is only
@@ -40,7 +44,7 @@ import os
 from puffpai import app_registry
 
 #: The two questions this package asks, in the order they are asked.
-PARTS = ("identity", "place")
+PARTS = ("goal", "identity", "place")
 
 #: What the owner may type as an id. The same shape
 #: :func:`app_registry.valid_id` enforces, stated on the card so a bad id is
@@ -71,7 +75,10 @@ def part_of(ctx) -> str:
     hint = str(getattr(ctx, "part", "") or "")
     if hint in PARTS:
         return hint
-    if (getattr(ctx, "shared", None) or {}).get("interview") is None:
+    shared = getattr(ctx, "shared", None) or {}
+    if shared.get("interview") is None:
+        return "goal"
+    if shared.get("bot_name") is None:
         return "identity"
     return "place"
 
@@ -117,12 +124,35 @@ def _proposed_name(ctx) -> tuple[str, str]:
             return first_run.sanitize_name(flag), "what you passed on the command line"
         return "", f"the name you passed cannot be used: {reason}"
     if getattr(ctx, "remote", False):
-        # A browser is asking right now. Unnamed until they type one.
+        # A browser is asking right now: the same suggestion the console
+        # offers, so both faces ask the same question.
+        suggestion = suggest_name(_goal(ctx))
+        if suggestion:
+            return suggestion, "suggested from what you said you want"
         return "", f"until you type one, it answers to {cli.DEFAULT_BOT_NAME}"
     if ctx.non_interactive:
         return "", ("nobody was asked, so this build is recorded as unnamed and "
                     f"answers to {cli.DEFAULT_BOT_NAME}")
+    suggestion = suggest_name(_goal(ctx))
+    if suggestion:
+        return suggestion, "suggested from what you said you want"
     return cli.DEFAULT_BOT_NAME, "the shipped default until you change it"
+
+
+#: Words that say how somebody feels about a bot rather than what it is about.
+#: A name is made from the first word that is left.
+def suggest_name(goal: str) -> str:
+    """"I love dinosaurs" -> "DinosaurBot". Deterministic; "" when nothing fits.
+
+    The goal's topic word (:func:`puffpai.persona_scaffold.topic_word`, which
+    the daily update's name uses too), capitalised, with "Bot" on the end. No
+    model: a name is a suggestion the owner can overwrite with one keypress,
+    and it has to be the same suggestion every time.
+    """
+    from puffpai import persona_scaffold
+
+    word = persona_scaffold.topic_word(str(goal or ""))
+    return word[:1].upper() + word[1:] + "Bot" if word else ""
 
 
 def _goal(ctx) -> str:
@@ -146,7 +176,8 @@ def _census(ctx) -> dict:
 
 def propose(ctx) -> dict:
     part = part_of(ctx)
-    proposal = {"identity": _propose_identity,
+    proposal = {"goal": _propose_goal,
+                "identity": _propose_identity,
                 "place": _propose_place}[part](ctx)
     proposal["part"] = part
     card = proposal.get("card")
@@ -155,58 +186,87 @@ def propose(ctx) -> dict:
     return proposal
 
 
-def _propose_identity(ctx) -> dict:
-    """The name and the goal. Read-only: no folder, no config."""
-    from puffpai import build_interview as bi, cli, crew_sizing, persona_scaffold
+def _mode(ctx) -> str:
+    from puffpai.wizard import wording
+    return wording.mode_of(getattr(ctx, "shared", None) or {})
+
+
+def _match(ctx, goal: str):
+    from puffpai import build_interview as bi, crew_sizing
+    if not goal:
+        return None
+    return bi.propose(goal, crew_budget=crew_sizing.crew_budget(_census(ctx)))
+
+
+def _interview_for(goal: str, match) -> dict:
+    return {"goal": (match or {}).get("goal", goal) if goal else "",
+            "selected": [entry["id"] for entry in (match or {}).get("flat", [])],
+            "proposal": match, "persona": None}
+
+
+def _flat(text: str) -> str:
+    return " ".join(str(text or "").split())
+
+
+def _propose_goal(ctx) -> dict:
+    """The first question: what kind of bot. Read-only: no folder, no config."""
+    from puffpai import cli
+    from puffpai.wizard import wording
 
     cli.enter_step("Build interview")
-    name, name_why = _proposed_name(ctx)
+    mode = _mode(ctx)
     goal = _goal(ctx)
-    census = _census(ctx)
-    match = (bi.propose(goal, crew_budget=crew_sizing.crew_budget(census))
-             if goal else None)
-
-    fields = [
-        {"id": "name", "kind": "text", "label": "What you call it",
-         "max_length": persona_scaffold.MAX_NAME_LEN, "current": name,
-         "help": f"The name it answers to and the name on the dashboard "
-                 f"({name_why}). You can change it later on the Profile page."},
-        {"id": "goal", "kind": "text", "label": "What it is for, in your words",
-         "max_length": GOAL_MAX, "current": goal,
-         "help": "What it is for, who uses it, what you want it to know. This "
-                 "picks the starter catalog, the surfaces and the sourcing. "
-                 "The next card offers it a place of its own, named from what "
-                 "you type here."},
-    ]
-    if match is not None:
-        # One line per line, not one paragraph: the catalog summary is a list,
-        # and a list run together with dashes is a list nobody reads.
-        fields.append({"id": "matched", "kind": "info",
-                       "label": "From that goal, the starter catalog suggests",
-                       "current": ""})
-        for line in bi.proposal_summary_lines(match)[:MAX_SUMMARY_LINES]:
-            fields.append({"id": f"matched_{len(fields)}", "kind": "info",
-                           "label": "Suggested", "current": str(line)})
-
+    match = _match(ctx, goal)
     card = {
         "skill": "purpose", "section": "persona",
-        "title": "What it is and what it is for",
-        "decided": f"{name or 'unnamed'} - {goal or 'no goal given yet'}",
+        "title": wording.say("goal_title", mode),
+        "decided": goal,
         "status": "ready" if goal else "needs_you",
+        "consequential": False,
+        "estimate": {"bytes": 0, "seconds": 0, "basis": "measured"},
+        "fields": [
+            {"id": "goal", "kind": "text",
+             "label": wording.say("goal_question", mode),
+             "max_length": GOAL_MAX, "current": goal,
+             "help": _flat(wording.say("goal_help", mode)),
+             "examples": wording.goal_examples(mode)},
+        ],
+    }
+    return {"card": card, "goal": goal, "match": match,
+            "shared_preview": {"interview": _interview_for(goal, match)}}
+
+
+def _propose_identity(ctx) -> dict:
+    """The name, suggested from the goal, and the age band. Read-only."""
+    from puffpai import cli, persona_scaffold
+    from puffpai.wizard import wording
+
+    cli.enter_step("Build interview")
+    mode = _mode(ctx)
+    name, _name_why = _proposed_name(ctx)
+    shown = name or cli.DEFAULT_BOT_NAME
+    fields = [
+        {"id": "name", "kind": "text",
+         "label": wording.say("name_question", mode),
+         "max_length": persona_scaffold.MAX_NAME_LEN, "current": name,
+         "help": _flat(wording.say("name_help_page" if getattr(ctx, "remote", False)
+                                   else "name_help", mode, suggestion=shown))},
+        {"id": "age", "kind": "text",
+         "label": wording.say("age_question", mode),
+         "max_length": 20, "current": "",
+         "help": wording.say("age_help", mode)},
+    ]
+    card = {
+        "skill": "purpose", "section": "persona",
+        "title": wording.say("name_title", mode),
+        "decided": shown,
+        "status": "ready",
         "consequential": False,
         "estimate": {"bytes": 0, "seconds": 0, "basis": "measured"},
         "fields": fields,
     }
-    # What the apply would share (CONVERTING.md): the name and the interview
-    # every later card reads for the goal it was given. The persona is left out
-    # -- a place is scaffolded by an apply, and nothing is applied here.
-    interview = {"goal": (match or {}).get("goal", goal) if goal else "",
-                 "selected": [entry["id"]
-                              for entry in (match or {}).get("flat", [])],
-                 "proposal": match, "persona": None}
-    return {"card": card, "name": name, "goal": goal, "census": census,
-            "match": match,
-            "shared_preview": {"bot_name": name, "interview": interview}}
+    return {"card": card, "name": name,
+            "shared_preview": {"bot_name": name}}
 
 
 def _propose_place(ctx) -> dict:
@@ -297,43 +357,61 @@ def _decided(name: str, goal: str, scaffold: bool, persona_id: str) -> str:
 
 def apply(ctx, answers: dict) -> dict:
     part = (ctx.proposal or {}).get("part") or part_of(ctx)
-    return {"identity": _apply_identity,
+    return {"goal": _apply_goal,
+            "identity": _apply_identity,
             "place": _apply_place}[part](ctx, answers or {})
 
 
-def _apply_identity(ctx, answers: dict) -> dict:
-    """Write the name, the goal and the interview into ``persona``.
+def _apply_goal(ctx, answers: dict) -> dict:
+    """Write the goal and the interview into ``persona``.
 
-    The same things the two step functions write, for the same inputs: the name
-    into the config the dashboard reads and into the section, the goal and its
-    matched ids as the interview, and -- scaffolded or not -- a persona block
-    carrying the name and the goal, which is where ``build_context`` looks.
+    Scaffolded or not, a persona block carrying the goal is recorded, which is
+    where ``build_context`` looks. The name is not touched here: it is the
+    next card's.
     """
-    from puffpai import build_interview as bi, crew_sizing
+    proposal = ctx.proposal or {}
+    goal = str(answers.get("goal", proposal.get("goal") or "") or "")
+    made = _applied_persona(ctx)
+    made = made if made.get("scaffolded") else {}
+    name = str(ctx.applied("bot_name", default="") or "")
+    match = proposal.get("match")
+    if goal and (not isinstance(match, dict) or match.get("goal") != goal):
+        match = _match(ctx, goal)
+    interview = _interview_for(goal, match if goal else None)
+    interview["persona"] = made or None
+    result = _result(name, interview, [], made)
+    # The name is the next card's to share; this card never claims one.
+    result["shared"].pop("bot_name", None)
+    if not name:
+        result["data"].pop("bot_name", None)
+    return result
+
+
+def _apply_identity(ctx, answers: dict) -> dict:
+    """Write the name where both wizards read it, and the age as a band only."""
+    from puffpai.wizard import wording
 
     proposal = ctx.proposal or {}
     gaps: list[dict] = []
-
     name = _chosen_name(answers, proposal, gaps)
-    goal = answers.get("goal", proposal.get("goal") or "")
-    # A place scaffolded on an earlier pass is not unmade by re-answering this
-    # card; the staleness table marks Purpose for a recheck instead.
+    interview = dict(_applied_interview(ctx))
+    interview.setdefault("goal", _goal(ctx))
+    interview.setdefault("selected", [])
+    interview.setdefault("proposal", None)
     made = _applied_persona(ctx)
     made = made if made.get("scaffolded") else {}
-
-    if not goal:
-        interview = {"goal": "", "selected": [], "proposal": None,
-                     "persona": made or None}
-        return _result(name, interview, gaps, made)
-
-    census = proposal.get("census") or ctx.shared.get("census") or {}
-    match = proposal.get("match")
-    if not isinstance(match, dict) or match.get("goal") != goal:
-        match = bi.propose(goal, crew_budget=crew_sizing.crew_budget(census))
-    interview = {"goal": match.get("goal", goal),
-                 "selected": [entry["id"] for entry in match.get("flat", [])],
-                 "proposal": match, "persona": made or None}
-    return _result(name, interview, gaps, made)
+    interview["persona"] = made or None
+    result = _result(name, interview, gaps, made)
+    # The number typed is never kept: only which of three bands it falls in.
+    band = wording.band_for_age(answers.get("age"))
+    if band is None:
+        band = wording.band_for_age(getattr(ctx.args, "age", None))
+    if band is None:
+        band = ctx.applied("age_band", default=None)
+    result["data"]["age_band"] = band
+    result["shared"]["age_band"] = band
+    result["shared"]["wording"] = wording.mode_for_band(band)
+    return result
 
 
 def _apply_place(ctx, answers: dict) -> dict:
@@ -342,7 +420,12 @@ def _apply_place(ctx, answers: dict) -> dict:
     gaps: list[dict] = []
 
     name = str(proposal.get("name") or ctx.applied("bot_name", default="") or "")
-    interview = dict(_applied_interview(ctx))
+    from puffpai.wizard import proposal as plan
+
+    # The approved plan is the choice: packs it left out are not "chosen".
+    interview = plan.settle_interview(_applied_interview(ctx),
+                                      (getattr(ctx, "shared", None) or {})
+                                      .get("summary"))
     goal = str(interview.get("goal") or proposal.get("goal") or "")
 
     persona = None
@@ -363,8 +446,8 @@ def _apply_place(ctx, answers: dict) -> dict:
         gaps.append({
             "skill": "purpose",
             "what": "Your bot has no place of its own.",
-            "why": ("This is a non-interactive run, so nothing was scaffolded "
-                    "on your behalf." if ctx.non_interactive
+            "why": ("This setup ran without asking questions, so no folder, "
+                    "page or lists were made for it." if ctx.non_interactive
                     else "You said no to a folder, a page and its lists."),
             "impact": "It answers and it knows its goal; it just has nowhere "
                       "to keep a list.",
@@ -388,8 +471,10 @@ def _chosen_name(answers: dict, proposal: dict, gaps: list) -> str:
     from puffpai import first_run, setup_ops
 
     chosen = proposal.get("name") or ""
-    if "name" in answers:
-        typed = answers["name"]
+    typed = answers.get("name")
+    # A blank answer is Enter: keep the suggestion, in the browser as in the
+    # terminal. Only a name actually typed is checked (and can be refused).
+    if typed is not None and str(typed).strip():
         ok, reason = first_run.name_is_acceptable(typed)
         if ok:
             chosen = first_run.sanitize_name(typed)

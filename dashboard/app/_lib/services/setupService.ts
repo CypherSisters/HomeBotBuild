@@ -300,6 +300,26 @@ export function saveOllama(model: string, url?: string): Promise<Reply> {
   return req("/setup/ollama", "POST", url ? { model, url } : { model });
 }
 
+/** A model download into the Ollama this build uses. `state` is "running",
+ *  "done" or "failed"; `line` is the latest progress line in plain words. */
+export interface ModelPull {
+  model?: string;
+  state?: string;
+  line?: string;
+  message?: string;
+}
+
+/** Start downloading `model`. A 404 means this backend has no download route,
+ *  and the wizard tells the owner the one command to run on the box instead. */
+export function startModelPull(model: string): Promise<Reply<ModelPull>> {
+  return req<ModelPull>("/setup/ollama/pull", "POST", { model });
+}
+
+/** How the download of `model` is going. */
+export function getModelPull(model: string): Promise<Reply<ModelPull>> {
+  return req<ModelPull>(`/setup/ollama/pull?model=${encodeURIComponent(model)}`);
+}
+
 /* ── household ──────────────────────────────────────────────────────── */
 
 export interface HouseholdStatus {
@@ -511,12 +531,15 @@ export function getBridge(): Promise<Reply<BridgeOptions>> {
 }
 
 /** `networkEdge` is the Zone 3 opt-in. The backend records it for the owner to
- *  apply (it starts nothing itself) and answers with the reconciled posture. */
+ *  apply (it starts nothing itself) and answers with the reconciled posture.
+ *  `defaulted` says nobody picked the posture (the build's default was sent),
+ *  so it is recorded as the default, not as the owner's choice. */
 export function saveBridge(
   posture: string,
   networkEdge: boolean,
+  defaulted = false,
 ): Promise<Reply<{ bridge?: Record<string, unknown>; posture?: string; explanation?: string; network_edge_recorded?: boolean }>> {
-  return req("/setup/bridge", "POST", { posture, network_edge: networkEdge });
+  return req("/setup/bridge", "POST", { posture, network_edge: networkEdge, defaulted });
 }
 
 /* ── knowledge ──────────────────────────────────────────────────────── */

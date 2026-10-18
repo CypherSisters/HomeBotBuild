@@ -45,6 +45,8 @@ _FALLBACK_CATALOG: dict[str, Any] = {
             "disk_gb": 5,
             "strength": "A solid all-rounder.",
             "benchmarks": {},
+            "params_b": 7.6,
+            "tools": True,
         },
         {
             "id": "qwen2.5:3b-instruct",
@@ -56,6 +58,8 @@ _FALLBACK_CATALOG: dict[str, Any] = {
             "disk_gb": 2,
             "strength": "Runs on modest hardware.",
             "benchmarks": {},
+            "params_b": 3.1,
+            "tools": True,
         },
     ],
 }
@@ -209,6 +213,33 @@ _TIER_ORDER: tuple[str, ...] = ("light", "guided", "rails")
 _UNATTENDED_TIER_CAP = "guided"
 
 
+def _vram_clause(model: dict[str, Any], census: dict[str, Any],
+                 installed_label: str = "") -> str:
+    """The sentence a discrete GPU smaller than the model earns, or "".
+
+    RAM fitting says a 19 GB model "fits your 64 GB". True, and useless on a box
+    whose 8 GB card can hold a third of it: the rest runs on the CPU and the owner
+    experiences a recommendation as a machine that has gone quiet. Say the number.
+    """
+    accel = census.get("accelerator") if isinstance(census, dict) else None
+    accel = accel if isinstance(accel, dict) else {}
+    if accel.get("kind") != "nvidia_dgpu":
+        # Unified memory (Jetson, Apple Silicon) has no separate VRAM to fall
+        # short, and a machine with no GPU at all is already all-CPU and knows it.
+        return ""
+    try:
+        vram = float(accel.get("vram_gb") or 0)
+        size = float(model.get("disk_gb") or 0)
+    except (TypeError, ValueError):
+        return ""
+    if vram <= 0 or size <= 0 or vram >= size:
+        return ""
+    faster = (f" - the {installed_label} you already have will feel faster"
+              if installed_label else "")
+    return (f" It fits your RAM; with {vram:g} GB of VRAM most of a {size:g} GB "
+            f"model runs on the CPU, so expect it to be slow{faster}.")
+
+
 def _tier_of(model_id: str) -> str:
     """The routing tier a model declares in config/model_profiles.json.
 
@@ -234,6 +265,83 @@ def _unattended_tier(options: list[dict[str, Any]]) -> Optional[str]:
         if tier in present:
             return tier
     return None
+
+
+# ---------------------------------------------------------------------------
+# the tool model
+# ---------------------------------------------------------------------------
+#
+# Chat runs a tool loop now (puffpai.brain_loop), so the brain must call tools.
+# The rule: recommend a model of 9B or larger where this computer can run it,
+# and otherwise the smallest model that still calls tools. A catalog row says
+# ``"tools": true`` when it calls tools well enough for the loop (the 1B and
+# 1.5B rows do not: they were the parked "rails" tier).
+
+#: Billions of parameters from which a model uses tools well (Hermes Agent:
+#: "models 9B+ handle this well"; Qwen3.5 9B is the one this build tests with).
+TOOL_MODEL_MIN_B = 9.0
+
+NO_TOOLS_NOTE = ("None of the models that fit this computer can use tools, so "
+                 "chat will answer without looking things up or using what you add.")
+
+
+def _params_b(model: dict[str, Any]) -> Optional[float]:
+    """The model's size in billions of parameters, or None when unknown."""
+    value = model.get("params_b")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def _tool_pick(options: list[dict[str, Any]]) -> Optional[tuple[dict[str, Any], str]]:
+    """``(option, kind)`` by that rule, or None when no fitting model calls tools.
+
+    * ``big_installed``: a 9B-or-larger tool model already here (the strongest);
+    * ``big``: else the smallest 9B-or-larger tool model that fits;
+    * ``small_installed``: no 9B fits, but a smaller tool model is here (no
+      download), the strongest of those;
+    * ``small``: else the smallest tool model that fits.
+    """
+    tools = [o for o in options if o.get("tools")]
+    if not tools:
+        return None
+
+    def size(o: dict[str, Any]) -> float:
+        b = o.get("params_b")
+        return float(b) if isinstance(b, (int, float)) else 0.0
+
+    big = [o for o in tools if size(o) >= TOOL_MODEL_MIN_B]
+    if big:
+        here = [o for o in big if o.get("installed")]
+        if here:
+            return max(here, key=size), "big_installed"
+        return min(big, key=size), "big"
+    here = [o for o in tools if o.get("installed")]
+    if here:
+        return max(here, key=size), "small_installed"
+    return min(tools, key=size), "small"
+
+
+def _tool_reason(kind: str, pick: dict[str, Any], ram: Optional[float]) -> str:
+    """One plain line for why this brain, under the tool rule."""
+    ram_str = f"your {ram} GB" if ram is not None else "this computer"
+    room = ("" if pick.get("fit") == "comfortable"
+            else " It is a tight fit, so it may be slow.")
+    disk = pick.get("disk_gb")
+    download = f" About {disk} GB to download." if disk else ""
+    if kind == "big_installed":
+        return ("Already on this computer, and big enough (9B or more) to use "
+                "tools well: it can look things up, add what you pick and use "
+                "it. Nothing to download." + room)
+    if kind == "big":
+        return (f"Fits {ram_str} and is big enough (9B or more) to use tools "
+                f"well: it can look things up, add what you pick and use it."
+                + download + room)
+    if kind == "small_installed":
+        return ("Already on this computer and it still uses tools. A 9B model "
+                "would use them better, but none fits here." + room)
+    return ("A 9B model does not fit this computer, so this is the smallest "
+            "one that still uses tools. Expect simpler answers." + download + room)
 
 
 def fit_menu(
@@ -314,6 +422,8 @@ def fit_menu(
             "benchmark": benchmark,
             "benchmark_note": None if benchmark else "Untested on hardware like yours, reports welcome.",
             "routing_tier": _tier_of(model.get("id")),
+            "tools": bool(model.get("tools")),
+            "params_b": _params_b(model),
         })
 
     result["options"] = options
@@ -340,6 +450,34 @@ def fit_menu(
             return None
         return next((o for o in pool if o["fit"] == "comfortable"), pool[0])
 
+    tool_pick = _tool_pick(options)
+    if tool_pick is not None:
+        pick, kind = tool_pick
+
+        def _disk(o: dict[str, Any]) -> float:
+            try:
+                return float(o.get("disk_gb") or 0)
+            except (TypeError, ValueError):
+                return 0.0
+        faster = next((str(o["label"]) for o in sorted(options, key=_disk, reverse=True)
+                       if o.get("installed") and o["id"] != pick["id"]
+                       and _disk(o) < _disk(pick)), "")
+        result["recommended"] = {
+            "id": pick["id"],
+            "label": pick["label"],
+            "reason": _tool_reason(kind, pick, ram)
+            + _vram_clause(next((m for m in models if str(m.get("id")) == str(pick["id"])),
+                                {}), census, faster),
+            "fit": pick["fit"],
+            "installed": pick["installed"],
+            "disk_gb": pick["disk_gb"],
+            "routing_tier": pick.get("routing_tier"),
+            "tools": True,
+        }
+        return result
+
+    # PARKED: the rule below picked a brain for a chat with
+    # no tools. It now only runs when no model that fits can use tools.
     installed_pick = _best([o for o in options if o["installed"]])
     fallback = _best(options) or options[0]
     tier_capped = ""
@@ -361,13 +499,37 @@ def fit_menu(
         "reason": _recommendation_reason(pick["fit"], ram,
                                          installed=bool(pick["installed"]),
                                          bigger_available=bigger_available,
-                                         tier_capped=tier_capped),
+                                         tier_capped=tier_capped)
+        + " " + NO_TOOLS_NOTE,
         "fit": pick["fit"],
         "installed": pick["installed"],
         "disk_gb": pick["disk_gb"],
         "routing_tier": pick.get("routing_tier"),
     }
     return result
+
+
+def fitting_fallback(menu: dict[str, Any], configured: str) -> str:
+    """The model to fall back on when the recommendation cannot be used.
+
+    Both wizard faces used to fall back on the configured default
+    (``qwen2.5:7b-instruct``, 8 GB) without asking whether this machine can run
+    it, so a 1.5 GB board below the catalog's floor was told to use a 7B brain.
+    The rule now: the configured model only if it is not a catalog row this
+    machine's RAM excludes; otherwise the menu's recommendation, which always
+    fits; and when the RAM is known and nothing in the catalog fits, no model at
+    all (an empty string), so the wizard says plainly that nothing fits instead
+    of proposing something that will not run. An unknown-RAM machine keeps the
+    configured model, because there is nothing to fit it against.
+    """
+    rec = str((menu.get("recommended") or {}).get("id") or "")
+    if menu.get("total_ram_gb") is not None and not rec:
+        return ""
+    configured = str(configured or "")
+    too_big = {str(m.get("id")) for m in menu.get("too_big") or ()}
+    if configured and configured not in too_big:
+        return configured
+    return rec
 
 
 # ---------------------------------------------------------------------------
@@ -403,5 +565,6 @@ def menu_summary_lines(menu: dict[str, Any]) -> list[str]:
 __all__ = [
     "load_catalog",
     "fit_menu",
+    "fitting_fallback",
     "menu_summary_lines",
 ]

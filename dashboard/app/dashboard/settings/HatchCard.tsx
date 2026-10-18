@@ -4,10 +4,12 @@
  * HatchCard — Settings entry for the hatch ritual and the adoption
  * certificate.
  *
- * Reads GET /hatch/status (real state, not a guess): an unhatched build gets
- * a single "Begin the hatch" action; a hatched one shows who lives here,
- * links to the replayable ritual (/dashboard/hatch), and offers the
- * certificate downloads — PNG only when the backend reports Pillow is
+ * Reads GET /hatch/status (real state, not a guess). The card shows only for
+ * a hatched build: who lives here, a link to the replayable ritual
+ * (/dashboard/hatch), and the certificate downloads. A build that finished
+ * its setup without the hatch gets no card, rather than one saying it has not
+ * hatched yet; while the answer is pending, or when there is none, nothing is
+ * shown either. Downloads: PNG only when the backend reports Pillow is
  * actually installed (certificate_formats), otherwise the SVG stands alone
  * and no dead button pretends otherwise.
  *
@@ -75,6 +77,8 @@ export default function HatchCard() {
 
   const pngAvailable = (status?.certificate_formats || []).includes("png");
 
+  if (unreachable || !status?.hatched) return null;
+
   return (
     <div style={cardStyle}>
       <div
@@ -98,32 +102,16 @@ export default function HatchCard() {
           color: "var(--text2)",
         }}
       >
-        {unreachable ? (
-          <>
-            The backend doesn&rsquo;t answer for the hatch yet — it may be
-            asleep, or running a build older than this dashboard.
-          </>
-        ) : status === null ? (
-          <>Checking who lives here…</>
-        ) : status.hatched ? (
-          <>
-            <span style={{ fontWeight: 700, color: "var(--text)" }}>
-              {status.name}
-            </span>{" "}
-            hatched here on {status.hatch_date}
-            {status.replays > 0
-              ? ` — the ritual has been replayed ${status.replays} time${
-                  status.replays === 1 ? "" : "s"
-                }.`
-              : "."}{" "}
-            Replay it any time; replays never rename.
-          </>
-        ) : (
-          <>
-            This build hasn&rsquo;t hatched yet. Wake it up, name it, and let
-            it introduce the crew.
-          </>
-        )}
+        <span style={{ fontWeight: 700, color: "var(--text)" }}>
+          {status.name}
+        </span>{" "}
+        hatched here on {status.hatch_date}
+        {status.replays > 0
+          ? `, and the ritual has been replayed ${status.replays} time${
+              status.replays === 1 ? "" : "s"
+            }.`
+          : "."}{" "}
+        Replay it any time; replays never rename.
       </p>
       <div className="flex flex-wrap gap-3">
         <Link
@@ -136,21 +124,19 @@ export default function HatchCard() {
           }}
         >
           <MsIcon name="egg" size={20} />
-          {status?.hatched ? "Replay the hatch" : "Begin the hatch"}
+          Replay the hatch
         </Link>
-        {status?.hatched && (
-          <a href={`${API_BASE}/hatch/certificate?format=svg&download=1`} style={pillLink}>
-            <MsIcon name="workspace_premium" size={20} />
-            Certificate (SVG)
-          </a>
-        )}
-        {status?.hatched && pngAvailable && (
+        <a href={`${API_BASE}/hatch/certificate?format=svg&download=1`} style={pillLink}>
+          <MsIcon name="workspace_premium" size={20} />
+          Certificate (SVG)
+        </a>
+        {pngAvailable && (
           <a href={`${API_BASE}/hatch/certificate?format=png&download=1`} style={pillLink}>
             PNG
           </a>
         )}
       </div>
-      {status?.hatched && !pngAvailable && (
+      {!pngAvailable && (
         <p
           style={{
             margin: "12px 0 0",
@@ -160,7 +146,7 @@ export default function HatchCard() {
             color: "var(--text3)",
           }}
         >
-          SVG only on this build — PNG export needs Pillow on the backend.
+          SVG only on this build: PNG export needs Pillow on the backend.
         </p>
       )}
     </div>

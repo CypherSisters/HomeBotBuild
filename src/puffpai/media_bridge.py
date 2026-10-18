@@ -214,7 +214,9 @@ class MediaBridge:
         self._enabled = cfg.media_server.enabled
         self._user_id = ""  # lazily resolved admin user for playlist/favorite ops
         self._cache = _StateCache(ttl=5.0)
-        self._session = requests.Session()
+        self._session = requests.Session()  # lan-egress: Jellyfin/Calibre session on the configured LAN url
+        # Marked home-network calls never use a proxy (security.lan_guard).
+        self._session.trust_env = False
         self._session.headers.update({
             "X-Emby-Authorization": (
                 f'MediaBrowser Client="PuffPAI", Device="PuffPAI-Server", '
@@ -237,7 +239,7 @@ class MediaBridge:
         _assert_no_traversal(path)
         url = f"{self._jellyfin_url}{path}"
         try:
-            resp = self._session.request(
+            resp = self._session.request(  # lan-egress: Jellyfin on the configured url; lan_guard refuses an internet address
                 method, url, params=params, json=data, timeout=self._timeout,
             )
             resp.raise_for_status()
@@ -470,7 +472,7 @@ class MediaBridge:
             session_id = self._pick_session()
         validate_media_id(session_id, kind="session_id")
 
-        # Jellyfin takes these as query params, not a JSON body — a body-only
+        # Jellyfin takes these as query params, not a JSON body: a body-only
         # request is answered with 400.
         self._jf_request(
             f"/Sessions/{quote_segment(session_id)}/Playing",

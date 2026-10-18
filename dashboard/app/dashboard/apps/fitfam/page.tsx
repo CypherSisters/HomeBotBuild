@@ -796,7 +796,7 @@ function StrengthTab(props: StrengthTabProps) {
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <input
               type="text"
-              placeholder="Notes (optional — form cue, soreness, etc.)"
+              placeholder="Notes (optional: form cue, soreness, etc.)"
               value={strengthNotes}
               onChange={(e) => setStrengthNotes(e.target.value)}
               className="flex-1 rounded-lg border border-[var(--line)] bg-white/80 px-3 py-2 text-sm"
@@ -817,7 +817,7 @@ function StrengthTab(props: StrengthTabProps) {
                 {estimated1RM} lb
                 {personalRecords[strengthExerciseId] && (
                   <>
-                    {" — "}
+                    {" · "}
                     {estimated1RM > personalRecords[strengthExerciseId].est1RM ? (
                       <span className="font-bold">NEW PR!</span>
                     ) : (
@@ -844,7 +844,7 @@ function StrengthTab(props: StrengthTabProps) {
           {selectedExercise && (
             <div className="mt-4 rounded-lg border border-[color-mix(in_srgb,var(--sky)_45%,transparent)] bg-[color-mix(in_srgb,var(--sky)_16%,transparent)] p-3">
               <p className="text-xs font-semibold uppercase text-[var(--sky)]">
-                Form Cues — {selectedExercise.name}
+                Form Cues: {selectedExercise.name}
               </p>
               <ul className="mt-1 space-y-0.5 text-xs text-[var(--sky)]">
                 {selectedExercise.formCues.map((cue, i) => (

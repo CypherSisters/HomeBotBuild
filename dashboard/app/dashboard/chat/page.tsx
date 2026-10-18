@@ -66,7 +66,7 @@ const AvatarOverlay = dynamic(
  *
  * crypto.randomUUID() only exists on HTTPS or localhost. The kiosk reaches the
  * dashboard as http://localhost:3003 so it is fine there — but any other
- * household device browses to http://192.168.50.40:3003, where randomUUID is
+ * household device browses to http://192.168.1.40:3003, where randomUUID is
  * undefined and starting a NEW conversation threw before the message was ever
  * sent. getRandomValues is available on plain http, so use it directly.
  */
@@ -140,14 +140,14 @@ export default function ChatPage() {
       if (res.ok && j?.success !== false) {
         say(
           `📄 "${file.name}" uploaded and indexed${
-            j?.pii_detected ? " — sensitive info detected and locked in the Vault" : ""
+            j?.pii_detected ? ", sensitive info detected and locked in the Vault" : ""
           }. Ask me anything about it.`
         );
       } else {
         say(`I couldn't index "${file.name}": ${j?.error ?? `HTTP ${res.status}`}`);
       }
     } catch {
-      say(`Upload failed — is the backend running?`);
+      say(`Upload failed. Is PuffPAI running?`);
     } finally {
       setUploadingFile(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -823,7 +823,7 @@ export default function ChatPage() {
               }}
             />
             <div style={{ font: `600 14px ${NUNITO}`, color: "var(--text2)" }}>
-              PuffPAI is sleeping — start the backend to chat:{" "}
+              PuffPAI is sleeping. Start it to chat:{" "}
               <code
                 style={{
                   font: `600 12px ${JBM}`,
@@ -1058,7 +1058,7 @@ export default function ChatPage() {
               color: "var(--text2)",
               marginBottom: 8,
             }}
-            title="Attach a file — it gets indexed so I can answer questions about it"
+            title="Attach a file so I can read it and answer questions about it"
           >
             <MsIcon
               name="attach_file"
@@ -1360,7 +1360,7 @@ function RailSource({
               borderRadius: 6,
               background: HATCH,
             }}
-            title="Counts unavailable — backend offline"
+            title="Counts unavailable while PuffPAI is offline"
           />
         ) : (
           <div style={{ font: `600 12px ${JBM}`, color: "var(--text3)" }}>

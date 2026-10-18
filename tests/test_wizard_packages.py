@@ -283,6 +283,39 @@ def test_a_subdirectory_other_than_data_is_refused(tmp_path):
     assert "not an allowed directory" in str(exc.value)
 
 
+def test_a_bytecode_folder_in_a_non_builtin_package_is_still_refused(tmp_path):
+    path = _write_package(tmp_path, "sources", _manifest())
+    os.makedirs(os.path.join(path, "__pycache__"))
+    with pytest.raises(PackageError) as exc:
+        loader.load_package(path)
+    assert "not an allowed directory" in str(exc.value)
+
+
+def test_python_s_own_bytecode_folder_does_not_break_a_builtin_package(
+        tmp_path, monkeypatch):
+    # Python writes __pycache__ next to every skill.py it imports, on any
+    # machine without PYTHONDONTWRITEBYTECODE. Refusing it broke every
+    # built-in package from the second request on.
+    monkeypatch.setattr(loader, "BUILTIN_DIR", str(tmp_path))
+    path = _write_package(tmp_path, "sources", _manifest())
+    os.makedirs(os.path.join(path, "__pycache__"))
+    package = loader.load_package(path)
+    assert package.builtin
+    packages, refusals = loader.load_builtin_packages(str(tmp_path))
+    assert refusals == []
+    assert sorted(packages) == ["sources"]
+    assert packages["sources"].builtin
+
+
+def test_other_folders_stay_refused_even_in_a_builtin_package(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(loader, "BUILTIN_DIR", str(tmp_path))
+    path = _write_package(tmp_path, "sources", _manifest())
+    os.makedirs(os.path.join(path, "bin"))
+    with pytest.raises(PackageError):
+        loader.load_package(path)
+
+
 def test_a_bad_package_does_not_take_the_others_down(tmp_path):
     _write_package(tmp_path, "sources", _manifest())
     _write_package(tmp_path, "tools", {"schema": "nope"})
@@ -333,7 +366,7 @@ def test_no_shipped_package_asks_for_a_secret_or_a_home_assistant_domain():
 def test_the_registered_fix_commands_render_exactly():
     assert fixes.render({"kind": "command", "id": "source.fetch",
                          "args": {"source_id": "wikipedia_en"}}) == (
-        "puffpai setup --yes --fetch-source wikipedia_en --accept-source-size")
+        "puffpai sources add wikipedia_en")
     assert fixes.render({"kind": "command", "id": "knowledge.sync",
                          "args": {}}) == "puffpai knowledge sync"
     assert fixes.render({"kind": "command", "id": "persona.rename_id",
@@ -355,7 +388,7 @@ def test_a_fix_is_never_a_string():
 
 @pytest.mark.parametrize("value", [
     "wiki; rm -rf /", "wiki && curl evil.example", "$(id)", "a b", "--flag",
-    "", 7, None, "x" * 80,
+    "", 7, None, "x" * 200,
 ])
 def test_an_argument_that_is_not_a_plain_token_is_refused(value):
     with pytest.raises(fixes.FixError):

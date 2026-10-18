@@ -27,7 +27,7 @@ from puffpai import setup_ops
 from puffpai.config import get_config
 from puffpai.security import endpoint_gate
 
-LAN_PEER = "192.168.50.70"
+LAN_PEER = "192.168.1.70"
 
 
 @pytest.fixture
@@ -113,6 +113,7 @@ STATE_CHANGING = {
     ("POST", "/setup/storage"),
     ("POST", "/setup/ha"),
     ("POST", "/setup/ollama"),
+    ("POST", "/setup/ollama/pull"),
     ("POST", "/setup/knowledge"),
     ("POST", "/setup/complete"),
 }
@@ -128,6 +129,7 @@ READ_ONLY = {
     ("GET", "/setup/pending-apply"),
     ("GET", "/setup/hardware"),
     ("GET", "/setup/manifest"),
+    ("GET", "/setup/ollama/pull"),
 }
 
 
@@ -322,6 +324,21 @@ class TestShapes:
                            headers=_auth())
         assert resp.status_code == 400
         assert resp.get_json()["ok"] is False
+
+    def test_bridge_post_records_a_sent_default_as_the_default(self, client,
+                                                               scratch):
+        """The HomeBot browser setup sends the build's default (Moat) with
+        nobody picking it: recorded as the default, never as the owner's choice."""
+        body = client.post("/setup/bridge",
+                           json={"posture": "moat", "network_edge": False,
+                                 "defaulted": True},
+                           headers=_auth()).get_json()
+        assert body["ok"] is True
+        assert body["bridge"]["chosen_by"] == "default"
+        picked = client.post("/setup/bridge",
+                             json={"posture": "moat", "network_edge": False},
+                             headers=_auth()).get_json()
+        assert picked["bridge"]["chosen_by"] == "owner"
 
     def test_pending_apply_is_empty_on_a_fresh_build(self, client, scratch):
         body = client.get("/setup/pending-apply", headers=_auth()).get_json()

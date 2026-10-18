@@ -6,6 +6,8 @@ import type { ColorButtonKey } from "../_interfaces";
 
 type Props = {
   label?: string | null;
+  /** The accessible name, when the visible label alone does not say enough. */
+  ariaLabel?: string;
   title?: string;
   icon?: string;
   iconSize?: string | number;
@@ -26,6 +28,7 @@ type Props = {
 
 export default function Button({
   label,
+  ariaLabel,
   title,
   icon,
   iconSize,
@@ -86,7 +89,7 @@ export default function Button({
 
   if (href && !disabled) {
     return (
-      <Link href={href} target={target} title={title} className={componentClassString}>
+      <Link href={href} target={target} title={title} aria-label={ariaLabel} className={componentClassString}>
         {componentChildren}
       </Link>
     );
@@ -98,6 +101,7 @@ export default function Button({
       className: componentClassString,
       type: type ?? "button",
       title,
+      "aria-label": ariaLabel,
       target,
       disabled,
       onClick,

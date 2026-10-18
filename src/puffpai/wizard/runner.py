@@ -12,20 +12,18 @@ section has to be written before the skill that reads it runs:
 
 * :data:`SKILL_ORDER` -- the twelve, in skill order. The order of the log, the
   run report and the review screen's rows.
-* :data:`SCHEDULE` -- the entries actually executed. Each is attributed to the
-  skill that owns it; Secure owns three (posture, vault, bridge) because the
-  posture gates every later menu and the vault ceremony sits between the build
-  questions and the network ones.
+* :data:`SCHEDULE` -- the entries actually executed, in this order: goal, name
+  and age first; this computer checked quietly; ONE
+  summary with one "Looks good"; the vault; then the building. Each entry is
+  attributed to the skill that owns it, and each says whether the owner sees
+  it (``ask``) or it answers from the approved summary (``quiet``).
 
-Why the schedule is not simply ``SKILL_ORDER`` with ``secure.posture`` hoisted
-to the front: Context reads ``surfaces`` and ``knowledge``, and both are
-written by skills that come *after* Context in the skill order. Running the
-twelve in skill order would hand Context an empty surface list and an empty
-knowledge block, so the prompt it assembles would be a different prompt. The
-schedule therefore keeps the positions the wizard already had, which is what
-``tests/test_wizard_golden.py`` pins: a checked-in manifest per scripted run,
-so a change to any section's contents is a test failure and not a surprise in
-somebody's build.
+Why the schedule is not simply ``SKILL_ORDER``: Context reads ``surfaces`` and
+``knowledge``, and both are written by skills that come *after* Context in the
+skill order, and the summary has to be shown before anything it lists is
+applied. ``tests/test_wizard_golden.py`` pins what the schedule writes: a
+checked-in manifest per scripted run, so a change to any section's contents is
+a test failure and not a surprise in somebody's build.
 
 Each entry names a *part*. ``card`` means "run the propose -> card -> apply ->
 verify lifecycle"; ``card:<name>`` means the same for a package that asks more
@@ -87,12 +85,13 @@ RESUME_NOTHING_DONE = "nothing_done"
 RESUME_FINISHED = "finished"
 RESUME_TOO_OLD = "too_old"
 
-#: The twelve, in the fixed skill order. ``crew`` is the Agents skill:
+#: The skills, in their fixed order, with Assemble
+#: between Surfaces and Prove. ``crew`` is the Agents skill:
 #: ``agents`` is in ``persona_scaffold.RESERVED_IDS``, so it cannot be a package
 #: id, and the cards and the review screen call it ``crew``.
 SKILL_ORDER: tuple[str, ...] = (
     "discover", "purpose", "brain", "sources", "tools", "integrate",
-    "context", "crew", "secure", "surfaces", "prove", "handoff",
+    "context", "crew", "secure", "surfaces", "assemble", "prove", "handoff",
 )
 
 #: The part name that means "this package has a card": the runner runs the
@@ -117,64 +116,109 @@ OUTCOMES = ("done", "skipped", "failed", "not_built", "refused")
 _TERMINAL = ("done", "skipped", "not_built")
 
 
+#: How a card reaches the owner. ``ask`` draws it and waits for answers;
+#: ``quiet`` never draws it: its answers come from the approved summary
+#: (:func:`puffpai.wizard.proposal.answers_for_card`), so a card the owner no
+#: longer sees still applies exactly what the summary said and nothing more.
+FACE_ASK = "ask"
+FACE_QUIET = "quiet"
+
+
 @dataclass(frozen=True)
 class Step:
-    """One entry in the schedule: a part of a skill, in execution order."""
+    """One entry in the schedule: a part of a skill, and how it is shown."""
 
     entry: str
     skill: str          # "" means the runner itself owns this entry
     part: str
     requires: tuple[str, ...] = ()
+    face: str = FACE_ASK
+    #: A wording key the console prints before the step runs ("Checking this
+    #: computer..."). Empty for none.
+    say: str = ""
 
 
-#: The wizard, entry by entry. Three entries are the runner's own because they
-#: were inline code in the pre-package wizard and belong to no step: writing the
-#: Ollama config, printing the paths that were written, and the manifest, which
-#: the runner assembles from the sections the packages wrote.
+#: The wizard, entry by entry, in order: what this computer has and the
+#: thinking model that fits it, then the goal, then a name, then an age band
+#: that only changes the wording; then ONE summary and one "Looks good"; then
+#: the vault PIN while the owner is still at the keyboard, and only then the
+#: long downloads. The cards between are ``quiet``: they still propose, apply
+#: and verify, and their answers come from the approved summary.
 #:
 #: ``requires`` names keys in the run's shared notebook, and each one is written
-#: by an entry above it: ``posture``/``gates`` by ``secure.posture``,
-#: ``census``/``ollama_url`` by ``discover``, ``chosen_model`` by ``brain``,
-#: ``interview`` by ``purpose``. A missing key is a skip with a gap, never a
+#: by an entry above it: ``interview`` by ``purpose``, ``census``/``ollama_url``
+#: by ``discover``, ``posture``/``gates`` by ``secure.posture``,
+#: ``chosen_model`` by ``brain``. A missing key is a skip with a gap, never a
 #: step working from nothing.
 SCHEDULE: tuple[Step, ...] = (
-    # Posture first: it settles what every later menu is allowed to offer.
-    Step("secure.posture", "secure", f"{V2_PART}:posture"),
-    # The census and the Ollama survey are one skill and one card.
-    Step("discover.card", "discover", V2_PART, ("posture",)),
-    # The bot's name and goal come straight after the machine: goal first.
-    # They need only the census, and
-    # neither Brain nor Crew reads the interview. Two cards, not one, and the
-    # split is load-bearing: the id a place is scaffolded under is derived from
-    # the name and the goal, so it cannot be proposed on the same card those
-    # are typed on -- otherwise a bot named Stargazer would be offered the
-    # fallback id, because the suggestion would be worked out before anybody
-    # had typed anything.
-    Step("purpose.identity", "purpose", f"{V2_PART}:identity", ("census",)),
-    Step("purpose.place", "purpose", f"{V2_PART}:place", ("census",)),
-    Step("brain.card", "brain", V2_PART, ("census", "ollama_url", "gates")),
-    Step("crew.card", "crew", V2_PART, ("census",)),
-    Step("surfaces.card", "surfaces", V2_PART, ("interview",)),
+    # The census, the Ollama survey and whether the internet answers.
+    # Measured, not asked, and shown first so what this computer has and the
+    # thinking model that fits it are explicit.
+    Step("discover.card", "discover", V2_PART, face=FACE_QUIET, say="checking"),
+    Step("runner.first_look", "", "first_look", ("census",)),
+    # The goal is the first question, and the name is suggested from it,
+    # which is why they are two cards.
+    Step("purpose.goal", "purpose", f"{V2_PART}:goal"),
+    Step("purpose.identity", "purpose", f"{V2_PART}:identity"),
+    # "Finding out what a <kind> bot needs", between the name and the plan.
+    # The runner's own entry, like the first screen: it writes no section,
+    # only the jobs the owner kept (``shared["needs"]``) and what was found
+    # for them. A build without the needs engine finishes it at once, saying
+    # nothing, and the plan is drawn as before.
+    Step("runner.needs", "", "needs", ("interview",)),
+    # The one summary. The runner's own entry: it writes no section, only the
+    # owner's decision into the shared notebook.
+    Step("runner.summary", "", "summary", ("census", "interview")),
+    Step("secure.posture", "secure", f"{V2_PART}:posture", face=FACE_QUIET),
+    # The vault straight after "Looks good": the owner is at the keyboard now,
+    # and the downloads below can run without them.
     Step("secure.vault", "secure", f"{V2_PART}:vault"),
+    Step("sources.card", "sources", V2_PART, ("posture", "gates", "interview"),
+         face=FACE_QUIET, say="building"),
+    # Quiet unless the hub is on the plan: its address and key are typed here,
+    # before the long downloads, for the same reason as the vault.
+    Step("tools.card", "tools", V2_PART, ("gates", "posture"), face=FACE_QUIET),
+    Step("brain.card", "brain", V2_PART, ("census", "ollama_url", "gates"),
+         face=FACE_QUIET),
+    Step("crew.card", "crew", V2_PART, ("census",), face=FACE_QUIET),
+    Step("purpose.place", "purpose", f"{V2_PART}:place", ("census",),
+         face=FACE_QUIET),
+    Step("surfaces.card", "surfaces", V2_PART, ("interview",), face=FACE_QUIET),
     Step("runner.persist_config", "", "persist_config", ("chosen_model", "ollama_url")),
-    Step("sources.card", "sources", V2_PART, ("posture", "gates", "interview")),
-    Step("integrate.card", "integrate", V2_PART, ("posture", "gates", "interview")),
-    Step("secure.bridge", "secure", f"{V2_PART}:bridge", ("posture",)),
-    Step("tools.card", "tools", V2_PART, ("gates", "posture")),
+    Step("integrate.card", "integrate", V2_PART, ("posture", "gates", "interview"),
+         face=FACE_QUIET),
+    Step("secure.bridge", "secure", f"{V2_PART}:bridge", ("posture",),
+         face=FACE_QUIET),
     Step("runner.wrote_paths", "", "wrote_paths"),
     # No ``brain.ready``: the Brain card's own apply pulls the model and its
-    # verify asks the Ollama whether it is there. A second entry would ask
-    # "Download it now?" twice.
+    # verify asks the Ollama whether it is there.
     Step("runner.manifest", "", "manifest", ("census",)),
+    # What "Looks good" said yes to and no card carries out: books from the
+    # libraries, daily updates, the look. No live cards: what the bot reads
+    # from outside services is an ingredient of a job in the build plan
+    # below, made only after the owner's one Yes. After the record is
+    # written, so the build's own answers (online while building, the
+    # brain) are known.
+    Step("runner.factory", "", "factory"),
     # Context after the manifest, not before it: its verify reads the goal and
-    # the name **off disk** (``build_context.collect_goal``), and before the
-    # manifest is written there is nothing on disk to read. Run earlier and
-    # every build records a gap saying the card described nothing.
-    Step("context.card", "context", V2_PART),
+    # the name **off disk** (``build_context.collect_goal``).
+    Step("context.card", "context", V2_PART, face=FACE_QUIET),
+    # The one build plan: ``build.pipeline.plan(goal, ctx)``
+    # works out the jobs, finds and checks what fits each, and saves one
+    # setup list (``<state>/build/build.json``). Nothing is made here; the
+    # handoff hands over to that list and its one Yes on the dashboard. Asks
+    # nothing, so no card, like Prove.
+    Step("assemble.plan", "assemble", "plan"),
     # Prove asks the owner nothing, so it has no card and keeps its wrapper.
     Step("prove.check", "prove", "check"),
     Step("handoff.card", "handoff", V2_PART),
 )
+
+
+def asked_card_ids(schedule: tuple[Step, ...] = SCHEDULE) -> list[str]:
+    """The cards the owner is asked, in order. The browser draws exactly these."""
+    return [card_id_of(step) for step in schedule
+            if step.face == FACE_ASK and card_id_of(step)]
 
 
 def _secret_keys() -> frozenset:
@@ -247,7 +291,12 @@ class RunContext:
     def __init__(self, *, args, cfg, non_interactive: bool,
                  shared: dict[str, Any], sections: dict[str, dict],
                  package: loader.Package | None, part: str = "",
-                 show_once: Any = None, remote: bool = False):
+                 show_once: Any = None, remote: bool = False,
+                 console: bool = False):
+        #: True when this console is drawing the wizard (no renderer was
+        #: handed in). The runner's own summary step only reads the keyboard
+        #: then; a test or a browser drives the summary some other way.
+        self.console = bool(console)
         #: True when a browser is drawing these cards and answers come back in
         #: a later request. ``non_interactive`` alone could not tell that apart
         #: from ``--yes`` with nobody at the keyboard, so a skill that may ask a
@@ -312,7 +361,7 @@ class RunContext:
     def applied(self, *path: str, default: Any = None) -> Any:
         """What this skill has already written, read-only. The propose rule.
 
-        **One rule, one implementation.**
+        **One rule, one implementation (re-proposing).**
         A ``propose`` starts from its own applied section when there is one and
         falls back to flags and detection only when there is not, so a card
         re-drawn after an apply shows what the owner actually answered rather
@@ -622,6 +671,24 @@ class Runner:
         Handoff has to enumerate gaps recorded by skills that
         ran long before it, including gaps from a run that never reached it.
         """
+        # The same gap said twice is one gap: a step's apply and its verify
+        # often notice the same missing thing, and the closing screen listed
+        # "no brain" three times over.
+        # Two gaps from one step with the same real fix (``ollama pull x``)
+        # are one missing thing said twice; "run setup again" is too general
+        # a fix to merge on, so those also have to say the same words.
+        def key(g: dict) -> tuple:
+            fix_id = (g.get("fix") or {}).get("id")
+            if fix_id and fix_id != "setup.rerun":
+                return (g.get("skill"), g.get("fix_command"))
+            return (g.get("skill"), g.get("what"), g.get("fix_command"))
+        # Two steps that say the same words with the same fix (a book that
+        # is downloaded but not searchable, seen by Integrate and by Prove)
+        # are one missing thing too.
+        def said(g: dict) -> tuple:
+            return (g.get("what"), g.get("fix_command"))
+        if any(key(g) == key(gap) or said(g) == said(gap) for g in self.gaps):
+            return
         self.gaps.append(gap)
         handoff = self.sections.setdefault("handoff", {})
         handoff.setdefault("gaps", []).append(gap)
@@ -667,7 +734,22 @@ class Runner:
                              non_interactive=self.non_interactive,
                              shared=self.shared, sections=self.sections,
                              package=package, part=lifecycle or "",
-                             show_once=self.show_once(), remote=self.remote)
+                             show_once=self.show_once(), remote=self.remote,
+                             console=self.renderer is None)
+        if step.say == "building" and self.renderer is None                 and self.runner_parts.get("before_building"):
+            # The console's last question before the build (Toolsmith's model).
+            try:
+                self.runner_parts["before_building"](context)
+            except Exception as exc:  # noqa: BLE001 - a question, never a stop
+                if _is_deliberate_refusal(exc):
+                    raise
+                _log.warning("The question before the build was not asked: %s",
+                             type(exc).__name__)
+        if step.say and self.renderer is None:
+            from puffpai.wizard import render_cli, wording
+            render_cli.say_line(" ".join(wording.say(
+                step.say, wording.mode_of(self.shared),
+                name=self.shared.get("bot_name") or "your bot").split()))
         try:
             if package is None:
                 part = self.runner_parts.get(step.part)
@@ -675,7 +757,8 @@ class Runner:
                     return finish("skipped", "nothing wired for this entry")
                 result = part(context)
             elif lifecycle is not None:
-                result = self._run_lifecycle(package, context, journal)
+                result = self._run_lifecycle(package, context, journal,
+                                             face=step.face)
             else:
                 module = loader.load_module(package)
                 func = getattr(module, f"part_{step.part}", None)
@@ -703,7 +786,8 @@ class Runner:
     # -- the card lifecycle -----------------------------------------------
 
     def _run_lifecycle(self, package: loader.Package,
-                       context: RunContext, journal: dict) -> Any:
+                       context: RunContext, journal: dict,
+                       face: str = FACE_ASK) -> Any:
         """propose -> card -> renderer -> apply -> verify, in that order.
 
         Every refusal here is the runner's, not the package's: a card that does
@@ -741,7 +825,7 @@ class Runner:
                             "decided": card["decided"],
                             "fields": [f["id"] for f in card["fields"]]}
 
-        answers = self._render(card)
+        answers = self._render(card, face=face)
         answers = cards.validate_answers(card, answers)
         journal["changed"] = cards.redact_answers(card, answers)
         if answers:
@@ -782,13 +866,41 @@ class Runner:
             result["gaps"] = list(result["gaps"]) + [gap]
         return result
 
-    def _render(self, card: dict) -> dict:
+    def quiet_answers(self, card: dict) -> dict:
+        """What a card the owner does not see answers: the approved summary."""
+        from puffpai.wizard import proposal
+        return proposal.answers_for_card(
+            card, self.shared.get("summary"), self.args,
+            internet=self.shared.get("internet"))
+
+    def _render(self, card: dict, face: str = FACE_ASK) -> dict:
         """Hand the card to whoever is showing it. A renderer that breaks is
-        the same as a renderer that changed nothing: the proposal stands."""
+        the same as a renderer that changed nothing: the proposal stands.
+
+        On the console (no renderer handed in) a ``quiet`` card is not drawn:
+        it answers from the approved summary -- unless the summary put
+        something on it only the owner can type (the hub's key), in which case
+        it is asked like any other card. A face that was handed a renderer
+        (the browser service, tests) decides for itself.
+        """
         renderer = self.renderer
         if renderer is None:
-            from puffpai.wizard import render_cli
-            renderer = render_cli.render
+            from puffpai.wizard import proposal, render_cli, wording
+            if face == FACE_QUIET and not (
+                    not self.non_interactive
+                    and proposal.must_ask(card, self.shared.get("summary"))):
+                return self.quiet_answers(card)
+            mode = wording.mode_of(self.shared)
+            try:
+                return render_cli.render(card,
+                                         non_interactive=self.non_interactive,
+                                         mode=mode) or {}
+            except Exception as exc:
+                if _is_deliberate_refusal(exc):
+                    raise
+                _log.warning("The card for '%s' could not be shown: %s",
+                             card.get("skill"), exc)
+                return {}
         try:
             return renderer(card, non_interactive=self.non_interactive) or {}
         except Exception as exc:
@@ -926,6 +1038,8 @@ class Runner:
 
     def _entry_label(self, step: Step) -> str:
         """What to call an entry the log has no title for."""
+        if not step.skill and step.part in RUNNER_ENTRY_TITLES:
+            return RUNNER_ENTRY_TITLES[step.part]
         package = self.packages.get(step.skill) if step.skill else None
         label = getattr(package, "label", "") or step.skill or "the wizard"
         part = lifecycle_part(step.part)
@@ -942,10 +1056,15 @@ class Runner:
         titles = self.entry_titles()
         decided: list[dict] = []
         stopped: Step | None = None
-        for step in self.schedule:
+        done = [i for i, step in enumerate(self.schedule)
+                if self.entries.get(step.entry, {}).get("outcome") in _TERMINAL]
+        for index, step in enumerate(self.schedule):
             terminal = self.entries.get(step.entry, {}).get(
                 "outcome") in _TERMINAL
-            if not terminal and stopped is None:
+            # A runner entry a later entry has already gone past (a record
+            # from before the first screen existed) is not where it stopped.
+            passed = (not step.skill and bool(done) and index < done[-1])
+            if not terminal and stopped is None and not passed:
                 stopped = step
             if not terminal or not step.skill:
                 continue
@@ -1021,6 +1140,24 @@ class Runner:
                          "%s: %s", card_id_of(step), type(exc).__name__, exc)
             return False
         return isinstance(verdict, dict) and verdict.get("status") == "pass"
+
+
+#: What the resume screen calls the runner's own entries.
+RUNNER_ENTRY_TITLES = {"first_look": "What this computer has",
+                       "needs": "What your bot needs",
+                       "summary": "The plan"}
+
+#: Entries that measure and ask nothing. A record where only these finished
+#: holds no answer of the owner's, so there is nothing to offer to continue:
+#: reloading the first screen is not "a setup that stopped".
+MEASURED_ONLY = ("discover.card", "runner.preset")
+
+
+def nothing_answered(run: "Runner") -> bool:
+    """Did this record finish nothing but the quiet check of this computer?"""
+    done = [entry for entry, row in run.entries.items()
+            if isinstance(row, dict) and row.get("outcome") in _TERMINAL]
+    return bool(done) and all(entry in MEASURED_ONLY for entry in done)
 
 
 def card_id_of(step: Step) -> str:
@@ -1111,8 +1248,9 @@ def _is_deliberate_refusal(exc: BaseException) -> bool:
     return isinstance(exc, SetupRefused)
 
 
-__all__ = ["OUTCOMES", "RESUME_FINISHED", "RESUME_MAX_AGE_S",
+__all__ = ["FACE_ASK", "FACE_QUIET", "OUTCOMES", "RESUME_FINISHED", "RESUME_MAX_AGE_S",
            "RESUME_NOTHING_DONE", "RESUME_TOO_OLD", "RESUME_UNREADABLE",
            "RunContext", "Runner", "SCHEDULE", "SKILL_ORDER", "STATE_SCHEMA",
-           "Step", "StepRecord", "V2_PART", "archive_state", "card_id_of",
+           "Step", "StepRecord", "V2_PART", "archive_state", "asked_card_ids",
+           "card_id_of",
            "find_stopped_run", "json_safe", "lifecycle_part", "vault_on_disk"]

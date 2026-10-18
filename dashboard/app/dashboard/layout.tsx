@@ -20,6 +20,7 @@ import FloatingPuff from "./_components/FloatingPuff";
 import HouseholdSync from "./_components/HouseholdSync";
 import ThemeSync from "./_components/ThemeSync";
 import ShowViewer from "./_components/ShowViewer";
+import VaultPinPrompt from "../_components/VaultPinPrompt";
 import { VoiceStopBar } from "./_components/VoiceStop";
 import {
   installAudioUnlockListeners,
@@ -188,6 +189,9 @@ export default function LayoutAuthenticated({ children }: Props) {
           the button. Layout-level so it is there on every kiosk page — the
           owner should never have to be on the right page to shut her up. */}
       <VoiceStopBar />
+      {/* The Vault PIN, asked where the owner is, when a change to the build
+          needs the Vault open (app/_lib/vaultSession.ts). */}
+      <VaultPinPrompt />
     </div>
     </OnboardingGate>
   );

@@ -182,7 +182,7 @@ def test_prove_fails_on_the_09_19_build(tmp_path):
     assert {g["fix"]["args"]["source_id"] for g in fetches} == {
         "wikipedia", "stackexchange_science"}
     for gap in fetches:
-        assert gap["fix_command"].startswith("puffpai setup --yes --fetch-source")
+        assert gap["fix_command"].startswith("puffpai sources add ")
     rename = [g for g in record["gaps"]
               if g["fix"]["id"] == "persona.rename_id"]
     assert rename, "a reserved id gets the one command that changes it"

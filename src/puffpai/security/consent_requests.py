@@ -14,6 +14,19 @@ Persists at <repo>/data/consent_requests.json (see below). The
 activity feed those entries go to is owned by :mod:`puffpai.agent_activity`,
 which resolves it through the same state-dir canon.
 
+The activity feed never keeps a key or a password a caller handed over: its
+text fields are checked whole (``web_search.key_safe_text``) and its
+``result`` string by string, key names too (``web_search.key_safe_data``);
+such text is replaced by one plain placeholder. A request's card (label,
+reason, context) is kept as written, because an approval is checked against
+it (file digests, hosts). The entity id and the action
+are lookup keys, never replaced by a placeholder: an entity id with Home
+Assistant's entity-id shape is kept exactly (``web_search.checked_id``); any
+other entity id, and any action, that looks like a key or a password is
+refused (ValueError), and nothing about it is written. The feed lines built
+here are made of parts that were each checked, and are not checked again as
+a whole (a Home Assistant id inside one must not blank it).
+
 Copyright (c) 2026 Cypher Sisters. Apache-2.0 License.
 """
 
@@ -193,6 +206,8 @@ def __getattr__(name: str) -> str:
         return _activity_log_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+from puffpai.web_search import (checked_id, id_looks_like_key, key_safe_data,
+                                key_safe_text)
 
 _LOCK = threading.Lock()
 
@@ -227,8 +242,17 @@ def log_agent_activity(agent: str, event: str, task: str, status: str,
     part of holding it, so a dead feed must not stop the user being asked. It no
     longer fails *silently*, though: :func:`puffpai.agent_activity.append` names
     the unwritable path once per process instead of dropping the entry with a
-    bare ``pass``.
+    bare ``pass``. Nothing that looks like a key or a password is written.
     """
+    _append_activity(key_safe_text(agent), key_safe_text(event),
+                     key_safe_text(task),
+                     key_safe_text(status),
+                     None if result is None else key_safe_data(result))
+
+
+def _append_activity(agent: str, event: str, task: str, status: str,
+                     result: dict | None) -> None:
+    """Write one feed line from parts the caller has already checked."""
     agent_activity.log_activity(agent, event, task, status, result,
                                 path=_activity_log_path())
 
@@ -247,7 +271,23 @@ def create_request(entity_id: str, label: str, action: str, reason: str,
     idempotent hit on an existing open request) keeps the original
     ``expires_at``: the clock runs from when the question was first asked, so
     re-asking cannot extend a stale window.
+
+    Raises ValueError, writing nothing, when the entity id is refused by
+    ``web_search.checked_id`` or the action looks like a key or a password
+    (both are lookup keys: a placeholder there would match the wrong
+    request).
     """
+    if id_looks_like_key(action):
+        raise ValueError("consent request refused: its action looked like a "
+                         "key or a password, so it was not kept")
+    eid = checked_id(entity_id)
+    if eid is None:
+        raise ValueError("consent request refused: its entity id looked like "
+                         "a key or a password, so it was not kept")
+    entity_id = eid
+    # The card's own words and its context (file digests, hosts) are kept as
+    # written: an approval is checked against them, so a placeholder there
+    # would turn every approval into a mismatch.
     with _LOCK:
         items = _load()
         for req in items:
@@ -270,11 +310,14 @@ def create_request(entity_id: str, label: str, action: str, reason: str,
             req["expires_at"] = (now + timedelta(seconds=ttl_seconds)).isoformat()
         items.append(req)
         _save(items)
-    log_agent_activity(
+    # Built from checked parts (the card's label and reason are checked for
+    # the feed only; the card keeps them as written); the whole line is not
+    # checked again (a Home Assistant id in it must not blank it).
+    _append_activity(
         "sentinel", "consent_requested",
-        f"Consent request: {action} for {label} ({entity_id})",
+        f"Consent request: {action} for {key_safe_text(label)} ({entity_id})",
         "waiting_user",
-        {"entity_id": entity_id, "reason": reason})
+        {"entity_id": entity_id, "reason": key_safe_text(reason)})
     return req
 
 
@@ -359,7 +402,16 @@ def resolve(entity_id: str, *, approved: bool, by: str = "user_via_chat",
     reentrant), so a verdict can only ever land on a request that is still
     genuinely open — an approval arriving long after a TTL-bound question lapsed
     finds nothing to resolve and returns ``None`` rather than acting on it.
+
+    An entity id refused by ``web_search.checked_id`` matches nothing: None,
+    and nothing is written.
     """
+    eid = checked_id(entity_id)
+    if eid is None:
+        return None
+    entity_id = eid
+    by = key_safe_text(by)
+    note = key_safe_text(note) if note else note
     _expire_stale()
     with _LOCK:
         items = _load()
@@ -383,10 +435,13 @@ def resolve(entity_id: str, *, approved: bool, by: str = "user_via_chat",
     else:
         get_store().deny(entity_id, by=by, reason=note or "declined in chat")
 
-    log_agent_activity(
+    # Built from checked parts (a label filed before labels were checked is
+    # checked here); the whole line is not checked again.
+    label = (key_safe_text(target["label"]) if "label" in target
+             else entity_id)
+    _append_activity(
         "sentinel", "consent_resolved",
-        f"Consent {'granted' if approved else 'denied'}: "
-        f"{target.get('label', entity_id)} ({entity_id})",
+        f"Consent {'granted' if approved else 'denied'}: {label} ({entity_id})",
         "completed",
         {"entity_id": entity_id, "approved": approved, "by": by})
     return target

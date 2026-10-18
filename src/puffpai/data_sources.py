@@ -425,6 +425,134 @@ def iter_ingestible_files(location: dict[str, Any], *,
 
 
 # ---------------------------------------------------------------------------
+# learning the approved folders - through the same PII screen as an upload
+# ---------------------------------------------------------------------------
+
+#: How many files one run learns. A folder bigger than this is learned in part
+#: and the rest is reported, never silently dropped.
+LEARN_LIMIT = 200
+
+#: What the file is to the ingestion pipeline: study material. This skips the
+#: model classifier (nothing of the owner's is sent to a model to be sorted)
+#: and routes the text to the searchable index, after the PII screen.
+_LEARN_HINT = "study notes from your own folder"
+
+
+def _staging_dir() -> str:
+    from puffpai.config import get_config
+    return os.path.join(get_config().DATA_DIR, "data", "own_folder_staging")
+
+
+def _staged_name(path: str) -> str:
+    """A stable, private name for one file's staging copy.
+
+    Stable, so learning the same file again replaces its earlier chunks rather
+    than adding a second copy. Hashed, so the owner's filename never becomes a
+    path or an id anywhere.
+    """
+    import hashlib
+    digest = hashlib.sha256(os.path.abspath(path).encode("utf-8", "replace")).hexdigest()
+    ext = os.path.splitext(path)[1].lower()[:10]
+    return f"own-{digest[:24]}{ext}"
+
+
+def learn_approved(selection: dict[str, Any], *, vault: Any = None,
+                   limit: int = LEARN_LIMIT,
+                   ingest: Any = None) -> dict[str, Any]:
+    """Learn the files in the folders the owner said yes to. Never raises.
+
+    Every file goes through :func:`puffpai.ingestion.ingest_file`, the same
+    path as a dashboard upload: text is extracted, screened for personal
+    details, high and critical details go to the vault (or the file is held
+    back when the vault is locked - fail closed), and the rest becomes
+    searchable. The owner's original is never handed to that function, because
+    it deletes its input once it has vaulted it: each file is copied to a
+    private staging name first and the copy is removed afterwards.
+
+    Returns counts only - no filename, no path, no text - so the result can go
+    in the build record.
+    """
+    import shutil
+
+    if ingest is None:
+        from puffpai import ingestion
+        ingest = ingestion.ingest_file
+    counts = {"learned": 0, "private_details_to_vault": 0, "held_back": 0,
+              "unreadable": 0, "not_reached": 0}
+    approved = [loc for loc in (selection.get("approved") or []) if isinstance(loc, dict)]
+    if not approved:
+        return {**counts, "lines": []}
+    staging = _staging_dir()
+    try:
+        os.makedirs(staging, exist_ok=True)
+    except OSError as exc:
+        logger.warning("Could not prepare the staging folder: %s", exc)
+        return {**counts, "unreadable": sum(int(l.get("ingestible", 0)) for l in approved),
+                "lines": ["Could not prepare a place to read your files, so none were learned."]}
+    done = 0
+    for location in approved:
+        for path in iter_ingestible_files(location):
+            if done >= limit:
+                counts["not_reached"] += 1
+                continue
+            done += 1
+            staged = os.path.join(staging, _staged_name(path))
+            try:
+                shutil.copyfile(path, staged)
+            except OSError:
+                counts["unreadable"] += 1
+                continue
+            try:
+                result = ingest(staged, original_filename=os.path.basename(path),
+                                user_hint=_LEARN_HINT, auto_apply=False, vault=vault)
+            except Exception as exc:  # noqa: BLE001 - one bad file is a count
+                logger.warning("Could not learn a file from an approved folder: %s",
+                               type(exc).__name__)
+                result = None
+            finally:
+                try:
+                    if os.path.exists(staged):
+                        os.remove(staged)
+                except OSError:
+                    pass
+            if result is None:
+                counts["unreadable"] += 1
+            elif getattr(result, "error", None):
+                if getattr(result, "pii_detected", False):
+                    counts["held_back"] += 1
+                else:
+                    counts["unreadable"] += 1
+            else:
+                counts["learned"] += 1
+                if getattr(result, "vaulted", False):
+                    counts["private_details_to_vault"] += 1
+    return {**counts, "lines": learn_summary_lines(counts)}
+
+
+def learn_summary_lines(counts: dict[str, Any]) -> list[str]:
+    """Plain words for what :func:`learn_approved` did."""
+    lines: list[str] = []
+    learned = int(counts.get("learned", 0))
+    if learned:
+        lines.append(f"Learned {learned} file(s) from your folders.")
+    if counts.get("private_details_to_vault"):
+        lines.append(f"{counts['private_details_to_vault']} of them had private "
+                     f"details; those details went into your vault and the rest "
+                     f"is searchable.")
+    if counts.get("held_back"):
+        lines.append(f"{counts['held_back']} file(s) have private details and your "
+                     f"vault was locked, so they were NOT learned. Unlock the vault "
+                     f"and upload them on the Knowledge page.")
+    if counts.get("unreadable"):
+        lines.append(f"{counts['unreadable']} file(s) could not be read.")
+    if counts.get("not_reached"):
+        lines.append(f"{counts['not_reached']} more file(s) were not read this time "
+                     f"(the first {LEARN_LIMIT} were). Upload the ones you want on "
+                     f"the Knowledge page.")
+    return lines
+
+
+# ---------------------------------------------------------------------------
 # the manifest block
 # ---------------------------------------------------------------------------
 

@@ -73,6 +73,12 @@ export interface OwnerApp {
   /** One sentence that demonstrably works, e.g. "add tomatoes to the plantings
    *  list". Empty when the app keeps no lists. */
   try: string;
+  /** True for a scaffolded persona with no list and no saved row. The Apps
+   *  page and the home launcher leave it out. Absent on older backends. */
+  empty?: boolean;
+  /** True for the bot's own page (the place the build made for itself), not
+   *  an app the owner added: it offers no "Remove this app". */
+  own?: boolean;
 }
 
 export interface PersonaRecord {

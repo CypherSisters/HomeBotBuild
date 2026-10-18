@@ -38,11 +38,18 @@ CARD = {
 
 
 def test_the_heading_is_the_owners_words_and_the_id_is_after_them():
+    """The heading is the owner's words, underscored on the next line. The
+    console speaks in plain words, so the skill id is never the label and is
+    not printed at all: no bracketed ids, no status lines, no shouting."""
     lines = render_cli.card_lines(cards.validate_card(CARD))
-    assert lines[0].startswith("A place of its own")
-    assert lines[0].rstrip().endswith("[purpose:place]")
-    assert lines[1] == "=" * len("A place of its own")
-    assert not lines[0].startswith("purpose"), "the id is not the label"
+    assert lines[0] == ""
+    assert lines[1].startswith("A place of its own")
+    assert lines[1] == "A place of its own"
+    assert lines[2] == "-" * len("A place of its own")
+    assert not lines[1].startswith("purpose"), "the id is not the label"
+    text = "\n".join(lines)
+    assert "[purpose" not in text and "status:" not in text
+    assert "purpose" not in text.lower().split("\n")[1]
 
 
 def test_each_question_gets_its_own_line(capsys, monkeypatch):
@@ -53,10 +60,50 @@ def test_each_question_gets_its_own_line(capsys, monkeypatch):
     out = capsys.readouterr().out.splitlines()
 
     for field in ("A place of its own", "The id it lives under"):
-        assert any(line.strip().startswith(field) and line.strip().endswith(
-            "(blank to keep)") for line in out), field
+        assert any(line.strip() == field for line in out), field
+    # The default is said in words, never "(blank to keep)".
+    assert any("Press Enter for yes." in line for line in out)
+    assert any("Press Enter to keep: stargazer" in line for line in out)
+    assert not any("blank to keep" in line for line in out)
     # And what the owner types after is a short marker, not the question again.
     assert typed and all(mark == render_cli.ANSWER_MARK for mark in typed)
+
+
+def test_a_choice_is_numbered_labels_and_a_number_picks_it(capsys, monkeypatch):
+    """Choices show labels, never the values behind them; typing the number
+    picks the option."""
+    card = cards.validate_card({
+        "skill": "brain", "section": "brain", "title": "Its brain",
+        "status": "ready", "estimate": {"bytes": 0, "seconds": 0,
+                                        "basis": "measured"},
+        "fields": [{"id": "model", "kind": "choice", "label": "Which brain",
+                    "options": [{"value": "qwen2.5:7b-instruct",
+                                 "label": "Qwen 7B: fits well"},
+                                {"value": "llama3.2:1b",
+                                 "label": "Llama 1B: fits well"}],
+                    "current": "qwen2.5:7b-instruct"}]})
+    monkeypatch.setattr(builtins, "input", lambda prompt="": "2")
+    answers = render_cli.render(card, non_interactive=False)
+    out = capsys.readouterr().out
+    assert answers == {"model": "llama3.2:1b"}
+    assert "1) Qwen 7B: fits well" in out and "2) Llama 1B: fits well" in out
+    assert "qwen2.5:7b-instruct" not in out.replace("Press Enter", "")
+
+
+def test_long_text_wraps_at_words_and_never_mid_word(monkeypatch):
+    monkeypatch.setenv("COLUMNS", "41")
+    text = ("Every question and answer from the Space Exploration Stack "
+            "Exchange, offline. Download: 700 MB, from download.kiwix.org.")
+    lines = render_cli.wrap(text, 2)
+    assert all(len(line) <= 40 for line in lines), lines
+    words = set(text.split())
+    assert all(part in words for line in lines for part in line.split()), lines
+
+
+def test_the_console_prints_ascii_only(capsys):
+    lines = render_cli.card_lines(cards.validate_card(dict(
+        CARD, title="Its brain \u2014 \u201cfits\u201d")))
+    assert all(line.isascii() for line in lines)
 
 
 def test_a_secret_on_a_pipe_is_read_without_asking_a_console(monkeypatch,
@@ -140,5 +187,5 @@ def test_context_names_the_command_that_would_actually_help(monkeypatch,
     verdict = module.verify(ctx)
     assert verdict["status"] == "gap"
     assert verdict["gap"]["fix"]["id"] == "setup.scaffold"
-    assert fixes.render(verdict["gap"]["fix"]) == "puffpai setup --scaffold"
+    assert fixes.render(verdict["gap"]["fix"]) == "puffpai setup --own-place"
     get_config(_force_reload=True)

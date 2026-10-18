@@ -12,6 +12,7 @@ import requests
 
 from ..config import DEFAULT_OLLAMA_URL
 from .base import LLMBackend
+from puffpai.security.lan_guard import no_proxies as _no_proxies  # marked home-network calls never use a proxy
 
 
 class OllamaBackend(LLMBackend):
@@ -27,7 +28,8 @@ class OllamaBackend(LLMBackend):
                  num_ctx: int = 2048,
                  num_predict: int = 256,
                  timeout: int = 30,
-                 keep_alive: int | str | None = None):
+                 keep_alive: int | str | None = None,
+                 think: bool | None = None):
         self._url = url.rstrip('/')
         self._model = model
         self._embed_model = embed_model or model
@@ -49,14 +51,25 @@ class OllamaBackend(LLMBackend):
         #: non-thinking model costs one failed round-trip per process, not one
         #: per request.
         self._think_ok = True
+        #: An explicit ``think`` for this backend: True asks a thinking model
+        #: to reason, False asks it to answer at once. ``None`` keeps the
+        #: default above (reasoning off where the model accepts the field).
+        self._think = think
 
     def _build_payload(self, messages: list, temperature: float,
-                       max_tokens: int, stream: bool) -> dict:
+                       max_tokens: int, stream: bool,
+                       format: dict | None = None,
+                       tools: list | None = None) -> dict:
         """Build a native /api/chat payload.
 
         Uses the native endpoint, not /v1/chat/completions: the
         OpenAI-compat endpoint silently ignores the "options" field, so
         num_ctx/num_predict would never be applied.
+
+        ``format`` is a JSON schema Ollama turns into a grammar while decoding
+        (the answer can only take that shape); ``tools`` is Ollama's tool list.
+        Both are left out of the payload when ``None``, so a call without them
+        is exactly what it was before they existed.
         """
         payload = {
             "model": self._model,
@@ -76,16 +89,21 @@ class OllamaBackend(LLMBackend):
         # qwen3:30b-a3b with thinking on spent the whole num_predict budget
         # reasoning and returned an EMPTY reply, which is a silent failure the
         # chat path has no way to distinguish from a bad answer.
-        # Models without thinking support reject the field; _post retries once
-        # without it and remembers (see _think_ok).
+        # Models without thinking support reject the field; _post_chat retries
+        # once without it and remembers (see _think_ok).
         if self._think_ok:
-            payload["think"] = False
+            payload["think"] = False if self._think is None else self._think
+        if format is not None:
+            payload["format"] = format
+        if tools is not None:
+            payload["tools"] = tools
         return payload
 
-    def _post_chat(self, payload: dict):
+    def _post_chat(self, payload: dict, stream: bool = False):
         """POST /api/chat, retrying once without ``think`` if unsupported."""
-        response = requests.post(f"{self._url}/api/chat", json=payload,
-                                 timeout=self._timeout)
+        response = requests.post(  # lan-egress: Ollama chat, LAN
+            f"{self._url}/api/chat", json=payload, timeout=self._timeout,
+            stream=stream, proxies=_no_proxies())
         if response.status_code >= 400 and "think" in payload:
             try:
                 detail = json.dumps(response.json())
@@ -94,17 +112,30 @@ class OllamaBackend(LLMBackend):
             if "think" in detail.lower():
                 self._think_ok = False
                 payload.pop("think")
-                response = requests.post(f"{self._url}/api/chat", json=payload,
-                                         timeout=self._timeout)
+                response = requests.post(  # lan-egress: Ollama chat, LAN
+                    f"{self._url}/api/chat", json=payload,
+                    timeout=self._timeout, stream=stream,
+                    proxies=_no_proxies())
         return response
 
     def chat(self, messages: list, temperature: float = 0.7,
-             max_tokens: int = 2048) -> str:
-        """Send a chat request to Ollama's native /api/chat endpoint."""
+             max_tokens: int = 2048, format: dict | None = None,
+             tools: list | None = None):
+        """Send a chat request to Ollama's native /api/chat endpoint.
+
+        Returns the answer text. With ``tools`` (even an empty list) it
+        returns Ollama's whole message instead,
+        ``{"role", "content", "tool_calls": [...]}``, so a caller can read the
+        tool calls; errors are then ``{"role": "assistant", "content":
+        "[Error] ...", "tool_calls": []}``.
+        """
+        if tools is not None:
+            return self._chat_message(messages, temperature, max_tokens,
+                                      format, tools)
         try:
             response = self._post_chat(
                 self._build_payload(messages, temperature, max_tokens,
-                                    stream=False))
+                                    stream=False, format=format))
             response.raise_for_status()
             data = response.json()
             return data["message"]["content"]
@@ -117,27 +148,149 @@ class OllamaBackend(LLMBackend):
         except Exception as e:
             return f"[Error] Ollama error: {e}"
 
-    def chat_stream(self, messages: list, temperature: float = 0.7,
-                    max_tokens: int = 2048):
-        """Stream tokens from Ollama as they arrive."""
+    def _chat_message(self, messages: list, temperature: float,
+                      max_tokens: int, format: dict | None,
+                      tools: list) -> dict:
+        """One non-streamed call with ``tools``: Ollama's whole message."""
+        def _error(text: str) -> dict:
+            return {"role": "assistant", "content": text, "tool_calls": []}
         try:
-            payload = self._build_payload(messages, temperature, max_tokens,
-                                          stream=True)
-            response = requests.post(f"{self._url}/api/chat", json=payload,
-                                     timeout=self._timeout, stream=True)
+            response = self._post_chat(
+                self._build_payload(messages, temperature, max_tokens,
+                                    stream=False, format=format,
+                                    tools=tools))
+            response.raise_for_status()
+            message = response.json()["message"]
+            if not isinstance(message, dict):
+                return _error("[Error] Unexpected Ollama response: no message")
+            calls = message.get("tool_calls")
+            return {"role": str(message.get("role") or "assistant"),
+                    "content": str(message.get("content") or ""),
+                    "tool_calls": calls if isinstance(calls, list) else []}
+        except requests.exceptions.ConnectionError:
+            return _error("[Error] Cannot connect to Ollama. Is it running?")
+        except requests.exceptions.Timeout:
+            return _error("[Error] Ollama request timed out.")
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as e:
+            return _error(f"[Error] Unexpected Ollama response: {e}")
+        except Exception as e:
+            return _error(f"[Error] Ollama error: {e}")
+
+    def chat_turn(self, messages: list, tools: list | None = None,
+                  on_token=None, on_thinking=None, temperature: float = 0.3,
+                  max_tokens: int = 2048) -> dict:
+        """One streamed turn of the tool loop (:mod:`puffpai.brain_loop`).
+
+        Words go to ``on_token`` as they arrive and thinking to
+        ``on_thinking``; the return is the whole message,
+        ``{"role", "content", "tool_calls"}``. When Ollama refuses or cannot
+        be reached it is ``{..., "error": <Ollama's own words>, "status"}``
+        (for example "... does not support tools"). Never raises.
+        """
+        def _error(text: str, status: int | None = None) -> dict:
+            return {"role": "assistant", "content": "", "tool_calls": [],
+                    "error": text, "status": status}
+
+        def _call(fn, text):
+            if fn is not None and text:
+                try:
+                    fn(text)
+                except Exception:
+                    pass
+        try:
+            response = self._post_chat(
+                self._build_payload(messages, temperature, max_tokens,
+                                    stream=True, tools=tools),
+                stream=True)
+            if response.status_code != 200:
+                detail = ""
+                try:
+                    body = response.json()
+                    detail = str(body.get("error") or "") if isinstance(body, dict) else ""
+                except Exception:
+                    detail = str(getattr(response, "text", "") or "")[:300]
+                return _error(detail or f"Ollama answered HTTP {response.status_code}",
+                              response.status_code)
+            content: list[str] = []
+            calls: list = []
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line.decode("utf-8", errors="replace"))
+                except ValueError:
+                    continue
+                if not isinstance(chunk, dict):
+                    continue
+                if chunk.get("error"):
+                    return _error(str(chunk["error"]))
+                msg = chunk.get("message") if isinstance(chunk.get("message"), dict) else {}
+                _call(on_thinking, msg.get("thinking") or "")
+                token = msg.get("content") or ""
+                if token:
+                    content.append(token)
+                    _call(on_token, token)
+                if isinstance(msg.get("tool_calls"), list):
+                    calls.extend(msg["tool_calls"])
+                if chunk.get("done"):
+                    break
+            return {"role": "assistant", "content": "".join(content), "tool_calls": calls}
+        except requests.exceptions.ConnectionError:
+            return _error("Cannot connect to Ollama. Is it running?")
+        except requests.exceptions.Timeout:
+            return _error("Ollama request timed out.")
+        except Exception as e:
+            return _error(f"Ollama error: {e}")
+
+    def prewarm(self, keep_alive: str = "10m") -> bool:
+        """Load the model now (an empty chat), so a later call does not wait.
+
+        Never raises; True when Ollama answered.
+        """
+        try:
+            response = requests.post(  # lan-egress: Ollama model load, LAN
+                f"{self._url}/api/chat",
+                # num_ctx as every other call sends it: a load at the model's
+                # trained context would size the runner differently and
+                # evict the resident set.
+                json={"model": self._model, "messages": [],
+                      "keep_alive": keep_alive,
+                      "options": {"num_ctx": self._num_ctx}},
+                timeout=self._timeout,
+                proxies=_no_proxies(),
+            )
+            return response.status_code == 200
+        except Exception:
+            return False
+
+    def chat_stream(self, messages: list, temperature: float = 0.7,
+                    max_tokens: int = 2048, format: dict | None = None,
+                    on_line=None):
+        """Stream tokens from Ollama as they arrive.
+
+        ``format`` is as in :meth:`chat`. ``on_line`` is called with every
+        decoded line Ollama sends (a dict), including the last one that
+        carries Ollama's own timings (``eval_count``, ``eval_duration``); an
+        error raised by it is ignored.
+        """
+        try:
             # Same one-shot ``think`` probe as chat(): a model that rejects the
             # field must not take the streaming path down with it.
-            if response.status_code >= 400 and "think" in payload:
-                self._think_ok = False
-                payload.pop("think")
-                response = requests.post(f"{self._url}/api/chat", json=payload,
-                                         timeout=self._timeout, stream=True)
+            response = self._post_chat(
+                self._build_payload(messages, temperature, max_tokens,
+                                    stream=True, format=format),
+                stream=True)
             response.raise_for_status()
             for line in response.iter_lines():
                 if not line:
                     continue
                 try:
                     chunk = json.loads(line.decode("utf-8", errors="replace"))
+                    if on_line is not None and isinstance(chunk, dict):
+                        try:
+                            on_line(chunk)
+                        except Exception:
+                            pass
                     token = chunk.get("message", {}).get("content", "")
                     if token:
                         yield token
@@ -162,10 +315,11 @@ class OllamaBackend(LLMBackend):
             from puffpai.inference import model_options as _mo
             payload = {"model": self._embed_model, "prompt": text}
             payload.update(_mo.embedding_payload(self._embed_model))
-            response = requests.post(
+            response = requests.post(  # lan-egress: Ollama embeddings, LAN
                 f"{self._url}/api/embeddings",
                 json=payload,
                 timeout=30,
+                proxies=_no_proxies(),
             )
             response.raise_for_status()
             return response.json().get("embedding", [])
@@ -175,7 +329,7 @@ class OllamaBackend(LLMBackend):
     def is_available(self) -> bool:
         """Check if Ollama is reachable."""
         try:
-            response = requests.get(f"{self._url}/api/tags", timeout=3)
+            response = requests.get(f"{self._url}/api/tags", timeout=3, proxies=_no_proxies())  # lan-egress: Ollama /api/tags, LAN
             return response.status_code == 200
         except Exception:
             return False

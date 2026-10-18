@@ -23,7 +23,11 @@
 # above is a bug, not a note in the docs.
 
 # Vector Database
-chromadb>=1.5.0,<2.0
+# Pinned EXACTLY: puffpai.knowledge.reading_helper replaces a private chromadb
+# method so the reading helper model is never downloaded behind the owner's
+# back. A bump must re-run tests/test_reading_helper.py (it fails if the
+# method is renamed) before this line changes.
+chromadb==1.5.5
 
 # LangChain Framework
 langchain>=1.2.0,<2.0
@@ -74,7 +78,7 @@ python-pptx>=1.0.0
 # unreachable here, but taken anyway because nothing costs us to take them.
 #
 # The range resolves to 50.0.1 on every platform that publishes a wheel for it,
-# including the Orin (cp39-abi3 manylinux2014_aarch64, cp310-compatible). Only
+# including Jetson AGX Orin (cp39-abi3 manylinux2014_aarch64, cp310-compatible). Only
 # 32-bit Windows and Intel macOS have no 49+/50+ wheel and land on 48.0.1.
 # DO NOT lower the floor without re-checking the advisories above.
 cryptography>=48.0.1,<51.0

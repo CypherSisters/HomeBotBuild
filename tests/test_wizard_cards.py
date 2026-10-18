@@ -194,7 +194,7 @@ def test_a_secret_answer_reaches_apply_and_no_log():
 def test_a_secret_is_never_printed_by_the_console_renderer():
     card = cards.validate_card(_field(kind="secret_entry", label="Vault PIN"))
     lines = render_cli.card_lines(card)
-    assert "  Vault PIN: not set" in lines
+    assert "Vault PIN: not set" in lines
 
 
 # -- staleness ----------------------------------------------------------------

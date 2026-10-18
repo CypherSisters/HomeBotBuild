@@ -22,10 +22,6 @@ Copyright (c) 2025 Cypher Sisters. Apache-2.0 License.
 """
 from __future__ import annotations
 
-#: The ceiling on the number field. The budget for a class is the proposal; an
-#: owner may only go down from it, so the field's max is that budget.
-MAX_SPECIALISTS = 12
-
 
 def _roster() -> list[dict]:
     """Who this build actually ships, from the agent definitions in this tree.
@@ -58,48 +54,52 @@ def _applied_budget(ctx) -> dict:
 
 
 def propose(ctx) -> dict:
-    """Size the crew for this machine and list who owns what. Read-only."""
+    """Say who works inside the bot, and the specialists figure. Read-only.
+
+    The specialists figure has no effect on the running bot: ``build_team``
+    builds the seven masters and nothing reads the figure but screens that
+    print it. The console keeps this card quiet, so nobody is asked; the
+    figure stays on the card so an owner who lowers it sees it back. The
+    sizing is recorded, because the manifest and the build page carry it.
+    """
     from puffpai import cli
+    from puffpai.wizard import wording
 
     cli.enter_step("Crew sizing")
     budget = _budget(ctx)
     roster = _roster()
-    fitted = min(int(budget.get("max_specialists") or 0), MAX_SPECIALISTS)
-    applied = _applied_budget(ctx)
-    chosen = min(int(applied.get("max_specialists") or fitted), fitted)
-    top = fitted
-
-    fields = [
-        {"id": "specialists", "kind": "number",
-         "label": "Specialists on top of the master team",
-         "min": 0, "max": top, "current": chosen, "proposed": fitted,
-         "help": str(budget.get("note") or
-                     "The census decides this; take fewer if you would rather "
-                     "keep the headroom.")},
-        {"id": "sized_from", "kind": "info", "label": "Sized from",
-         "current": f"a {budget.get('hardware_class') or 'unknown'} machine "
-                    f"({budget.get('basis') or 'unknown'})"},
-    ]
+    shared = getattr(ctx, "shared", None) or {}
+    name = str(shared.get("bot_name") or cli.DEFAULT_BOT_NAME)
+    mode = wording.mode_of(shared)
+    if roster:
+        line = " ".join(wording.say("team_line", mode, count=len(roster),
+                                    name=name).split())
+    else:
+        line = ("The list of helpers could not be read on this computer, so "
+                "nothing is claimed about them.")
+    fields = [{"id": "team", "kind": "info", "label": "Who works inside",
+               "current": line}]
+    # Each helper by the name the household knows it by, and what it owns.
     for agent in roster:
         fields.append({"id": f"owns_{agent['id']}", "kind": "info",
                        "label": f"{agent['name']} - {agent['area']}",
                        "current": agent["blurb"]})
-    if not roster:
-        fields.append({"id": "owns_nothing", "kind": "info",
-                       "label": "Who owns what",
-                       "current": "the agent roster could not be read on this "
-                                  "machine, so nothing is claimed about it"})
-
-    plural = "specialist" if chosen == 1 else "specialists"
-    # The count is counted, never remembered: an unreadable roster says nothing
-    # about how many master agents this build ships.
-    decided = (f"{len(roster)} master agents, plus room for up to "
-               f"{chosen} {plural}."
-               if roster else
-               f"Room for up to {chosen} {plural} on top of the master team.")
+    fitted = int(budget.get("max_specialists") or 0)
+    applied = _applied_budget(ctx)
+    stated = applied.get("basis") == "owner-stated"
+    chosen = min(int(applied.get("max_specialists") or 0), fitted) if stated         else fitted
+    fields.append({"id": "specialists", "kind": "number",
+                   "label": "Specialists on top of the team",
+                   "min": 0, "max": fitted, "current": chosen,
+                   "proposed": fitted})
+    # A figure the owner lowered is said back to them.
+    if stated:
+        plural = "specialist" if chosen == 1 else "specialists"
+        line = f"{line} Room for up to {chosen} {plural}, as you chose."
+        fields[0]["current"] = line
     card = {
-        "skill": "crew", "section": "crew", "title": "Who does what",
-        "decided": decided,
+        "skill": "crew", "section": "crew", "title": "Its helpers",
+        "decided": line,
         "status": "ready" if roster else "gap",
         "consequential": False,
         "estimate": {"bytes": 0, "seconds": 0, "basis": "measured"},

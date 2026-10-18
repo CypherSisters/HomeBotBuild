@@ -69,9 +69,9 @@ def test_the_doc_says_every_door_ships_off():
     plain = [d for d in DOORS if not d.derived]
     derived = [d for d in DOORS if d.derived]
     assert text.count("**Ships:** off") == len(plain)
-    assert text.count("**Ships:** contacts nothing until another door is open"
+    assert text.count("**Ships:** contacts nothing until another switch is on"
                       ) == len(derived)
-    assert "**Every door ships off.**" in text
+    assert "**Every switch ships off.**" in text
 
 
 def test_every_declared_host_is_named_in_the_doc():

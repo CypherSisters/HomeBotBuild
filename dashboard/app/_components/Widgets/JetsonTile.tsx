@@ -200,7 +200,7 @@ export default function JetsonTile() {
       img="/design-cloud-1.jpg"
       stat={
         <MicroStat color={live ? "var(--mint)" : "var(--text3)"}>
-          {live?.uptimeSec != null ? fmtUptime(live.uptimeSec) : "—"}
+          {live?.uptimeSec != null ? fmtUptime(live.uptimeSec) : "unknown"}
         </MicroStat>
       }
     >

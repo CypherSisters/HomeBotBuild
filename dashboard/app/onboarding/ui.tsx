@@ -9,6 +9,8 @@
  */
 
 import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useState } from "react";
+import { checkHealth } from "../_lib/api";
 
 export const microLabel: CSSProperties = {
   fontFamily: "var(--font-jbmono), monospace",
@@ -52,19 +54,6 @@ export function Card({
     >
       {children}
     </div>
-  );
-}
-
-/** Micro-label above a block of content. */
-export function Eyebrow({ children }: { children: ReactNode }) {
-  return <div style={microLabel}>{children}</div>;
-}
-
-export function Lede({ children }: { children: ReactNode }) {
-  return (
-    <p style={{ color: "var(--text2)", fontSize: 15, lineHeight: 1.5, margin: "6px 0 0" }}>
-      {children}
-    </p>
   );
 }
 
@@ -329,6 +318,19 @@ export function PuffButton({
   );
 }
 
+/** Micro-label above a block of content. */
+export function Eyebrow({ children }: { children: ReactNode }) {
+  return <div style={microLabel}>{children}</div>;
+}
+
+export function Lede({ children }: { children: ReactNode }) {
+  return (
+    <p style={{ color: "var(--text2)", fontSize: 15, lineHeight: 1.5, margin: "6px 0 0" }}>
+      {children}
+    </p>
+  );
+}
+
 /** Numbered rail of steps — current, done, to come. */
 export function Stepper({ labels, current }: { labels: readonly string[]; current: number }) {
   return (
@@ -353,3 +355,37 @@ export function Stepper({ labels, current }: { labels: readonly string[]; curren
     </ol>
   );
 }
+
+/**
+ * One line above the wizard, only when the bot behind it does not answer.
+ * It never names the backend or its address: this dashboard keeps that off
+ * the screen. A missing answer to /health is the only signal it reads.
+ */
+export function ConnectedTo() {
+  const [reachable, setReachable] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void checkHealth().then((ok) => {
+      if (!cancelled) setReachable(ok);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (reachable !== false) return null;
+  return (
+    <p
+      style={{
+        ...microLabel,
+        letterSpacing: ".1em",
+        margin: "0 0 12px",
+        color: "var(--lemon)",
+      }}
+    >
+      {NOT_ANSWERING}
+    </p>
+  );
+}
+
+/** The one line above the wizard, when the bot does not answer. */
+export const NOT_ANSWERING = "Your bot is not answering right now, so nothing here can be saved yet.";

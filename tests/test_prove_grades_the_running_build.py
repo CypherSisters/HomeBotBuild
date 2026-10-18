@@ -352,7 +352,8 @@ def test_blank_keeps_the_proposal_and_a_refusal_is_said_once():
     got = render_cli.render(card, ask=lambda prompt: next(answers, ""),
                             out=said.append)
     assert got == {}, "a refused answer never becomes a folder"
-    assert any("takes a folder path" in line for line in said)
+    # The refusal is said without the field's id in front of it, so it starts with a capital.
+    assert any("takes a folder path" in line.lower() for line in said)
 
 
 def test_the_integrate_card_declares_its_folder_field(tmp_path, monkeypatch,

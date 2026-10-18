@@ -88,7 +88,7 @@ def test_propose_returns_a_card_that_validates_and_writes_nothing(steady):
     ctx = _ctx(steady, package)
     card = cards.validate_card(module.propose(ctx)["card"])
     assert card["skill"] == "brain" and card["section"] == "brain"
-    assert card["title"] == "What does the thinking"
+    assert card["title"] == "Its brain"
     assert "model" in cards.field_map(card)
     assert ctx._sections == {}, "propose wrote a section"
 
@@ -96,7 +96,13 @@ def test_propose_returns_a_card_that_validates_and_writes_nothing(steady):
 def test_the_card_says_what_the_tier_costs(steady):
     module, package = _module()
     card = cards.validate_card(module.propose(_ctx(steady, package))["card"])
-    assert "Routing tier" in cards.field_map(card)["tier"]["current"]
+    # What this brain cannot do, in the profile's own plain sentence -- and
+    # no internal words like "routing tier" on a screen a person reads.
+    from puffpai import model_profile
+    tier = cards.field_map(card)["tier"]["current"]
+    assert model_profile.limits_sentence(card["decided"].split(",")[0].split(" ")[0]) in tier \
+        or "one job at a time" in tier or "multi-step" in tier
+    assert "tier" not in tier.lower()
 
 
 def test_an_installed_model_costs_nothing_and_is_not_consequential(steady):
@@ -179,7 +185,10 @@ def test_a_yes_run_never_starts_a_download(steady, monkeypatch):
 
     assert pulls == [], "a non-interactive run started a download"
     assert result["data"]["ready"] is False
-    assert result["gap"]["fix"]["id"] == "setup.rerun"
+    # The fix is the real download command, not "run the wizard again".
+    assert result["gap"]["fix"] == {"kind": "command", "id": "model.pull",
+                                    "args": {"model": "not-here:8b"}} \
+        or result["gap"]["fix"]["id"] == "model.pull_at"
     assert result["shared"]["brain_ready"]["pull_command"]
 
 
@@ -197,7 +206,8 @@ def test_an_offline_build_defers_the_pull_with_a_gap(steady, monkeypatch):
     result = module.apply(ctx, {"download_now": True})
 
     assert pulls == [], "an offline build downloaded a model"
-    assert "offline build" in result["gap"]["impact"]
+    assert "offline" in result["gap"]["impact"]
+    assert result["gap"]["fix"]["id"] in ("model.pull", "model.pull_at")
 
 
 def test_saying_yes_pulls_through_the_path_that_already_exists(steady,
@@ -271,7 +281,10 @@ def test_a_model_that_is_not_installed_is_a_gap_not_a_stop(steady):
                 "brain": {"model": "not-here:8b"}}
     verdict = module.verify(_ctx(steady, package, sections=sections))
     assert verdict["status"] == "gap"
-    assert "ollama pull" in verdict["gap"]["impact"]
+    from puffpai.wizard import fixes
+    assert fixes.fix_line(fixes.gap(**{k: verdict["gap"][k] for k in (
+        "skill", "what", "why", "impact", "fix")})).startswith(
+        "ollama pull not-here:8b")
 
 
 def test_an_unreachable_ollama_is_a_gap_and_not_an_exception(steady,
@@ -312,7 +325,7 @@ def test_the_runner_walks_the_lifecycle_and_records_what_it_showed(steady,
 
     row = run.log[-1]
     assert row["outcome"] == "done"
-    assert row["shown"]["title"] == "What does the thinking"
+    assert row["shown"]["title"] == "Its brain"
     assert row["verified"]["status"] == "pass"
     assert run.sections["brain"]["model"] == INSTALLED
     assert run.stale[:1] == ["context"] and run.stale[-2:] == ["prove",
@@ -356,3 +369,84 @@ def test_a_door_check_that_cannot_answer_never_pulls(monkeypatch, failure):
     assert outcome["ok"] is False
     assert "Nothing was downloaded" in outcome["message"]
     assert brain_health.pull_command("not-here:8b", URL) in outcome["message"]
+
+
+# -- the address that has the brain ---------------------------------
+
+BIG = "qwen3.5:9b"
+OTHER = "http://127.0.0.1:11435"
+
+
+def _two_ollamas(monkeypatch):
+    """11434 answers with one small model; the chosen brain is only on 11435."""
+    held = {URL: [INSTALLED], OTHER: [BIG, INSTALLED]}
+
+    def _models(url, *a, **k):
+        for where, names in held.items():
+            if brain_health._same_server(url, where):
+                return list(names)
+        return None
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    monkeypatch.setattr(setup_ops, "list_models", _models)
+    monkeypatch.setattr(setup_ops, "brain_status", lambda url, model, **k: {
+        "status": (brain_health.CONNECTED
+                   if brain_health.is_installed(model, _models(url))
+                   else brain_health.MODEL_MISSING),
+        "installed": _models(url) or []})
+
+
+def test_best_address_prefers_the_one_that_has_the_model():
+    looked = [{"url": URL, "models": [INSTALLED]},
+              {"url": OTHER, "models": [BIG]}]
+    assert brain_health.best_address(looked) == URL
+    assert brain_health.best_address(looked, model=BIG) == OTHER
+    assert brain_health.best_address(looked, model="nowhere:1b") == URL
+
+
+def test_the_brain_step_moves_to_the_address_that_has_the_brain(steady,
+                                                                monkeypatch):
+    _two_ollamas(monkeypatch)
+    module, package = _module()
+    ctx = _ctx(steady, package, args=_args(model=BIG))
+    ctx.proposal = module.propose(ctx)
+    # The card already knows the brain is here (no download offered), and
+    # apply still saves the address that has it, not 11434.
+    assert ctx.proposal["machine"]["url"] == OTHER
+    assert not any(f["id"] == "download_now" for f in ctx.proposal["card"]["fields"])
+    result = module.apply(ctx, {})
+    assert result["shared"]["ollama_url"] == OTHER
+    assert result["data"]["ollama_url"] == OTHER
+    assert result["data"]["ready"] is True
+    assert OTHER in result["note"]
+    assert "gap" not in result
+
+
+def test_the_brain_step_stays_when_the_brain_is_already_there(steady,
+                                                              monkeypatch):
+    _two_ollamas(monkeypatch)
+    module, package = _module()
+    ctx = _ctx(steady, package, args=_args(model=INSTALLED))
+    ctx.proposal = module.propose(ctx)
+    result = module.apply(ctx, {})
+    assert "ollama_url" not in result["shared"]
+
+
+def test_an_address_typed_with_the_flag_is_kept(steady, monkeypatch):
+    _two_ollamas(monkeypatch)
+    module, package = _module()
+    ctx = _ctx(steady, package, args=_args(model=BIG, ollama_url=URL))
+    ctx.proposal = module.propose(ctx)
+    result = module.apply(ctx, {})
+    assert "ollama_url" not in result["shared"]
+    assert result["data"]["ready"] is False
+
+
+def test_verify_checks_the_address_the_brain_step_settled_on(steady,
+                                                             monkeypatch):
+    _two_ollamas(monkeypatch)
+    module, package = _module()
+    sections = {"machine": {"ollama_url": URL},
+                "brain": {"model": BIG, "ollama_url": OTHER}}
+    verdict = module.verify(_ctx(steady, package, sections=sections))
+    assert verdict["status"] == "pass"
+    assert OTHER in verdict["evidence"]

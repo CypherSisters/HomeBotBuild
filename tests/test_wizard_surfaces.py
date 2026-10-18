@@ -100,7 +100,7 @@ def test_propose_returns_a_card_that_validates_and_writes_nothing(fresh):
     card = cards.validate_card(proposal["card"])
 
     assert card["skill"] == "surfaces" and card["section"] == "surfaces"
-    assert card["title"] == "Where you meet it"
+    assert card["title"] == "Pages your bot will have"
     assert ctx._sections.get("surfaces") is None, "propose wrote a section"
     assert [f for f in card["fields"] if f["kind"] == "secret_entry"] == []
     assert wizard_runner.json_safe(card) == card
@@ -143,7 +143,8 @@ def test_the_persona_surface_is_stated_and_is_not_offered_as_a_choice(fresh):
     assert surface not in {o["value"] for o in field["options"]}
     assert surface not in field["current"]
     info = [f for f in card["fields"] if f["label"] == "Always included"]
-    assert info and surface in info[0]["current"]
+    assert info and "your bot's own page" in info[0]["current"].lower()
+    assert surface not in info[0]["current"]      # plain words, never the id
 
 
 # -- apply: today's step is the control ---------------------------------------
@@ -277,7 +278,7 @@ def test_the_runner_walks_the_lifecycle_and_records_what_it_showed(fresh):
     assert written["surfaces"] == ["house.lights"]
     row = run.log[-1]
     assert row["outcome"] == "done"
-    assert row["shown"]["title"] == "Where you meet it"
+    assert row["shown"]["title"] == "Pages your bot will have"
     assert row["changed"] == {"allowlist": ["house.lights"]}
     assert row["verified"]["status"] == "pass"
     assert run.stale == ["context", "prove", "handoff"]

@@ -28,8 +28,24 @@ import { booksProxyTarget, mediaProxyTarget } from "@/app/_lib/server/lanTargets
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  ensurePairingState();
   await startMediaProxy();
   await startCalibreProxy();
+}
+
+/**
+ * Make the household pairing file exist from the first start, the same way the
+ * first pairing attempt would. Without it, `puffpai pair` on the computer running
+ * the bot has no code to show until someone has already tried to pair.
+ */
+function ensurePairingState() {
+  import("@/app/_lib/server/pairing")
+    .then(({ getPairingState }) => {
+      getPairingState();
+    })
+    .catch((err: unknown) => {
+      console.warn("[pairing] could not prepare the pairing code:", (err as Error)?.name);
+    });
 }
 
 async function startMediaProxy() {

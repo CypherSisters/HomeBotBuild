@@ -1027,7 +1027,7 @@ export default function CalendarPage() {
                         <span className="inline-flex items-center gap-1">
                           <Icon path={mdiClockOutline} size="12" />
                           {formatDate(ev.start)} {formatTime(ev.start)}
-                          {ev.end && ev.end !== ev.start && <> &mdash; {formatTime(ev.end)}</>}
+                          {ev.end && ev.end !== ev.start && <> - {formatTime(ev.end)}</>}
                         </span>
                         {ev.loc && (
                           <span className="inline-flex items-center gap-1">
@@ -1460,7 +1460,7 @@ export default function CalendarPage() {
                         className="peer sr-only"
                       />
                       <div className="h-6 w-11 rounded-full bg-[var(--chip)] transition peer-checked:bg-[var(--sky)]" />
-                      <div className="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-md transition peer-checked:translate-x-5" />
+                      <div className="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-(--card) shadow-md transition peer-checked:translate-x-5" />
                     </div>
                     <span className="text-sm text-[var(--text2)]">
                       {billAuto ? "Auto-pay enabled" : "Manual payment"}

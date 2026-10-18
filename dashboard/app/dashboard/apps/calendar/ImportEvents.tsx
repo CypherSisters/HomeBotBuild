@@ -197,7 +197,7 @@ export default function ImportEvents({
               <div className="flex items-center gap-2">
                 <Icon path={mdiFileUploadOutline} size="20" className="text-[var(--sky)]" />
                 <h3 className="font-semibold text-[var(--text)]">
-                  Import events — {fileName}
+                  Import events: {fileName}
                 </h3>
               </div>
               <button
@@ -228,7 +228,7 @@ export default function ImportEvents({
                   {result.method === "llm" && (
                     <div className="mb-3 flex items-center gap-2 rounded-lg bg-[color-mix(in_srgb,var(--lemon)_16%,transparent)] px-3 py-2 text-xs text-[var(--lemon)]">
                       <Icon path={mdiRobotOutline} size="16" />
-                      These were read by the AI — double-check dates before adding.
+                      These were read by the AI, so double-check dates before adding.
                     </div>
                   )}
                   {(result.notes ?? [])

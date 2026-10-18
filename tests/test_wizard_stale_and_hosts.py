@@ -95,6 +95,12 @@ def _registry_hosts() -> set[str]:
         registry = json.load(handle)
     hosts = set()
     for entry in registry.get("sources") or ():
+        if entry.get("kiwix_book"):
+            # A Kiwix book row reaches the library's listing host and its
+            # download host; mirrors come from each book's own .meta4 file at
+            # download time and cannot be declared ahead of time.
+            from puffpai.catalogs import kiwix_opds
+            hosts.update({kiwix_opds.SEARCH_HOST, kiwix_opds.DOWNLOAD_HOST})
         for key in ("source_url", "download_url", "url"):
             value = entry.get(key)
             if isinstance(value, str) and "://" in value:

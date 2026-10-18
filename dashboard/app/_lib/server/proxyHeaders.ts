@@ -56,27 +56,77 @@ export interface ForwardedClientHeader {
 }
 
 /**
- * The backend families its first-run setup-code gate covers. Mirrors
- * `api_server._SETUP_CODE_PREFIXES` ('/setup', '/wizard', '/persona',
- * '/build/prove', '/build/self'), segment-anchored the same way `_under_prefix`
- * is, so "/buildings" is not "/build". The header is read nowhere else.
+ * Whole first segments the backend's first-run setup-code gate covers.
+ * Mirrors `api_server._SETUP_CODE_PREFIXES`: the setup and wizard families,
+ * and the build engine's families (what is installed, putting apps
+ * together, the locked box, adding things, browser apps, sign-up keys,
+ * GitHub, Toolsmith's model, the outside switches, the Developer page).
+ */
+const SETUP_CODE_FAMILIES: ReadonlySet<string> = new Set([
+  "setup", "wizard", "persona", "installed", "assemble", "box", "add",
+  "things", "integrations", "webapps", "keys", "github", "toolsmith",
+  "outside", "developer",
+]);
+
+/** The `/build/<second>` families in `_SETUP_CODE_PREFIXES`. */
+const SETUP_CODE_BUILD_FAMILIES: ReadonlySet<string> = new Set([
+  "prove", "self", "status", "apps", "job", "yes", "knowledge", "check",
+  "more", "project", "setup",
+]);
+
+/**
+ * The backend families its first-run setup-code gate covers. Segment-anchored
+ * the same way `_under_prefix` is, so "/buildings" is not "/build". The header
+ * is read nowhere else.
  */
 function isSetupCodePath(path: readonly string[]): boolean {
   const [first, second] = path;
-  if (first === "setup" || first === "wizard" || first === "persona") return true;
-  return first === "build" && (second === "prove" || second === "self");
+  if (SETUP_CODE_FAMILIES.has(first)) return true;
+  return first === "build" && typeof second === "string" &&
+    SETUP_CODE_BUILD_FAMILIES.has(second);
 }
 
 /**
- * The families whose WRITES the backend refuses after first run unless the
- * caller holds an unlocked vault session (`api_server._setup_gate`, reached
- * from the /setup routes and from `_enforce_post_setup_gate` for /wizard and
- * /persona). `_setup_vault_session_live()` reads X-Vault-Token there, so the
- * owner's own unlock has to be able to arrive.
+ * Whole first segments whose WRITES the backend refuses after first run
+ * unless the caller holds an unlocked vault session (`api_server._setup_gate`,
+ * reached from the /setup routes, from `_enforce_post_setup_gate` for /wizard
+ * and /persona, and from `_enforce_engine_post_setup_gate` for the build
+ * engine's installs, removals, keys, GitHub, Toolsmith's model and the
+ * Developer terminal, and the owner's own programs). Not /files: opening a
+ * file never reads it. `_setup_vault_session_live()` reads X-Vault-Token
+ * there, so the owner's own unlock has to be able to arrive.
  */
+const POST_SETUP_GATED_FAMILIES: ReadonlySet<string> = new Set([
+  "setup", "wizard", "persona", "build", "assemble", "box", "developer",
+  "add", "things", "integrations", "webapps", "keys", "github", "toolsmith",
+  "programs",
+]);
+
 function isPostSetupGatedPath(path: readonly string[]): boolean {
-  const [first] = path;
-  return first === "setup" || first === "wizard" || first === "persona";
+  const [first, second] = path;
+  // The proofs keep their own rule (the API key), as on the backend.
+  if (first === "build") return second !== "prove";
+  return POST_SETUP_GATED_FAMILIES.has(first);
+}
+
+/**
+ * Switching one of the build engine's outside services ON is an engine write
+ * after setup too (`api_server._engine_write_needs_vault`): POST
+ * /outside/<id>/on, a chat "fix it now" card (POST /fix/apply), and the
+ * Settings card's own switch (POST /system/egress/door) for the engine's
+ * services that sit in the egress registry (GitHub, Toolsmith's cloud model,
+ * the book sites). Exact paths only: the rest of /outside (the list, the log,
+ * confirm, off), /fix and /system never read the Vault session.
+ */
+function isEngineSwitchOnPath(path: readonly string[]): boolean {
+  const [first, second, third] = path;
+  if (first === "outside") {
+    return path.length === 3 && typeof second === "string" && second !== "" && third === "on";
+  }
+  if (first === "system") {
+    return path.length === 3 && second === "egress" && third === "door";
+  }
+  return first === "fix" && second === "apply" && path.length === 2;
 }
 
 /**
@@ -118,14 +168,16 @@ export const FORWARDED_CLIENT_HEADERS: readonly ForwardedClientHeader[] = [
     header: "x-vault-token",
     upstream: "X-Vault-Token",
     // Scoped to the subtrees whose handlers read it: /vault/* (including
-    // /vault/secrets/*), and the /setup, /wizard and /persona families, where
+    // /vault/secrets/*), and the /setup, /wizard and /persona families and
+    // the build engine's families (POST_SETUP_GATED_FAMILIES), where
     // _setup_vault_session_live() is how the owner, standing at an unlocked
     // vault, may still change a FINISHED build. Relaying it anywhere else
     // would hand a household member's unlock session to /apps, /ha,
     // /knowledge and anything added later, for nothing. Whole subtrees rather
     // than exact paths, because every endpoint there reads the same header and
     // a hardcoded list would silently refuse the next one added.
-    scope: (path) => path[0] === "vault" || isPostSetupGatedPath(path),
+    scope: (path) =>
+      path[0] === "vault" || isPostSetupGatedPath(path) || isEngineSwitchOnPath(path),
     why:
       "The caller's own vault UNLOCK SESSION, minted by the backend only after " +
       "a correct PIN and validated there against _vault_sessions and the " +

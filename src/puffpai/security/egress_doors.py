@@ -86,20 +86,46 @@ first (so an operator can force a door shut from a root-owned unit file without
 racing the JSON the running service also reads), then config, then the door's
 ``default``, which is always ``False``.
 
+Owner switches and the Bridge
+-----------------------------
+The owner has two places to flip a switch: Settings (the overlay, below) and
+"What leaves your computer" (:mod:`puffpai.security.outside_switches`, which
+the build engine's pages write). Both are the owner's own choice; when they
+disagree, OFF wins. The Bridge (:mod:`puffpai.security.bridge_guard`) sits
+over every tier: sealed, every door is shut; with only switched-on services
+allowed, a line in the config file or the environment may switch a door off
+but never on.
+
+The build engine's outside services
+-----------------------------------
+The doors below the household's own (book catalogs, keyed searches, the
+owner's GitHub account, Toolsmith's cloud model, result pictures) are shut by
+default like every other. A sign-up key reaches the wire only as a
+``credential=`` the security package issued (:func:`_bind_credential`), bound
+to exact hosts, on the first hop only. Live-card feed doors and browser-app
+web doors are registered at run time in tables of their own, and
+:func:`build_probe_get` takes one sample look while building. Each writes one
+line to the outside-traffic log (:mod:`puffpai.security.egress_ledger`).
+
 Copyright (c) 2025 Cypher Sisters. Apache-2.0 License.
 """
 
 from __future__ import annotations
 
 import hashlib
+import http.client
 import ipaddress
 import json
 import os
 import re
+import socket
+import sys
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any, Callable, Optional
 from urllib.parse import urljoin, urlsplit
 
 from puffpai.logging_config import get_logger
@@ -109,6 +135,12 @@ logger = get_logger(__name__)
 
 #: Config section holding the per-door flags.
 CONFIG_SECTION = "egress_doors"
+
+#: The ``run_egress`` posture under which the build engine's own modules treat
+#: the bot as online (:func:`run_posture`). The doors here are opened by their
+#: switches and closed by the Bridge; this value is read by the engine's
+#: modules, not by :func:`egress_allowed`.
+OPEN_POSTURE = "enumerated"
 
 #: How many redirect hops a door will follow, each re-validated against the
 #: door's own host set. Three is more than any door here legitimately needs.
@@ -172,11 +204,15 @@ class EgressBlocked(RuntimeError):
     egress contract untrue in the first place.
     """
 
-    def __init__(self, door_id: str, reason: str, user_message: str):
+    def __init__(self, door_id: str, reason: str, user_message: str,
+                 code: str = ""):
         super().__init__(f"egress refused [{door_id}]: {reason}")
         self.door_id = door_id
         self.reason = reason
         self.user_message = user_message
+        #: One word from ``egress_ledger.REASON_CODES`` ('' = work it out
+        #: from ``reason``, see :func:`reason_code`).
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -239,6 +275,14 @@ class Door:
     #: every few minutes would be contact the owner never agreed to.
     probe_ok: bool = True
     notes: str = ""
+    #: Manifest ``posture.egress_switches`` key, when the wizard's table names
+    #: this door under a different key. None for a door the table does not
+    #: list.
+    posture_switch: Optional[str] = None
+    #: Hosts this door reaches for PICTURES ONLY (an app's picture host): a
+    #: plain GET whose answer is an image (never SVG), size-capped
+    #: (:func:`_picture_answer`). Never a full host.
+    picture_hosts: tuple[str, ...] = ()
 
 
 #: The doors. This tuple is the enumerated-egress contract. Adding an outbound
@@ -256,7 +300,7 @@ DOORS: tuple[Door, ...] = (
         env_var="PUFFPAI_EGRESS_WEATHER",
         consent_kind="owner_flag",
         enforcement="registry",
-        settings_hint="Weather needs the open-meteo/weather.gov door, which is "
+        settings_hint="Weather needs the open-meteo/weather.gov switch, which is "
                       "off. Turn it on in Settings > Egress.",
         notes="Also asked by the Node-RED flows daily_weather, "
               "daily_briefing and weather_alerts, if you import them: each "
@@ -275,7 +319,7 @@ DOORS: tuple[Door, ...] = (
         env_var="PUFFPAI_EGRESS_AIR_QUALITY",
         consent_kind="owner_flag",
         enforcement="registry",
-        settings_hint="Air quality needs the open-meteo air-quality door, "
+        settings_hint="Air quality needs the open-meteo air-quality switch, "
                       "which is off. Turn it on in Settings > Egress.",
     ),
     Door(
@@ -285,14 +329,14 @@ DOORS: tuple[Door, ...] = (
                "www.theverge.com"),
         purpose="Headlines for the news widget, from the six feeds in "
                 "FEED_DIRECTORY.",
-        data_sent="Nothing but the request itself — no query, no household "
+        data_sent="Nothing but the request itself: no query, no household "
                   "data. The publisher learns this house's IP address and that "
                   "it asked for their feed.",
         config_flag="news_rss",
         env_var="PUFFPAI_EGRESS_NEWS_RSS",
         consent_kind="owner_flag",
         enforcement="registry",
-        settings_hint="News needs the RSS-feeds door, which is off. Turn it "
+        settings_hint="News needs the RSS-feeds switch, which is off. Turn it "
                       "on in Settings > Egress.",
         notes="Also asked by the Node-RED flows daily_news and "
               "daily_briefing, if you import them: each one asks the backend "
@@ -304,18 +348,20 @@ DOORS: tuple[Door, ...] = (
     ),
     Door(
         id="geocode",
-        hosts=("nominatim.openstreetmap.org",),
-        purpose="Turn a place name into coordinates for the weather-alert tool.",
-        data_sent="The place name being looked up — which for this appliance "
+        hosts=("nominatim.openstreetmap.org", "geocoding-api.open-meteo.com"),
+        purpose="Turn a place name into coordinates for the weather-alert tool, "
+                "and find the home town you type once (Open-Meteo's town "
+                "lookup) so the weather and daily updates know where home is.",
+        data_sent="The place name being looked up, which for this appliance "
                   "is usually where the household lives.",
         config_flag="geocode",
         env_var="PUFFPAI_EGRESS_GEOCODE",
         consent_kind="owner_flag",
         enforcement="registry",
         settings_hint="Looking up coordinates needs the OpenStreetMap geocoding "
-                      "door, which is off. Turn it on in Settings > Egress, or "
+                      "switch, which is off. Turn it on in Settings > Egress, or "
                       "set your coordinates directly so nothing has to leave.",
-        notes="Kept separate from the weather door on purpose: weather sends "
+        notes="Kept separate from the weather switch on purpose: weather sends "
               "coordinates you already chose, geocoding sends the place name "
               "itself to a third party. Different disclosure, different switch.",
     ),
@@ -331,12 +377,12 @@ DOORS: tuple[Door, ...] = (
         consent_kind="owner_flag",
         enforcement="registry",
         settings_hint="Detecting your location from your IP address needs the "
-                      "ipapi.co door, which is off. Turn it on in "
+                      "ipapi.co switch, which is off. Turn it on in "
                       "Settings > Egress, or set your location once with "
                       "'set my location to ...' so nothing has to leave.",
         notes="Stays OFF by default, including after a config migration. "
               "The stored "
-              "location covers the family's actual use; this door exists only "
+              "location covers the family's actual use; this switch exists only "
               "for the 'detect it for me' path and discloses the house's IP to "
               "a company nobody in the household chose.",
     ),
@@ -351,13 +397,13 @@ DOORS: tuple[Door, ...] = (
         env_var="PUFFPAI_EGRESS_RADIO_BROWSER",
         consent_kind="owner_flag",
         enforcement="registry",
-        settings_hint="Finding radio stations needs the radio-browser door, "
+        settings_hint="Finding radio stations needs the radio-browser switch, "
                       "which is off. Turn it on in Settings > Egress. Stations "
                       "already saved still play.",
         notes="radio-browser ONLY. TuneIn has its own switch "
               "('tunein' below), because one "
               "'yes' to a volunteer database is not a 'yes' to a commercial "
-              "one. Opening this door sends nothing to TuneIn. The "
+              "one. Switching this on sends nothing to TuneIn. The "
               "dashboard's own radio routes (/api/radio/search and "
               "/api/radio/click) ask this switch through the backend before "
               "any request and contact only the hosts listed here. They do "
@@ -370,7 +416,7 @@ DOORS: tuple[Door, ...] = (
         purpose="Find local AM/FM call letters and the stations radio-browser "
                 "does not carry, for the World Radio player.",
         data_sent="The station name or genre you asked for, sent to TuneIn at "
-                  "opml.radiotime.com — a commercial company, not a volunteer "
+                  "opml.radiotime.com, a commercial company, not a volunteer "
                   "database, and not one anybody in this house picked. Like "
                   "any request, it also shows TuneIn this house's public IP "
                   "address. Nothing else about the household goes with it. "
@@ -381,14 +427,14 @@ DOORS: tuple[Door, ...] = (
         consent_kind="owner_flag",
         enforcement="registry",
         third_party="TuneIn (Radio Time), a commercial radio-directory company",
-        settings_hint="Looking on TuneIn needs the 'tunein' door, which is "
+        settings_hint="Looking on TuneIn needs the 'tunein' switch, which is "
                       "off. Turn it on in Settings > Egress. Radio still works "
                       "without it: radio-browser does the searching, and saved "
                       "stations still play.",
-        notes="Split out of the radio_browser door on purpose. "
-              "Same capability — find a station to tune — "
+        notes="Split out of the radio_browser switch on purpose. "
+              "Same capability, finding a station to tune, "
               "but not the same disclosure, so it does not get to share the "
-              "same switch; see the geocode door for the precedent ('different "
+              "same switch; see the geocode switch for the precedent ('different "
               "disclosure, different switch'). Consulted only when a NAME "
               "search comes back with little or nothing from radio-browser. "
               "With it shut, the reply says TuneIn was NOT looked at rather "
@@ -407,7 +453,7 @@ DOORS: tuple[Door, ...] = (
         hosts=("duckduckgo.com", "html.duckduckgo.com", "lite.duckduckgo.com",
                "links.duckduckgo.com"),
         purpose="Ad-hoc web search from a chat turn, via the ddgs library.",
-        data_sent="The search query, verbatim — to DuckDuckGo on the chat "
+        data_sent="The search query, word for word: to DuckDuckGo on the chat "
                   "tool's path, and to whichever engines your own SearXNG "
                   "relays to on the Toolsmith's. Whatever the person typed "
                   "that led to the search leaves the house either way.",
@@ -419,7 +465,7 @@ DOORS: tuple[Door, ...] = (
         # Names the door id, not one engine: this switch now covers the chat
         # tool's DuckDuckGo path AND the Toolsmith's SearXNG one, and an owner
         # told only about DuckDuckGo would not know what they had turned off.
-        settings_hint="Searching the web needs the 'web_search' egress door, "
+        settings_hint="Searching the web needs the 'web_search' switch, "
                       "which is off. Turn it on in Settings > Egress.",
         notes="Enforced at TWO call sites, both of which ask "
               "egress_allowed('web_search') before a socket opens: "
@@ -427,7 +473,7 @@ DOORS: tuple[Door, ...] = (
               "egress_request cannot wrap them; the gate runs before ddgs is "
               "imported) and agents/toolsmith._web_search. The Toolsmith's "
               "first hop is the owner's own SearXNG on loopback, which is not "
-              "itself egress — but that container then queries upstream "
+              "itself egress, but that container then queries upstream "
               "engines on the household's behalf, so the query leaves the "
               "house all the same and belongs behind the same switch. Gating "
               "it here means one switch turns off ALL web search, which is "
@@ -449,14 +495,14 @@ DOORS: tuple[Door, ...] = (
         env_var="PUFFPAI_EGRESS_WEB_FETCH",
         consent_kind="owner_flag_and_agent_budget",
         enforcement="external",
-        settings_hint="Reading a web page needs the 'web_fetch' egress door, "
+        settings_hint="Reading a web page needs the 'web_fetch' switch, "
                       "which is off. Turn it on in Settings > Egress.",
         notes="Enforced at the call site in agents/toolsmith.py, which asks "
               "egress_allowed('web_fetch') at the top of _web_fetch and again "
               "at the top of _fetch_url (the one hop loop both fetch paths, "
               "web_fetch and search_and_read, reach the wire through), "
               "BEFORE any URL shape check, DNS resolution or socket. Not "
-              "rerouted through egress_request because this door has no fixed "
+              "rerouted through egress_request because this switch has no fixed "
               "host list to validate against and the Toolsmith's own gates "
               "are stricter than the wrapper's: a per-request "
               "Budget(allow_egress) that defaults False, plus per-hop SSRF "
@@ -639,12 +685,12 @@ DOORS: tuple[Door, ...] = (
     Door(
         id="connectivity_probe",
         hosts=(),
-        purpose="offline_guard.has_internet() — 'is there a WAN link at all?', "
+        purpose="offline_guard.has_internet(): 'is there a WAN link at all?', "
                 "asked before an online feature reports itself offline.",
-        data_sent="Nothing this door chooses. The probe opens a TCP "
-                  "connection to a host that is ALREADY behind a door you "
-                  "turned on, so it can tell you nothing a door you opened "
-                  "does not already tell that same host. With every door shut "
+        data_sent="Nothing this switch chooses. The probe opens a TCP "
+                  "connection to a host that is ALREADY behind a switch you "
+                  "turned on, so it can tell you nothing a switch you turned on "
+                  "does not already tell that same host. With every switch off "
                   "it contacts nobody and answers 'offline'.",
         config_flag="connectivity_probe",
         env_var="PUFFPAI_EGRESS_CONNECTIVITY_PROBE",
@@ -656,17 +702,17 @@ DOORS: tuple[Door, ...] = (
               "as 1.1.1.1, 8.8.8.8 or www.google.com would contact parties "
               "nobody in the household chose, on an appliance that never "
               "needs the cloud. Instead probe_targets() returns hosts drawn "
-              "from the doors that are open right now, so a fully shut "
+              "from the switches that are on right now, so a fully shut "
               "appliance opens zero external "
               "sockets. The flag is a hard OFF switch, not an on switch: set "
               "it false and has_internet() stops probing entirely and reports "
               "offline. Leaving it unset does not open anything: the open "
-              "doors decide.",
+              "switches decide.",
     ),
     Door(
         id="model_pull",
         hosts=("registry.ollama.ai",),
-        purpose="Download a language model into Ollama on this box — the "
+        purpose="Download a language model into Ollama on this box: the "
                 "setup wizard's 'get the brain' step, and nothing else.",
         data_sent="The name of the model being downloaded, and this house's IP "
                   "address by the act of connecting. No household data, no "
@@ -679,7 +725,7 @@ DOORS: tuple[Door, ...] = (
         # Names the config key and the env var, not Settings > Egress: this
         # door is not in _FLAG_HONOURED_EXTERNAL, so door_status() reports it
         # writable:false and the Settings card shows its switch disabled.
-        settings_hint="Downloading a model needs the 'model_pull' egress door, "
+        settings_hint="Downloading a model needs the 'model_pull' switch, "
                       "which is off. Turn it on by setting "
                       "egress_doors.model_pull to true in "
                       "config/puffpai_config.json (or "
@@ -689,12 +735,12 @@ DOORS: tuple[Door, ...] = (
         notes="Enforced at the call site, brain_health.pull_model, which asks "
               "egress_allowed('model_pull') before the POST. It cannot go "
               "through egress_request because OUR socket goes to Ollama at "
-              "config `ollama.url` — loopback, or the LAN address the owner "
-              "configured — and it is OLLAMA that then fetches from "
+              "config `ollama.url` (loopback, or the LAN address the owner "
+              "configured), and it is OLLAMA that then fetches from "
               "registry.ollama.ai. The box egresses even though this process "
               "does not, which is exactly why the row says registry.ollama.ai "
-              "and not the Ollama URL: the door names where the data actually "
-              "goes. The wizard offers the download only with this door open "
+              "and not the Ollama URL: the switch names where the data actually "
+              "goes. The wizard offers the download only with this switch on "
               "and prints the manual command otherwise.",
     ),
     Door(
@@ -703,7 +749,7 @@ DOORS: tuple[Door, ...] = (
         purpose="Fetch the sentence-embedding model files ChromaDB needs, once "
                 "(~80 MB). Without them the knowledge library can be listed "
                 "and read but not searched by meaning.",
-        data_sent="Nothing but the request itself — no query, no household "
+        data_sent="Nothing but the request itself: no query, no household "
                   "data. Amazon S3 learns this house's IP address and that it "
                   "asked for a public model file.",
         config_flag="embedding_model_download",
@@ -714,7 +760,7 @@ DOORS: tuple[Door, ...] = (
         # Not a Settings control either (see model_pull), so the hint names the
         # switch that is.
         settings_hint="The embedding model files are not on this box and the "
-                      "'embedding_model_download' door is off. Turn it on by "
+                      "'embedding_model_download' switch is off. Turn it on by "
                       "setting egress_doors.embedding_model_download to true "
                       "in config/puffpai_config.json (or "
                       "PUFFPAI_EGRESS_EMBEDDING_MODEL_DOWNLOAD=1 in the "
@@ -726,12 +772,12 @@ DOORS: tuple[Door, ...] = (
               "not. chromadb opens its own socket for this download, so "
               "egress_request cannot wrap it; the gate runs before the "
               "embedding function is constructed. Once the files are cached "
-              "this door is never consulted again, and a box that got them by "
+              "this switch is never consulted again, and a box that got them by "
               "sneakernet never opens it at all. The same check runs again on "
               "every call of the built function, and before the knowledge "
               "search's degraded fallback (used when the configured embedder "
               "fails) lets chroma embed a question with a collection's own "
-              "function: with the files absent and this door shut, that "
+              "function: with the files absent and this switch off, that "
               "fallback is skipped rather than allowed to download.",
     ),
     Door(
@@ -762,7 +808,248 @@ DOORS: tuple[Door, ...] = (
               "This switch cannot stop them; stopping the container is the "
               "switch for that path.",
     ),
+    # -- the build engine's outside services ---------------------------------
+    # Book catalogs: reached only by the book fetcher (source_fetch.get_small
+    # under the matching service id) for a book the owner said yes to. Their
+    # one switch is the matching row on "What leaves your computer"
+    # (outside_switches), read before any socket opens; these rows name the
+    # hosts and what is sent.
+    Door(
+        id="wikipedia_books",
+        hosts=("en.wikipedia.org", "simple.wikipedia.org"),
+        purpose="Wikipedia articles about this bot's subject, fetched once "
+                "and saved on this computer as a book, when you say yes to "
+                "that book.",
+        data_sent="The book's subject words (for example: knitting, crochet) "
+                  "and the names of the articles it reads. Nothing about you "
+                  "or your household.",
+        config_flag="wikipedia_books",
+        env_var="PUFFPAI_EGRESS_WIKIPEDIA_BOOKS",
+        consent_kind="owner_flag_third_party",
+        enforcement="external",
+        third_party="Wikipedia (the Wikimedia Foundation)",
+        probe_ok=False,
+        settings_hint="Wikipedia is asked only when you say yes to a Wikipedia "
+                      "book on the Find more knowledge panel, or with: "
+                      "puffpai sources add <book>.",
+        notes="Polite by rule: a named User-Agent, maxlag on every request, "
+              "at least one second between requests, at most 300 articles "
+              "and 25 MB of text per book.",
+    ),
+    Door(
+        id="gutenberg_books",
+        hosts=("gutendex.com", "www.gutenberg.org"),
+        purpose="Free public-domain books from Project Gutenberg: a search "
+                "when you look for books, and the book's text when you say "
+                "yes to one.",
+        data_sent="The words you searched for (to gutendex.com) and the "
+                  "number of the book you chose (to www.gutenberg.org). "
+                  "Nothing about you or your household.",
+        config_flag="gutenberg_books",
+        env_var="PUFFPAI_EGRESS_GUTENBERG_BOOKS",
+        consent_kind="owner_flag_third_party",
+        enforcement="external",
+        third_party="Project Gutenberg and Gutendex",
+        probe_ok=False,
+        settings_hint="Project Gutenberg is asked only when you search for "
+                      "books or say yes to one on the Find more knowledge "
+                      "panel, or with: puffpai sources add <book>.",
+        notes="At most 25 MB per book; Gutenberg's own plain-text file only.",
+    ),
+    Door(
+        id="openstax_books",
+        hosts=("openstax.org",),
+        purpose="Free OpenStax textbooks: their list when you look for books, "
+                "and a textbook's pages when you say yes to one.",
+        data_sent="Nothing but the requests themselves: which book list and "
+                  "which textbook pages are read. Nothing about you or your "
+                  "household.",
+        config_flag="openstax_books",
+        env_var="PUFFPAI_EGRESS_OPENSTAX_BOOKS",
+        consent_kind="owner_flag_third_party",
+        enforcement="external",
+        third_party="OpenStax (Rice University)",
+        probe_ok=False,
+        settings_hint="OpenStax is asked only when you search for books or say "
+                      "yes to a textbook on the Find more knowledge panel, or "
+                      "with: puffpai sources add <book>.",
+        notes="At most 600 pages and 25 MB of text per textbook, one page a "
+              "second.",
+    ),
+    Door(
+        id="wikibooks_books",
+        hosts=("en.wikibooks.org",),
+        purpose="Free how-to books from Wikibooks: a search when you look for "
+                "books, and a book's pages when you say yes to one.",
+        data_sent="The words you searched for and the names of the pages of "
+                  "the book you chose. Nothing about you or your household.",
+        config_flag="wikibooks_books",
+        env_var="PUFFPAI_EGRESS_WIKIBOOKS_BOOKS",
+        consent_kind="owner_flag_third_party",
+        enforcement="external",
+        third_party="Wikibooks (the Wikimedia Foundation)",
+        probe_ok=False,
+        settings_hint="Wikibooks is asked only when you search for books or say "
+                      "yes to one, or with: puffpai sources add <book>.",
+        notes="At most 300 pages and 25 MB of text per book, one page a second.",
+    ),
+    Door(
+        id="archive_books",
+        hosts=("archive.org",),
+        purpose="Old public-domain books scanned by libraries, from the "
+                "Internet Archive: a search when you look for books, and the "
+                "book's text when you say yes to one.",
+        data_sent="The words you searched for and the id of the book you "
+                  "chose. Nothing about you or your household.",
+        config_flag="archive_books",
+        env_var="PUFFPAI_EGRESS_ARCHIVE_BOOKS",
+        consent_kind="owner_flag_third_party",
+        enforcement="external",
+        third_party="The Internet Archive",
+        probe_ok=False,
+        settings_hint="The Internet Archive is asked only when you search for "
+                      "books or say yes to one, or with: puffpai sources add "
+                      "<book>.",
+        notes="Only books marked not in copyright and published long enough "
+              "ago; the Archive's own text of the scan, at most 25 MB.",
+    ),
+    # Keyed searches: a sign-up key the owner added on the Sign-up keys page
+    # rides only as a bound credential (security/keys.py), only to this host.
+    Door(
+        id="brave_search",
+        hosts=("api.search.brave.com",),
+        purpose="Searching the whole web with Brave when you ask me to "
+                "search. Needs your own free key from Brave.",
+        data_sent="The words you asked me to search for, after private "
+                  "details are taken out, your key from Brave, and your "
+                  "internet address.",
+        config_flag="brave_search",
+        env_var="PUFFPAI_EGRESS_BRAVE_SEARCH",
+        consent_kind="owner_flag_third_party",
+        enforcement="registry",
+        third_party="Brave Software",
+        probe_ok=False,
+        settings_hint="Searching with Brave is switched off, so I did not "
+                      "search with it. Adding your Brave key on the Sign-up "
+                      "keys page switches it on.",
+        notes="Keyed (security/keys.py): the key rides in a header, only to "
+              "this host, never while the vault is locked (Brave asks for a "
+              "payment card). Stops at the local monthly cap.",
+    ),
+    Door(
+        id="marginalia_search",
+        hosts=("api2.marginalia-search.com",),
+        purpose="Searching the web with Marginalia when you ask me to "
+                "search. Needs your own free key; free for personal use only.",
+        data_sent="The words you asked me to search for, after private "
+                  "details are taken out, your key from Marginalia, and your "
+                  "internet address.",
+        config_flag="marginalia_search",
+        env_var="PUFFPAI_EGRESS_MARGINALIA_SEARCH",
+        consent_kind="owner_flag_third_party",
+        enforcement="registry",
+        third_party="Marginalia Search",
+        probe_ok=False,
+        settings_hint="Searching with Marginalia is switched off, so I did "
+                      "not search with it. Adding your Marginalia key on the "
+                      "Sign-up keys page switches it on.",
+        notes="Keyed (security/keys.py): header only, only to this host.",
+    ),
+    # The owner's own GitHub account: reached only by puffpai.github_account
+    # and the GitHub searcher, after the owner connects the account (that tap
+    # is the owner's yes to this switch).
+    Door(
+        id="github",
+        hosts=("api.github.com", "github.com"),
+        purpose="Your own GitHub account, when you connect it: better searches, "
+                "your own projects and the ones you starred as finds, and a "
+                "private project of yours when you say yes to it.",
+        data_sent="Your GitHub token (only to api.github.com, never in an "
+                  "address), the short search words shown on screen, the names "
+                  "of your projects, and your internet address. Connecting "
+                  "without a token sends a one-time sign-in code request to "
+                  "github.com.",
+        config_flag="github",
+        env_var="PUFFPAI_EGRESS_GITHUB",
+        consent_kind="owner_flag_third_party",
+        enforcement="registry",
+        third_party="GitHub",
+        probe_ok=False,
+        settings_hint="Your GitHub account is switched off, so nothing was sent "
+                      "to GitHub with it. Connecting it again on the Developer "
+                      "page switches it on.",
+        notes="Keyed (security/keys.py, row 'github', vault only): the token "
+              "rides only in a header to api.github.com, only while the vault "
+              "is open, never in an address, never on a redirect. github.com "
+              "is reached only for the device sign-in, which carries no token.",
+    ),
+    # Toolsmith's cloud model. Toolsmith is the only agent that may use a
+    # cloud model; it stays on the model on this computer unless the owner
+    # chooses the cloud one in Settings.
+    Door(
+        id="toolsmith_cloud",
+        hosts=("api.anthropic.com",),
+        purpose="Toolsmith's cloud model, when you choose Anthropic for it in "
+                "Settings: it works out how to install and start an app.",
+        data_sent="When Toolsmith finds and installs apps: your goal and your "
+                  "bot's jobs, the names and descriptions of the apps it found, "
+                  "each app's README, docs and file list, the start of its setup "
+                  "files, the commands it runs with their output, and what the "
+                  "app's pages show (a folder of your own is read the same way), "
+                  "after keys and private details are taken out, with your "
+                  "Anthropic key (only to api.anthropic.com) and your internet "
+                  "address. Never your chats or vault.",
+        config_flag="toolsmith_cloud",
+        env_var="PUFFPAI_EGRESS_TOOLSMITH_CLOUD",
+        consent_kind="owner_flag_third_party",
+        enforcement="registry",
+        third_party="Anthropic",
+        probe_ok=False,
+        settings_hint="Toolsmith's cloud model is switched off, so nothing was "
+                      "sent to Anthropic. Toolsmith uses the model on this "
+                      "computer.",
+        notes="Keyed (security/keys.py, row 'anthropic', vault only): the key "
+              "rides only in a header to api.anthropic.com, only while the vault "
+              "is open, never on a redirect. Called only from Toolsmith's "
+              "install loop (security/toolsmith_cloud.py scope guard).",
+    ),
+    Door(
+        id="result_pictures",
+        hosts=(),
+        dynamic_hosts=True,
+        purpose="Pictures a data source's own results point to (a news story's "
+                "photo, a library's thumbnail), shown in an app your bot made.",
+        data_sent="One picture request to the address the source's own answer "
+                  "named. That site learns your internet address and which "
+                  "picture was asked for. Nothing you typed, no cookie, no key.",
+        config_flag="result_pictures",
+        env_var="PUFFPAI_EGRESS_RESULT_PICTURES",
+        consent_kind="derived_from_open_doors",
+        enforcement="derived",
+        probe_ok=False,
+        settings_hint="Pictures from a source's results are switched off on this "
+                      "computer, so none was fetched.",
+        notes="Never opened by a switch of its own: only through "
+              ":func:`result_picture_get`, which needs the SOURCE's own switch "
+              "on (your yes to \"<source> and the picture sites its results "
+              "point to\") and a host that appeared in that source's results. "
+              "GET only, image content types only (no SVG), size-capped, one "
+              "audit line per host. Its env var may switch it off, never on.",
+    ),
 )
+
+#: The picture door: opened only by :func:`result_picture_get`.
+RESULT_PICTURES = "result_pictures"
+#: The largest picture a source's result may point to.
+RESULT_PICTURE_MAX_BYTES = 8 * 1024 * 1024
+#: Picture content types let through (never SVG: it can carry script).
+RESULT_PICTURE_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp", "image/avif")
+
+#: Doors a sign-up key rides on. A caller-supplied ``auth=``, ``cookies=`` or
+#: credential-shaped header is refused on them: the key goes only as a bound
+#: ``credential=`` from the security package.
+KEYED_DOORS = frozenset({"github", "toolsmith_cloud", "brave_search",
+                         "marginalia_search"})
 
 _BY_ID: dict[str, Door] = {d.id: d for d in DOORS}
 _HOST_INDEX: dict[str, Door] = {
@@ -774,6 +1061,8 @@ _HOST_INDEX: dict[str, Door] = {
 
 _lock = threading.Lock()
 _cache: dict | None = None
+#: The stamp of the config file :data:`_cache` was read from.
+_cache_stamp: Any = None
 
 #: Repo root — this file is ``src/puffpai/security/egress_doors.py``. Only used
 #: to build the in-tree fallback for :func:`overlay_path` when
@@ -800,18 +1089,21 @@ def _config_path() -> str | None:
 
 
 def _raw_config() -> dict:
-    """The whole config file, read once and cached. Never raises.
+    """The whole config file, cached until the file changes. Never raises.
 
     Read directly rather than through the config dataclass because unknown keys
     are dropped there, and a door added by a build must resolve without the
-    loader having been taught about it.
+    loader having been taught about it. The file's stamp is checked on every
+    call, so a switch written by another process is in force at once.
     """
-    global _cache
+    global _cache, _cache_stamp
+    path = _config_path()
+    stamp = _file_stamp(path) if path else _NO_STAMP
     with _lock:
-        if _cache is not None:
+        if (_cache is not None and stamp is not _NO_STAMP
+                and stamp == _cache_stamp):
             return _cache
         raw: dict = {}
-        path = _config_path()
         if path:
             try:
                 with open(path, "r", encoding="utf-8") as fh:
@@ -824,6 +1116,7 @@ def _raw_config() -> dict:
                     "egress door config unreadable (%s): %s — every door stays "
                     "shut", path, exc)
         _cache = raw
+        _cache_stamp = stamp
         return raw
 
 
@@ -941,11 +1234,100 @@ def _raw_overlay() -> dict | None:
 
 
 def reset_cache() -> None:
-    """Forget the cached config and overlay (tests, and a reload after an edit)."""
-    global _cache, _overlay_cache
+    """Forget the cached config, overlay and posture (tests, and a reload after
+    an edit)."""
+    global _cache, _cache_stamp, _overlay_cache, _posture_cache
     with _lock:
         _cache = None
+        _cache_stamp = None
         _overlay_cache = _OVERLAY_UNSET
+        _posture_cache = None
+    _reset_app_consent_cache()
+
+
+#: The run posture read by :func:`run_posture`, with the stamp of the build
+#: manifest it came from, so a change written by another process is seen on
+#: the next call.
+_posture_cache: Optional[dict] = None
+#: A stamp that never matches: the file could not be looked at, so it is read
+#: again (and fails closed) every time instead of being cached.
+_NO_STAMP = object()
+
+
+def _file_stamp(path: str) -> Any:
+    """``(path, mtime_ns, size, inode)`` of *path*; ``(path, None, None, None)``
+    when it does not exist; :data:`_NO_STAMP` when it cannot be looked at."""
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return (path, None, None, None)
+    except OSError:
+        return _NO_STAMP
+    return (path, st.st_mtime_ns, st.st_size, getattr(st, "st_ino", 0))
+
+
+def _manifest_stamp() -> Any:
+    try:
+        from puffpai import build_manifest
+        return _file_stamp(build_manifest.manifest_path())
+    except Exception:
+        return _NO_STAMP
+
+
+def run_posture() -> dict[str, Any]:
+    """This build's run-time egress posture, normalised and fail-closed.
+
+    Reads ``posture`` from the build manifest and puts it through
+    :func:`puffpai.build_posture.assess_posture`, which is where the
+    normalisation already lives: an unrecognised ``run_egress`` becomes the
+    safe default rather than being honoured, and switches only mean anything
+    under ``enumerated``. That matters because :func:`build_manifest.read_manifest`
+    returns the file's contents unprojected, so a hand-edited manifest could
+    otherwise put an arbitrary string where a posture belongs.
+
+    No manifest at all means no wizard has run, which resolves to the same safe
+    default (``island``) and therefore to every door shut.
+
+    Cached until the manifest file changes (its stamp is checked on every
+    call), so a posture written by another process is in force at once.
+    """
+    global _posture_cache
+    stamp = _manifest_stamp()
+    with _lock:
+        if (_posture_cache is not None and stamp is not _NO_STAMP
+                and _posture_cache.get("stamp") == stamp):
+            return _posture_cache["value"]
+    from puffpai import build_posture
+    block: dict[str, Any] = {}
+    try:
+        from puffpai import build_manifest
+        data = build_manifest.read_manifest()
+        if isinstance(data, dict) and isinstance(data.get("posture"), dict):
+            block = data["posture"]
+    except Exception as exc:
+        logger.debug("build manifest unavailable for egress posture: %s", exc)
+    switches = block.get("egress_switches")
+    enabled = [k for k, v in switches.items() if v is True]         if isinstance(switches, dict) else None
+    settled = build_posture.assess_posture(
+        block.get("build_network"), block.get("run_egress"), enabled)
+    out = {
+        "run_egress": settled["run_egress"],
+        "source": settled["run_egress_source"],
+        "switches": dict(settled["egress_switches"]),
+    }
+    with _lock:
+        _posture_cache = {"stamp": stamp, "value": out}
+    return out
+
+
+def _shown(name: Any) -> str:
+    """An id someone else chose (an app's, a door's) as a log line may show
+    it: plain and key-safe, else "(not shown)". Fail closed."""
+    try:
+        from puffpai import web_search
+        return web_search.log_name(name, placeholder="(not shown)", limit=64)
+    except Exception:
+        return "(not shown)"
 
 
 def _as_bool(value) -> bool | None:
@@ -1112,8 +1494,11 @@ _APP_LOCK = threading.RLock()
 _APP_DOORS: dict[str, Door] = {}
 
 
-def app_door_id(app_id: str, index: int) -> str:
-    """The registry id for one manifest door: ``app:<app_id>:<n>``."""
+def app_door_id(app_id: str, index: "int | None" = None) -> str:
+    """The registry id for one manifest door, ``app:<app_id>:<n>``, or with no
+    *index* for the app's live feed door, ``app:<app_id>:feed``."""
+    if index is None:
+        return f"{APP_DOOR_PREFIX}{app_id}:feed"
     return f"{APP_DOOR_PREFIX}{app_id}:{int(index)}"
 
 
@@ -1130,8 +1515,16 @@ def _app_host_digest(hosts: tuple[str, ...]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
 
 
-def app_door_flag(app_id: str, index: int, hosts) -> str:
-    """The config/overlay key for one manifest door."""
+def app_door_flag(app_id: str, index, hosts=None) -> str:
+    """The config/overlay key for one manifest door, ``(app_id, index, hosts)``.
+
+    Called as ``(app_id, hosts)`` it is the key for the app's live feed door.
+    Either way it is bound to the door's host set.
+    """
+    if hosts is None:
+        clean = tuple(sorted({_clean_host(h) for h in (index or ())
+                              if _clean_host(h)}))
+        return f"app_{app_id}_feed_{_app_host_digest(clean)}"
     clean = tuple(sorted({_clean_host(h) for h in (hosts or ()) if _clean_host(h)}))
     return f"app_{app_id}_{int(index)}_{_app_host_digest(clean)}"
 
@@ -1181,10 +1574,10 @@ def _app_door_from_manifest(app_id: str, index: int, block) -> Door | None:
         # A door that names no host gets no switch on the Settings card
         # (_is_inert), so its sentence must not send the owner looking there.
         settings_hint=(
-            (f"The '{app_id}' app's door is off. Turn it on in "
+            (f"The '{app_id}' app's switch is off. Turn it on in "
              f"Settings > Egress if you want this appliance talking to "
              f"{', '.join(hosts)}.") if hosts else
-            (f"The '{app_id}' app's door is off and names no host: the app "
+            (f"The '{app_id}' app's switch is off and names no host: the app "
              f"declares that it reaches nowhere, so there is nothing to turn "
              f"on.")),
         # NEVER from the manifest. Stated as a literal so that the invariant is
@@ -1196,8 +1589,8 @@ def _app_door_from_manifest(app_id: str, index: int, block) -> Door | None:
     )
 
 
-def register_app_doors(entries) -> tuple[str, ...]:
-    """Replace the whole app-door set from *entries*: ``[(app_id, doors), ...]``.
+def _register_manifest_doors(entries) -> tuple[str, ...]:
+    """Replace the whole manifest app-door set from *entries*: ``[(app_id, doors), ...]``.
 
     A wholesale replace, not a merge, because a rescan IS the install and
     uninstall mechanism: an app whose folder is gone must lose its doors in the
@@ -1245,15 +1638,450 @@ def register_app_doors(entries) -> tuple[str, ...]:
 
 
 def clear_app_doors() -> None:
-    """Forget every registered app door (a build with no apps, and tests)."""
+    """Forget every registered app door, manifest and feed (a build with no
+    apps, and tests)."""
     with _APP_LOCK:
         _APP_DOORS.clear()
+        _FEED_DOORS.clear()
 
 
 def app_doors() -> tuple[Door, ...]:
-    """The registered app doors, in registration order."""
+    """The registered app doors, manifest then feed, in registration order."""
     with _APP_LOCK:
-        return tuple(_APP_DOORS.values())
+        return tuple(_APP_DOORS.values()) + tuple(_FEED_DOORS.values())
+
+
+# ── live-card feed doors: an app's declared feed host, as a real door ────────
+#
+# An app's ``feed`` block (:mod:`puffpai.feeds`) names ONE host its data comes
+# from, and optionally one host its pictures come from. These functions turn
+# that declaration into an ordinary :class:`Door` (``app:<app_id>:feed``), so
+# the feed runner goes through :func:`egress_request` like every other
+# outbound call. They live in their own table beside the manifest doors above,
+# for the same reason skill doors do: each registration is a wholesale
+# replace, and one subsystem's rescan must not delete the other's doors.
+#
+# 1. **Forced shut.** ``default`` is the literal False below and is never read
+#    from a manifest. The ways one opens are the owner's recorded yes
+#    (:func:`set_app_door_consent`, reached from ``puffpai apps allow`` and
+#    ``POST /apps/<id>/feed/allow``) or the owner's Settings switch; a line in
+#    the config file only while every service may be used as built.
+# 2. **Consent is bound to the hosts it was given for.** The flag carries an
+#    8-hex digest of the sorted host set, so an app update that repoints its
+#    feed falls back to shut.
+# 3. **The owner's yes lives in the state dir**: ``<state>/egress_app_doors.json``,
+#    re-read when its mtime changes. An unreadable or malformed file is no
+#    setting at all: every feed door shut.
+# 4. **Operator kill switch.** ``PUFFPAI_EGRESS_APPS=off`` forces every feed
+#    and browser-app door shut. Only "off" is honoured there.
+
+#: Operator override that forces every feed and browser-app door shut.
+APPS_KILL_ENV = "PUFFPAI_EGRESS_APPS"
+
+#: File name of the owner's recorded yes/no, under the state dir.
+APP_CONSENT_FILE = "egress_app_doors.json"
+APP_CONSENT_SCHEMA = "puffpai_app_door_consent/v1"
+
+#: A live-card app's id: the manifest id rule with a tighter length bound.
+_FEED_APP_ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
+
+#: Suffixes that only ever mean "this network", never a public service.
+_LOCAL_TLDS = frozenset({"local", "lan", "internal", "localhost", "home",
+                         "arpa", "localdomain", "intranet", "corp"})
+
+#: At most this many hosts per feed or browser-app door: the data host and
+#: the picture host.
+MAX_FEED_DOOR_HOSTS = 2
+#: At most this many outside sites per browser app (the engine's web apps):
+#: the same cap as a feed door.
+MAX_WEB_APP_HOSTS = MAX_FEED_DOOR_HOSTS
+
+#: The consent binding for a feed or browser-app door's host set (the same
+#: digest the manifest doors use).
+_host_digest = _app_host_digest
+
+#: The live-card feed doors, under :data:`_APP_LOCK`.
+_FEED_DOORS: dict[str, Door] = {}
+
+_consent_lock = threading.Lock()
+_consent_cache: dict[str, Any] = {"path": None, "mtime": None, "doors": {}}
+
+
+def is_ip_literal(host: Any) -> bool:
+    """True if *host* is an address rather than a name, in ANY notation."""
+    return _is_ip_literal(host)
+
+
+def is_registrable_hostname(host: Any) -> bool:
+    """True only for a public NAME a door may declare. Refuses every literal.
+
+    Lower-case hostname shape, at least two labels, a TLD-shaped last label
+    that is not a local-network suffix, and not an address in any notation.
+    ``localhost``, ``nas.local``, ``8.8.8.8``, ``127.1``, ``0x7f000001`` and
+    ``[::1]`` all fail.
+    """
+    if not isinstance(host, str) or host != host.strip().lower():
+        return False
+    if len(host) > 253 or not _APP_HOST_RE.match(host):
+        return False
+    if _is_ip_literal(host):
+        return False
+    labels = host.split(".")
+    if len(labels) < 2:
+        return False
+    if labels[-1] in _LOCAL_TLDS:
+        return False
+    return bool(_APP_TLD_RE.match(labels[-1]))
+
+
+def is_app_door(d: "Door | str | None") -> bool:
+    """True for a door an app declared (manifest, feed or browser app)."""
+    key = d.id if isinstance(d, Door) else str(d or "")
+    return key.startswith(APP_DOOR_PREFIX)
+
+
+def _is_feed_door(d: "Door | str | None") -> bool:
+    """True for a registered live-card feed door."""
+    key = d.id if isinstance(d, Door) else str(d or "")
+    if not (key.startswith(APP_DOOR_PREFIX) and key.endswith(":feed")):
+        return False
+    with _APP_LOCK:
+        return key in _FEED_DOORS
+
+
+def _feed_door_from_spec(app_id: str, spec: Any) -> Optional[Door]:
+    """One ``Door`` from one feed spec, or None, never a half-trusted door.
+
+    *spec* is ``{"hosts": [...], "picture_hosts": [...], "name": str,
+    "purpose": str, "data_sent": str}``. Every host is re-checked here even
+    though the loader already did.
+    """
+    if not isinstance(spec, Mapping):
+        return None
+    raw_hosts = spec.get("hosts")
+    if not isinstance(raw_hosts, (list, tuple)) or not raw_hosts:
+        return None
+    hosts: list[str] = []
+    for raw in raw_hosts:
+        if not isinstance(raw, str) or not is_registrable_hostname(raw):
+            return None
+        if raw not in hosts:
+            hosts.append(raw)
+    pictures: list[str] = []
+    raw_pics = spec.get("picture_hosts") or []
+    if not isinstance(raw_pics, (list, tuple)):
+        return None
+    for raw in raw_pics:
+        if not isinstance(raw, str) or not is_registrable_hostname(raw):
+            return None
+        if raw not in hosts and raw not in pictures:
+            pictures.append(raw)
+    if len(hosts) + len(pictures) > MAX_FEED_DOOR_HOSTS:
+        return None
+    name = spec.get("name")
+    name = str(name)[:64] if isinstance(name, str) and name.strip() else app_id
+    purpose = spec.get("purpose")
+    data_sent = spec.get("data_sent")
+    # Bound to every site it reaches, pictures-only ones too.
+    flag = app_door_flag(app_id, hosts + pictures)
+    return Door(
+        id=app_door_id(app_id),
+        hosts=tuple(hosts),
+        picture_hosts=tuple(pictures),
+        purpose=(str(purpose)[:200] if isinstance(purpose, str) else ""),
+        data_sent=(str(data_sent)[:200] if isinstance(data_sent, str) else ""),
+        config_flag=flag,
+        env_var="PUFFPAI_EGRESS_" + flag.upper(),
+        consent_kind="owner_flag",
+        enforcement="registry",
+        probe_ok=False,
+        settings_hint=(
+            f"{name} has not been allowed to use {', '.join(hosts)} yet, so "
+            f"nothing was fetched. To allow it, run: puffpai apps allow "
+            f"{app_id}"),
+        # NEVER from the manifest. A literal, so a test can assert on it.
+        default=False,
+        notes=(f"Declared by the '{app_id}' app's feed block and registered on "
+               f"scan. Shut until the owner allows it; a host this door does "
+               f"not name is refused even when it is open."),
+    )
+
+
+def register_feed_doors(entries) -> tuple[str, ...]:
+    """Replace the whole feed-door set from *entries*: ``[(app_id, spec), ...]``.
+
+    A wholesale replace, not a merge: a rescan IS install and uninstall, so an
+    app whose folder is gone loses its door in the same breath. Never raises; a
+    refused entry simply has no door, which is the fail-shut outcome. The
+    manifest doors and skill doors are untouched.
+    """
+    built: dict[str, Door] = {}
+    for entry in (entries or ()):
+        try:
+            app_id, spec = entry
+        except (TypeError, ValueError):
+            continue
+        app_id = str(app_id or "").strip()
+        if not _FEED_APP_ID_RE.match(app_id):
+            logger.warning("egress: refusing an app feed door for unusable "
+                           "app id %s", _shown(app_id))
+            continue
+        d = _feed_door_from_spec(app_id, spec)
+        if d is None:
+            logger.warning("egress: app %s feed door is not registrable; the "
+                           "app reaches nothing", _shown(app_id))
+            continue
+        if d.id in _BY_ID or d.id in built:
+            logger.warning("egress: refusing duplicate app door id %s",
+                           _shown(d.id))
+            continue
+        built[d.id] = d
+    with _APP_LOCK:
+        changed = set(built) != set(_FEED_DOORS) or any(
+            _FEED_DOORS.get(k) != v for k, v in built.items())
+        _FEED_DOORS.clear()
+        _FEED_DOORS.update(built)
+    if changed:
+        logger.info("egress: %d app feed door(s) registered, all shut until "
+                    "the owner allows them: %s", len(built),
+                    ", ".join(_shown(k) for k in built) or "-")
+    return tuple(built)
+
+
+def _is_feed_entry(entry: Any) -> bool:
+    """True for a ``(app_id, {feed spec})`` registration entry."""
+    return (isinstance(entry, (tuple, list)) and len(entry) == 2
+            and isinstance(entry[1], Mapping))
+
+
+def register_app_doors(entries) -> tuple[str, ...]:
+    """Replace an app-door table from *entries*. Returns the ids registered.
+
+    Two kinds of entry share this name, each with its own table:
+    ``(app_id, [door block, ...])`` from an app manifest's ``doors[]``, and
+    ``(app_id, {"hosts": [...], ...})`` from an app's live feed
+    (:func:`register_feed_doors`). Each call replaces only the table its
+    entries belong to. An empty call from the feed runner (``puffpai.feeds``)
+    clears the feed table; any other empty call clears the manifest table.
+    Never raises.
+    """
+    items = list(entries or ())
+    feed = [e for e in items if _is_feed_entry(e)]
+    manifest = [e for e in items if not _is_feed_entry(e)]
+    if not items:
+        caller = sys._getframe(1).f_globals.get("__name__", "")
+        if caller == "puffpai.feeds":
+            return register_feed_doors([])
+        return _register_manifest_doors([])
+    out: tuple[str, ...] = ()
+    if manifest:
+        out += _register_manifest_doors(manifest)
+    if feed:
+        out += register_feed_doors(feed)
+    return out
+
+
+def app_door(app_id: str) -> Optional[Door]:
+    """The registered feed door for *app_id*, or None."""
+    with _APP_LOCK:
+        return _FEED_DOORS.get(app_door_id(str(app_id or "").strip()))
+
+
+def feed_doors() -> tuple[Door, ...]:
+    """The registered live-card feed doors, in registration order."""
+    with _APP_LOCK:
+        return tuple(_FEED_DOORS.values())
+
+
+# -- the owner's recorded yes/no for a feed door --------------------------------
+
+def app_consent_path() -> str:
+    """``<state dir>/egress_app_doors.json``. Never inside the checkout."""
+    from puffpai.config import get_state_dir
+    return os.path.join(get_state_dir(), APP_CONSENT_FILE)
+
+
+def _reset_app_consent_cache() -> None:
+    with _consent_lock:
+        _consent_cache.update({"path": None, "mtime": None, "doors": {}})
+
+
+def _read_app_consent() -> dict[str, Any]:
+    """``{flag: {"open": bool, ...}}`` from the state file. Fails to {}.
+
+    Re-read when the path or mtime changes. A missing file is no setting; an
+    unreadable, oversize or malformed one is ALSO no setting, and is logged:
+    either way every feed door stays shut.
+    """
+    try:
+        path = app_consent_path()
+    except Exception as exc:
+        logger.debug("app door consent path unavailable: %s", exc)
+        return {}
+    try:
+        stat = os.stat(path)
+        mtime = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        with _consent_lock:
+            _consent_cache.update({"path": path, "mtime": None, "doors": {}})
+        return {}
+    with _consent_lock:
+        if _consent_cache["path"] == path and _consent_cache["mtime"] == mtime:
+            return dict(_consent_cache["doors"])
+    doors: dict[str, Any] = {}
+    try:
+        if stat.st_size > 256 * 1024:
+            raise ValueError("consent file is larger than 256 KB")
+        with open(path, "r", encoding="utf-8") as fh:
+            loaded = json.load(fh)
+        if (isinstance(loaded, dict)
+                and loaded.get("schema") == APP_CONSENT_SCHEMA
+                and isinstance(loaded.get("doors"), dict)):
+            for flag, entry in loaded["doors"].items():
+                if (isinstance(flag, str) and isinstance(entry, dict)
+                        and isinstance(entry.get("open"), bool)):
+                    doors[flag] = dict(entry)
+        else:
+            logger.warning("app door consent file %s is not in the expected "
+                           "shape; every app door stays shut", path)
+    except (OSError, ValueError) as exc:
+        logger.warning("app door consent file unreadable (%s); every app door "
+                       "stays shut", exc)
+        doors = {}
+    with _consent_lock:
+        _consent_cache.update({"path": path, "mtime": mtime, "doors": doors})
+    return dict(doors)
+
+
+def _app_door_switch(d: Door) -> tuple[Optional[bool], str]:
+    """The owner's setting for a feed door, and where it came from.
+
+    Order: the operator kill switch (off only), the per-door env var (with
+    only switched-on services allowed it may switch off, never on), the
+    owner's recorded yes/no and the owner's Settings switch (OFF wins), then
+    ``egress_doors.<flag>`` in config while every service may be used as
+    built, else none.
+    """
+    kill = os.environ.get(APPS_KILL_ENV)
+    if kill is not None and _as_bool(kill) is False:
+        return False, f"{APPS_KILL_ENV}=off forces every app door shut"
+
+    bridge_up = _bridge_up()
+    raw_env = os.environ.get(d.env_var)
+    if raw_env is not None and raw_env.strip() != "":
+        decided = _as_bool(raw_env)
+        if decided is None:
+            return None, f"{d.env_var} is not a switch value; door stays shut"
+        if decided is False or not bridge_up:
+            return decided, f"{d.env_var}={'on' if decided else 'off'}"
+
+    entry = _read_app_consent().get(d.config_flag)
+    recorded = (entry["open"] if isinstance(entry, dict)
+                and isinstance(entry.get("open"), bool) else None)
+    overlay = _raw_overlay()
+    if overlay is None:
+        return False, "the owner overlay will not parse; every door stays shut"
+    chosen = _as_bool(overlay.get(d.config_flag)) if d.config_flag in overlay else None
+    if recorded is False or chosen is False:
+        return False, "the owner said no"
+    if recorded is True or chosen is True:
+        return True, "the owner allowed it"
+
+    if bridge_up:
+        # With only switched-on services allowed, a live card opens only on
+        # the owner's own yes, never on a line in a settings file.
+        return None, "the Bridge is up and the owner has not allowed it"
+
+    section = _raw_config().get(CONFIG_SECTION)
+    if isinstance(section, dict) and d.config_flag in section:
+        decided = _as_bool(section.get(d.config_flag))
+        if decided is None:
+            return None, (f"{CONFIG_SECTION}.{d.config_flag} is not a switch "
+                          f"value; door stays shut")
+        return decided, f"{CONFIG_SECTION}.{d.config_flag}={decided}"
+
+    return None, "the owner has not allowed it"
+
+
+def _feed_door_flag(d: Door, level: str) -> tuple[bool | None, str, str]:
+    """:func:`_resolve_flag` for a feed door: ``(value, source, reason)``."""
+    del level  # the Bridge is read inside _app_door_switch
+    decided, why = _app_door_switch(d)
+    if why.startswith(APPS_KILL_ENV) or why.startswith(d.env_var):
+        source = "env"
+    elif why.startswith(CONFIG_SECTION):
+        source = "config"
+    elif "Bridge" in why:
+        source = "bridge"
+    elif decided is None:
+        source = "default"
+    else:
+        source = "owner_switch"
+    return decided, source, why
+
+
+def app_door_consent(app_id: str) -> Optional[bool]:
+    """What the owner recorded for this app's feed door: True, False or None.
+
+    Only the recorded yes/no (and config), not the Bridge: "did the owner say
+    yes" and "is the door open" are different questions and a screen needs
+    both answers.
+    """
+    d = app_door(app_id)
+    if d is None:
+        return None
+    decided, _why = _app_door_switch(d)
+    return decided
+
+
+def set_app_door_consent(app_id: str, allowed: bool, *,
+                         when: Optional[str] = None) -> dict[str, Any]:
+    """Record the owner's yes or no for an app's feed door. Opens no socket.
+
+    Refuses an app with no registered feed door. The write is atomic (temp
+    file + replace) and keyed by the host-bound flag, so a yes never carries
+    over to a different host set. Returns ``{"door", "flag", "hosts", "open"}``.
+    """
+    if not isinstance(allowed, bool):
+        raise ValueError("allowed must be True or False")
+    d = app_door(app_id)
+    if d is None:
+        raise KeyError(f"no feed door is registered for app {app_id!r}")
+    path = app_consent_path()
+    stamp = when or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with _consent_lock:
+        existing: dict[str, Any] = {}
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                loaded = json.load(fh)
+            if (isinstance(loaded, dict)
+                    and loaded.get("schema") == APP_CONSENT_SCHEMA
+                    and isinstance(loaded.get("doors"), dict)):
+                existing = {k: v for k, v in loaded["doors"].items()
+                            if isinstance(k, str) and isinstance(v, dict)}
+        except (OSError, ValueError):
+            existing = {}
+        existing[d.config_flag] = {
+            "open": allowed, "app": app_of(d),
+            "hosts": list(d.hosts) + list(d.picture_hosts),
+            "at": stamp,
+        }
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"schema": APP_CONSENT_SCHEMA, "doors": existing}, fh,
+                      indent=2, sort_keys=True)
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:  # pragma: no cover - Windows ignores the mode
+            pass
+        os.replace(tmp, path)
+        _consent_cache.update({"path": None, "mtime": None, "doors": {}})
+    logger.info("egress: owner %s app door %s (%s)",
+                "allowed" if allowed else "shut", _shown(d.id),
+                ", ".join(_shown(h) for h in d.hosts))
+    return {"door": d.id, "flag": d.config_flag, "hosts": list(d.hosts),
+            "open": allowed}
 
 
 # ── skill doors ─────────────────────────────────────────────────────
@@ -1323,7 +2151,7 @@ def _skill_door_from_manifest(skill_id: str, index: int, block) -> Door | None:
         consent_kind="owner_flag",
         enforcement="registry",
         settings_hint=(
-            f"The '{skill_id}' skill's door is off. Turn it on in "
+            f"The '{skill_id}' skill's switch is off. Turn it on in "
             f"Settings > Egress if you want this appliance talking to "
             f"{', '.join(hosts)} on its behalf."),
         # NEVER from the package. A skill's door opens only because the owner
@@ -1435,7 +2263,7 @@ def door(door_id: str) -> Door | None:
     if found is not None:
         return found
     with _APP_LOCK:
-        found = _APP_DOORS.get(key)
+        found = _APP_DOORS.get(key) or _FEED_DOORS.get(key)
     if found is not None:
         return found
     with _SKILL_LOCK:
@@ -1500,7 +2328,10 @@ def egress_allowed(door_id: str) -> tuple[bool, str]:
 #: Published per door by :func:`door_status` as ``source``, because "the switch
 #: is off" and "the switch is off BECAUSE the unit file forces it and your
 #: click cannot win" are different facts and the owner needs the second one.
-FLAG_SOURCES = ("env", "overlay", "config", "default")
+#: ``bridge`` is the Bridge itself (sealed, or holding a setting that may not
+#: open a door with only switched-on services allowed); ``owner_switch`` is the
+#: owner's switch on "What leaves your computer".
+FLAG_SOURCES = ("bridge", "env", "overlay", "owner_switch", "config", "default")
 
 #: Doors with ``enforcement="external"`` whose own call site still reads this
 #: registry's flag, so the switch is a real control. ``egress_admin`` imports
@@ -1541,20 +2372,51 @@ _FLAG_HONOURED_EXTERNAL = frozenset({"web_search", "web_fetch", "page_reader",
                                      "embedding_model_download"})
 
 
+def _bridge_level() -> str:
+    """The Bridge level in force: ``open``, ``switched_on`` or ``sealed``.
+
+    Fails closed: when the Bridge cannot be read, only switched-on services.
+    """
+    try:
+        from puffpai.security import bridge_guard
+        return str(bridge_guard.reach_level())
+    except Exception:
+        return "switched_on"
+
+
+def _bridge_up() -> bool:
+    """True when only what the owner switched on may leave (fails closed)."""
+    return _bridge_level() != "open"
+
+
+def _owner_switch(door_id: str) -> Optional[bool]:
+    """The owner's switch from ``outside_switches.json``, or None. Fails shut."""
+    try:
+        from puffpai.security import outside_switches
+        return outside_switches.get(door_id)
+    except Exception as exc:  # unreadable state: shut, never open
+        logger.warning("owner switch for %s unreadable (%s); door stays shut",
+                       _shown(door_id), type(exc).__name__)
+        return False
+
+
 def _resolve_flag(d: Door) -> tuple[bool | None, str, str]:
     """Resolve one door's flag. Returns ``(value_or_None, source, reason)``.
 
     The single precedence chain, used by both :func:`egress_allowed` and
     :func:`_raw_flag` so the two can never disagree:
 
+    0. ``bridge``: sealed, every door is shut.
     1. ``env`` — ``PUFFPAI_EGRESS_*``. An operator forcing a door from the
        systemd unit must not be overridable by anything the running service can
-       write, which is the whole reason this tier is first.
-    2. ``overlay`` — the owner's own switches, in :func:`overlay_path`. This is
-       the tier the API writes, because it is the only one a hardened unit
-       grants the service.
+       write, which is the whole reason this tier is first. With only
+       switched-on services allowed it may switch a door off, never on.
+    2. ``overlay`` and ``owner_switch``: the owner's own switches, in
+       :func:`overlay_path` (Settings) and in ``outside_switches.json`` ("What
+       leaves your computer"). When the two disagree, OFF wins.
     3. ``config`` — ``egress_doors`` in puffpai_config.json, then the door's
-       ``legacy_config_key``. Shipped/provisioned state.
+       ``legacy_config_key``. Shipped/provisioned state; with only
+       switched-on services allowed it may switch a door off, never on.
     4. ``default`` — ``Door.default``, which is False for every door.
 
     ``None`` for the value means no tier expressed an opinion, so the caller
@@ -1562,46 +2424,101 @@ def _resolve_flag(d: Door) -> tuple[bool | None, str, str]:
     True: a junk value, an unreadable overlay and an unreadable config are all
     "not consent".
     """
+    level = _bridge_level()
+    if level == "sealed":
+        return False, "bridge", ("the Bridge lets nothing reach the "
+                                 "internet, so every outside service stays off")
+    if _is_feed_door(d):
+        return _feed_door_flag(d, level)
+
     raw_env = os.environ.get(d.env_var)
+    env_on = False
     if raw_env is not None and raw_env.strip() != "":
         decided = _as_bool(raw_env)
         if decided is None:
             return False, "env", (f"{d.env_var}={raw_env.strip()!r} is not a "
                                   f"flag value; door stays shut")
-        return decided, "env", (f"{d.env_var}="
-                                f"{'on' if decided else 'off'} "
-                                f"(environment wins)")
+        if decided is False or level == "open":
+            return decided, "env", (f"{d.env_var}="
+                                    f"{'on' if decided else 'off'} "
+                                    f"(environment wins)")
+        env_on = True
 
     overlay = _raw_overlay()
     if overlay is None:
         return False, "overlay", (
             f"the owner overlay at {overlay_path()} will not parse; every "
             f"door stays shut until it is fixed or removed")
+    chosen: bool | None = None
     if d.config_flag in overlay:
-        decided = _as_bool(overlay.get(d.config_flag))
-        if decided is None:
+        chosen = _as_bool(overlay.get(d.config_flag))
+        if chosen is None:
             return False, "overlay", (f"overlay {d.config_flag} is not a flag "
                                       f"value; door stays shut")
-        return decided, "overlay", (f"overlay {d.config_flag}={decided} "
-                                    f"(set by the owner)")
+    owner = _owner_switch(d.id) if d.id in _BY_ID else None
+    if chosen is False:
+        return False, "overlay", (f"overlay {d.config_flag}=False "
+                                  f"(set by the owner)")
+    if owner is False:
+        return False, "owner_switch", "the owner switched it off"
+    if chosen is True:
+        return True, "overlay", (f"overlay {d.config_flag}=True "
+                                 f"(set by the owner)")
+    if owner is True:
+        return True, "owner_switch", "the owner switched it on"
 
+    held = ("the Bridge lets only a switch the owner set open a door, so "
+            "{what} cannot")
     section = _raw_config().get(CONFIG_SECTION)
     if isinstance(section, dict) and d.config_flag in section:
         decided = _as_bool(section.get(d.config_flag))
         if decided is None:
             return False, "config", (f"{CONFIG_SECTION}.{d.config_flag} is not "
                                      f"a flag value; door stays shut")
-        return decided, "config", f"{CONFIG_SECTION}.{d.config_flag}={decided}"
+        if decided is False or level == "open":
+            return decided, "config", f"{CONFIG_SECTION}.{d.config_flag}={decided}"
+        return None, "bridge", held.format(
+            what=f"{CONFIG_SECTION}.{d.config_flag} in the config file")
 
     if d.legacy_config_key:
         decided = _as_bool(_raw_config().get(d.legacy_config_key))
         if decided is not None:
-            return decided, "config", (
-                f"legacy key {d.legacy_config_key}={decided} "
-                f"(set {CONFIG_SECTION}.{d.config_flag} to move it)")
+            if decided is False or level == "open":
+                return decided, "config", (
+                    f"legacy key {d.legacy_config_key}={decided} "
+                    f"(set {CONFIG_SECTION}.{d.config_flag} to move it)")
+            return None, "bridge", held.format(
+                what=f"the legacy key {d.legacy_config_key}")
 
+    if env_on:
+        return None, "bridge", held.format(what=d.env_var)
     return None, "default", (f"{CONFIG_SECTION}.{d.config_flag} is not set; "
                              f"default is {'open' if d.default else 'shut'}")
+
+
+def _switch(d: Door) -> tuple[Optional[bool], str]:
+    """The owner's explicit setting for this door and why: ``(value, reason)``.
+
+    ``None`` means no tier gave one (the door stays shut). Same chain as
+    :func:`egress_allowed`.
+    """
+    decided, _source, reason = _resolve_flag(d)
+    return decided, reason
+
+
+def _shut_code(d: "Door | None") -> str:
+    """The outside-traffic log's word for why *d* is shut."""
+    if d is None:
+        return "not_on_list"
+    try:
+        source = "" if d.derived else _resolve_flag(d)[1]
+    except Exception:
+        source = ""
+    if source == "bridge":
+        return "bridge_up"
+    if source == "env":
+        return "turned_off_here"
+    return "switched_off"
 
 
 def flag_source(d: Door) -> str:
@@ -1667,6 +2584,49 @@ def probe_targets(door_id: str | None = None) -> tuple[tuple[str, int, str], ...
     return tuple(out)
 
 
+def probe_reachable(host: str, port: int, timeout: float = 3.0) -> bool:
+    """One TCP connect to a probe target, made here so it passes this exit.
+
+    Only a ``(host, port)`` that :func:`probe_targets` returns right now is
+    dialled: a host of a door that is open, on the probe port. Every answer
+    the name looks up to must be on the internet (an answer inside the house
+    is refused, the same rule as every other request here) and the socket
+    goes to an address that just passed. Nothing is sent on the connection;
+    it is closed at once. Anything else answers False without opening a
+    socket.
+    """
+    if not any((host, port) == (h, p) for h, p, _door in probe_targets()):
+        return False
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        return False
+    addresses = [info[4] for info in infos]
+    if not addresses:
+        return False
+    for addr in addresses:
+        try:
+            ip = ipaddress.ip_address(str(addr[0]).split("%", 1)[0])
+        except ValueError:
+            return False
+        if not ip.is_global or _internal_reason(str(ip)):
+            return False  # the same rule as every exit (NAT64, 6to4, Teredo)
+    for info in infos:
+        try:
+            sock = socket.socket(info[0], info[1], info[2])
+        except OSError:
+            continue
+        try:
+            sock.settimeout(timeout)
+            sock.connect(info[4])
+            return True
+        except OSError:
+            continue
+        finally:
+            sock.close()
+    return False
+
+
 def _derived_probe_state(d: Door) -> tuple[tuple, str]:
     """``(targets, reason)`` for the derived connectivity-probe door."""
     if _raw_flag(d) is False:
@@ -1714,8 +2674,21 @@ def require_open(door_id: str) -> Door:
                        f"config/puffpai_config.json (env {d.env_var}).")
         else:
             message = f"That needs the '{door_id}' egress door, which is off."
-        raise EgressBlocked(door_id, reason, message)
+        raise EgressBlocked(door_id, reason, message, code=_shut_code(d))
     return d  # type: ignore[return-value]
+
+
+def shut_reason(door_id: str) -> str:
+    """The one-line machine-readable reason a door is shut ('' if it is open)."""
+    allowed, reason = egress_allowed(door_id)
+    return "" if allowed else reason
+
+
+def settings_hint(door_id: str) -> str:
+    """The sentence to show a person when this door is shut."""
+    d = door(door_id)
+    return d.settings_hint if d is not None and d.settings_hint else (
+        "This bot has no outside service by that name, so nothing was sent.")
 
 
 # ── addresses: where a declared name actually points ─────────────────────────
@@ -1766,7 +2739,8 @@ def _refuse_resolved(d: Door, host: str, address_class: str,
         reason_code=REASON_RESOLVED_PRIVATE, address_class=address_class)
 
 
-def _check_addresses(d: Door, host: str, hop: bool = False) -> tuple:
+def _check_addresses(d: Door, host: str, hop: bool = False,
+                     resolver=None) -> tuple:
     """Resolve *host* and prove EVERY answer is one this door may reach.
 
     Every answer, not the first: the HTTP client picks which address it dials,
@@ -1788,7 +2762,8 @@ def _check_addresses(d: Door, host: str, hop: bool = False) -> tuple:
     refusal: "EgressBlocked | None" = None
     try:
         return netaddr.validated_addresses(
-            host, ALLOWED_PORT, posture=_posture(d), resolver=_resolver())
+            host, ALLOWED_PORT, posture=_posture(d),
+            resolver=resolver or _resolver())
     except netaddr.AddressRefused as refused:
         refusal = _refuse_resolved(d, host, refused.address_class, hop)
     except netaddr.UnparseableAddress:
@@ -1812,7 +2787,7 @@ def _check_addresses(d: Door, host: str, hop: bool = False) -> tuple:
     raise refusal
 
 
-def _pinned_session(d: Door):
+def _pinned_session(d: Door, resolver=None):
     """A ``requests`` session that can only dial an address we just validated.
 
     Separated so a test can substitute a transport, and so the failure to build
@@ -1821,14 +2796,16 @@ def _pinned_session(d: Door):
     caller that believes it is pinned when it is not is worse off than one that
     knows it is not.
     """
-    return netaddr.pinned_session(posture=_posture(d), resolver=_resolver())
+    return netaddr.pinned_session(posture=_posture(d),
+                                  resolver=resolver or _resolver())
 
 
 # ── the wrapper ──────────────────────────────────────────────────────────────
 
 def egress_request(door_id: str, method: str, url: str, *,
                    timeout: float = DEFAULT_TIMEOUT,
-                   follow_redirects: bool = True, **kwargs):
+                   follow_redirects: bool = True, resolver=None,
+                   credential: Optional["_BoundCredential"] = None, **kwargs):
     """Make one outbound request through *door_id*, or refuse without a socket.
 
     Order matters and is the security property:
@@ -1854,17 +2831,80 @@ def egress_request(door_id: str, method: str, url: str, *,
     instead of following it. The caller then makes the next hop as a new call
     through this function, so every hop still passes steps 1 to 3; it is for a
     caller with a stricter per-hop rule than the door's host set.
+
+    **A key rides only as** ``credential=``, a :class:`_BoundCredential` only
+    code inside ``puffpai.security`` can construct. With one present: https
+    only, the destination host must be one the credential is bound to (exact,
+    IDN-normalised), **zero redirects** (a 3xx is a refusal), and the header is
+    stripped from ``response.request.headers`` before the response is
+    returned. On a request carrying a credential, and on every keyed or feed
+    door, a caller-supplied ``auth=``, ``cookies=`` or credential-shaped header
+    is refused. A host a door names for pictures only gets a plain GET answered
+    by a size-capped image. :data:`RESULT_PICTURES` is reached only through
+    :func:`result_picture_get`. *resolver* replaces the address lookup for this
+    request (tests).
     """
-    d = require_open(door_id)
-    _check_url(d, url)
+    scope = kwargs.pop("picture_scope", None)
+    if str(door_id) == RESULT_PICTURES or scope is not None:
+        return _picture_request(door_id, method, url, scope, kwargs, credential,
+                                timeout=timeout, resolver=resolver)
+    known = door(door_id)
+    try:
+        if (credential is not None or str(door_id) in KEYED_DOORS
+                or _is_feed_door(known)):
+            # Authority is not a kwarg on these: a key rides only as credential=.
+            _screen_kwargs(str(door_id), kwargs)
+        cred = (_check_credential(str(door_id), credential)
+                if credential is not None else None)
+        d = require_open(door_id)
+    except EgressBlocked as blocked:
+        _LedgerTag.for_door(known, str(door_id), url).refused(blocked, url, method)
+        raise
+    if resolver is not None:
+        _check_url(d, url, resolver=resolver)
+    else:
+        _check_url(d, url)
+    origin_host = _host_of(url)
+    picture_only = origin_host in d.picture_hosts and origin_host not in d.hosts
+    if picture_only:
+        try:
+            _picture_request_ok(d, method, kwargs, credential)
+        except EgressBlocked as blocked:
+            _LedgerTag.for_door(d, d.id, url).refused(blocked, url, method)
+            raise
+        kwargs["stream"] = True
+
+    if cred is not None:
+        # _check_url already refused anything but https; restated here so the
+        # credential rule does not depend on a door rule staying as it is.
+        blocked = None
+        if urlsplit(url.strip()).scheme.lower() != "https":
+            blocked = EgressBlocked(
+                d.id, "credential requested on a non-https url",
+                "That request was refused because it was not an encrypted "
+                "connection.", code="not_encrypted")
+        elif _ascii_host(origin_host) not in cred.hosts:
+            blocked = EgressBlocked(
+                d.id, f"credential is not bound to host {origin_host!r}",
+                "That request tried to send a sign-in to an address it is not "
+                "registered for, so nothing was sent.", code="sign_in_refused")
+        if blocked is not None:
+            _LedgerTag.for_door(d, d.id, url).refused(blocked, url, method)
+            raise blocked
+        # Attached last, on a copy, so the value lives in no caller's dict.
+        kwargs["headers"] = {**(kwargs.get("headers") or {}),
+                             cred.header_name: cred._value}
 
     kwargs.pop("allow_redirects", None)  # this function owns hop policy
-    session = _pinned_session(d)  # built after the decision, never before
+    # Built after the decision. The resolver goes along only when the caller
+    # named one, so a substitute transport keeps its one-argument shape.
+    session = (_pinned_session(d, resolver=resolver) if resolver is not None
+               else _pinned_session(d))
     # A session is per request: pooled connections are keyed by host name, and
     # a reused connection is one whose address was validated at some earlier
     # time under some earlier DNS answer. No door here is high enough volume for
     # the extra handshake to matter.
-    streaming = bool(kwargs.get("stream"))
+    keep_open = False
 
     try:
         current = url
@@ -1891,27 +2931,49 @@ def egress_request(door_id: str, method: str, url: str, *,
                 host, path = _safe_parts(current)
                 _record(door_id, ok=True, detail=f"{method.upper()} {host} "
                                                  f"failed: {type(exc).__name__}",
-                        host=host, path=path, kind="request_failed")
+                        host=host, path=path, kind="request_failed",
+                        method=method)
                 raise
             if pinned_refusal is not None:
                 raise pinned_refusal
-            if follow_redirects and resp.status_code in (301, 302, 303,
-                                                         307, 308):
+            redirected = resp.status_code in (301, 302, 303, 307, 308)
+            if cred is not None:
+                _strip_credential_header(resp, cred.header_name)
+                if redirected:
+                    # Not a hop. The next target is the server's choice, and a
+                    # credential follows only where it was bound.
+                    _close_quietly(resp)
+                    host, path = _safe_parts(current)
+                    _record(door_id, ok=False,
+                            detail="authenticated request was redirected",
+                            host=host, path=path, kind="url_check",
+                            method=method, code="sign_in_refused")
+                    raise EgressBlocked(
+                        d.id, "authenticated request was redirected",
+                        "That address redirected while carrying a sign-in, so "
+                        "nothing further was sent.", code="sign_in_refused")
+            elif follow_redirects and redirected:
                 location = resp.headers.get("Location") or ""
                 # Done with this hop: release its connection now, before the
                 # next hop is checked (and possibly refused), so a streamed
                 # redirect chain leaks nothing back into the session.
-                hop_closer = getattr(resp, "close", None)
-                if callable(hop_closer):
-                    try:
-                        hop_closer()
-                    except Exception:  # pragma: no cover - transport specific
-                        pass
+                _close_quietly(resp)
                 nxt = urljoin(current, location)
                 # Re-validate before following. A redirect off the door's host
                 # set — or onto a host that resolves indoors — is refused here
                 # rather than followed and judged afterwards.
-                _check_url(d, nxt, hop=True)
+                if resolver is not None:
+                    _check_url(d, nxt, hop=True, resolver=resolver)
+                else:
+                    _check_url(d, nxt, hop=True)
+                nxt_host = _host_of(nxt)
+                if (not picture_only and nxt_host in d.picture_hosts
+                        and nxt_host not in d.hosts):
+                    # A hop onto a pictures-only host: from here, a picture or
+                    # nothing.
+                    picture_only = True
+                    _picture_request_ok(d, method, kwargs, credential)
+                    kwargs["stream"] = True
                 current = nxt
                 continue
             host, path = _safe_parts(current)
@@ -1920,19 +2982,21 @@ def egress_request(door_id: str, method: str, url: str, *,
                     host=host, path=path,
                     bytes_out=_request_bytes(resp),
                     bytes_in=_declared_length(resp),
-                    status=getattr(resp, "status_code", None))
-            if streaming:
+                    status=getattr(resp, "status_code", None),
+                    method=method)
+            if picture_only:
+                return _picture_answer(d, resp)
+            if kwargs.get("stream"):
                 # The body has not been read yet, so the session must outlive
-                # this function. Nothing in the tree streams through a door
-                # today; this exists so that the first caller who does gets a
-                # working response rather than a closed socket.
+                # this function.
+                keep_open = True
                 try:
                     resp._puffpai_egress_session = session
                 except Exception:  # pragma: no cover - transport specific
                     pass
             return resp
     finally:
-        if not streaming:
+        if not keep_open:
             closer = getattr(session, "close", None)
             if callable(closer):
                 try:
@@ -1941,11 +3005,20 @@ def egress_request(door_id: str, method: str, url: str, *,
                     pass
 
     _record(door_id, ok=False, detail="too many redirects",
-            host=_host_of(current))
+            host=_host_of(current), method=method, code="too_many_redirects")
     raise EgressBlocked(
         d.id, f"more than {MAX_REDIRECTS} redirects",
         f"{d.settings_hint or 'That request'} — the site redirected too many "
-        f"times, so nothing was fetched.")
+        f"times, so nothing was fetched.", code="too_many_redirects")
+
+
+def _close_quietly(resp) -> None:
+    closer = getattr(resp, "close", None)
+    if callable(closer):
+        try:
+            closer()
+        except Exception:  # pragma: no cover - transport specific
+            pass
 
 
 def egress_get(door_id: str, url: str, **kwargs):
@@ -1986,8 +3059,15 @@ def app_egress_request(app_id: str, index: int, method: str, url: str,
                           method, url, **kwargs)
 
 
-def app_egress_get(app_id: str, index: int, url: str, **kwargs):
-    """``GET`` through an app's declared door. See :func:`app_egress_request`."""
+def app_egress_get(app_id: str, index, url: Optional[str] = None, **kwargs):
+    """``GET`` through an app's declared door. See :func:`app_egress_request`.
+
+    Called as ``(app_id, url)`` it goes through the app's live feed door
+    (``app:<app_id>:feed``), the one outbound path for a feed.
+    """
+    if url is None:
+        return egress_request(app_door_id(str(app_id or "").strip()), "GET",
+                              index, **kwargs)
     return app_egress_request(app_id, index, "GET", url, **kwargs)
 
 
@@ -2050,10 +3130,11 @@ def _refuse(d: Door, reason: str, user_message: str, host: str = "",
     """
     _record(d.id, ok=False, detail=reason, host=host, kind=kind,
             reason_code=reason_code, address_class=address_class)
-    return EgressBlocked(d.id, reason, user_message)
+    return EgressBlocked(d.id, reason, user_message,
+                         code=_outside_code(reason, reason_code))
 
 
-def _check_url(d: Door, url: str, hop: bool = False) -> None:
+def _check_url(d: Door, url: str, hop: bool = False, resolver=None) -> None:
     """Refuse anything the door does not cover.
 
     Opens no TCP connection. It does perform a DNS lookup for a host that has
@@ -2090,7 +3171,7 @@ def _check_url(d: Door, url: str, hop: bool = False) -> None:
             d, "door has dynamic hosts and is not routed through this wrapper",
             "That request must go through the Toolsmith's own fetch path.",
             host)
-    if host not in d.hosts:
+    if host not in d.hosts and host not in d.picture_hosts:
         raise _refuse(
             d,
             f"host {host!r} is not declared by door {d.id!r} "
@@ -2116,7 +3197,7 @@ def _check_url(d: Door, url: str, hop: bool = False) -> None:
     # LAST, because it is the only check here that costs a DNS query, and
     # because a host that failed any check above must not be looked up at all —
     # a lookup for an attacker-chosen name is itself a signal leaving the house.
-    _check_addresses(d, host, hop=hop)
+    _check_addresses(d, host, hop=hop, resolver=resolver)
 
 
 # ── the ledger: what actually went out, and when ─────────────────────────────
@@ -2212,7 +3293,8 @@ def _record(door_id: str, ok: bool, detail: str = "", *,
             host: str = "", path: str = "", bytes_out: int | None = None,
             bytes_in: int | None = None, status: int | None = None,
             kind: str = "request", reason_code: str = "",
-            address_class: str = "") -> None:
+            address_class: str = "", method: str = "GET",
+            code: str = "") -> None:
     """Record one door decision, in the snapshot and in the durable ledger.
 
     Never raises. Everything written here is content-free by construction: a
@@ -2287,6 +3369,53 @@ def _record(door_id: str, ok: bool, detail: str = "", *,
             _LAST_REFUSED[door_id] = entry
         _write_snapshot()
 
+    _outside_line(door_id, ok, kind, host=host, path=path, method=method,
+                  status=status, bytes_in=bytes_in, bytes_out=bytes_out,
+                  detail=entry["detail"], reason_code=reason_code, code=code)
+
+
+def _outside_line(door_id: str, ok: bool, kind: str, *, host: str, path: str,
+                  method: str, status: int | None, bytes_in: int | None,
+                  bytes_out: int | None, detail: str, reason_code: str,
+                  code: str) -> None:
+    """One line in the outside-traffic log for a door decision. Never raises.
+
+    The decision ledger above is the household's audit trail; this is the
+    plain-words list on "What leaves your computer". A refusal reached before
+    any address was known (a shut switch checked by a call site) writes none.
+    """
+    if kind == "door_check":
+        return
+    try:
+        from puffpai.security import egress_ledger
+        key = str(door_id or "").strip().lower()
+        if ok and kind == "request_failed":
+            outcome, word = "failed", "no_answer"
+        elif ok:
+            outcome, word = "done", ""
+        else:
+            outcome = "refused"
+            word = code or _outside_code(detail, reason_code)
+        egress_ledger.record(
+            _ledger_service(key), host=egress_ledger.safe_host(host),
+            outcome=outcome, method=str(method or "GET"),
+            path=(path if key in _PATH_KEPT else ""), code=word,
+            status=status, bytes_in=bytes_in, bytes_out=bytes_out,
+            what=_WHAT_BY_DOOR.get(key, "card_data" if _is_feed_door(key)
+                                   else "request"))
+    except Exception as exc:  # the log must never break a request
+        logger.debug("outside-traffic line skipped for %s: %s", door_id,
+                     type(exc).__name__)
+
+
+def _outside_code(detail: str, reason_code: str = "") -> str:
+    """The outside-traffic log's word for a refusal recorded here."""
+    if reason_code == REASON_RESOLVED_PRIVATE:
+        return "inside_address"
+    if reason_code == REASON_UNRESOLVABLE:
+        return "cannot_look_up"
+    return _code_from_text(detail)
+
 
 def record_external(door_id: str, ok: bool, *, detail: str = "",
                     host: str = "", path: str = "",
@@ -2340,7 +3469,13 @@ def door_states() -> dict:
     walk of the same registry is a second place for the two answers to
     disagree about what is open.
     """
-    return {"doors": door_status()}
+    posture = run_posture()
+    return {
+        "doors": door_status(),
+        "posture": posture["run_egress"],
+        "posture_source": posture["source"],
+        "open_posture": OPEN_POSTURE,
+    }
 
 
 def door_status() -> list[dict]:
@@ -2367,7 +3502,10 @@ def door_status() -> list[dict]:
             # can open and a shut door the unit file forces shut look identical
             # without it, and the second one makes a UI switch a lie.
             "source": flag_source(d),
-            "writable": ((d.enforcement in ("registry",)
+            # The same rule as egress_admin.toggleable: a door with a flag of
+            # its own that the registry reads (result_pictures goes through
+            # egress_request too, so its switch is real).
+            "writable": ((d.enforcement in ("registry", "derived")
                           or d.id in _FLAG_HONOURED_EXTERNAL)
                          and not d.derived and not _is_inert(d)),
             # Which app declared this door, or None for a built-in one. The
@@ -2396,6 +3534,2374 @@ def door_status() -> list[dict]:
         }
         out.append(row)
     return out
+
+# ===========================================================================
+# The build engine's outside paths
+# ===========================================================================
+
+# ── URL rules for a dynamic-host door ──────────────────────────────────────────
+
+def _port_of(url: str) -> int:
+    """The port a URL will connect on. Every door here is https."""
+    try:
+        return urlsplit(str(url)).port or 443
+    except ValueError:
+        return 443
+
+
+def _internal_reason(addr_text: str) -> str:
+    """Why this address is internal, or '' if it is globally routable.
+
+    Judged with :mod:`ipaddress` on the address itself rather than against a
+    list of strings, because a blocklist of ``127.0.0.1``/``10.*`` never covers
+    ``0.0.0.0``, ``[::1]``, ``::ffff:127.0.0.1`` or the next range someone
+    invents. ``is_global`` is the positive test; the named properties exist so
+    the refusal can explain itself.
+    """
+    try:
+        addr = ipaddress.ip_address(str(addr_text).split("%", 1)[0])
+    except ValueError:
+        return ""
+    candidates = [addr]
+    mapped = getattr(addr, "ipv4_mapped", None)
+    if mapped is not None:
+        candidates.append(mapped)  # ::ffff:127.0.0.1 is loopback in a costume
+    for attribute, description in (
+            ("is_loopback", "is loopback"),
+            ("is_link_local", "is link-local (the cloud-metadata range)"),
+            ("is_multicast", "is multicast"),
+            ("is_unspecified", "is unspecified"),
+            ("is_private", "is a private address on this network"),
+            ("is_reserved", "is reserved")):
+        if any(getattr(c, attribute, False) for c in candidates):
+            return description
+    if not all(c.is_global for c in candidates):
+        return "is not globally routable"
+    # The pinned-connection policy also unwraps 6to4, Teredo and NAT64 forms;
+    # one policy for every exit.
+    from puffpai.security.pinned_net import address_refusal
+    return address_refusal(str(addr))
+
+
+def internal_address_reason(addr_text: str) -> str:
+    """Public name for :func:`_internal_reason`. '' means globally routable.
+
+    Exported so a caller that does its own pre-flight refusal (the Toolsmith's
+    ``web_fetch``, which must reject a literal or a resolved answer *before*
+    this module is asked to open anything) judges an address by exactly the
+    same policy the doors do, rather than growing a second, drifting copy.
+    A non-address string returns '', it is a hostname, not an address, and
+    naming it here is a different check.
+    """
+    return _internal_reason(addr_text)
+
+
+def resolve_addresses(host: str, port: int = 443) -> list[str]:
+    """Every address *host* answers with. Public seam for pre-flight checks."""
+    return _default_resolver(host, port)
+
+
+def _is_private_host(host: str) -> bool:
+    """True for a *literal* address that is not globally routable."""
+    return bool(_internal_reason(host))
+
+
+def _default_resolver(host: str, port: int) -> list[str]:
+    """Every address *host* answers with. Injected in tests; never called there."""
+    infos = socket.getaddrinfo(host, port or 443, type=socket.SOCK_STREAM)
+    # sockaddr[0] is the address for both AF_INET and AF_INET6; str() is for
+    # the type checker, which sees the whole sockaddr union.
+    return [str(info[4][0]) for info in infos]
+
+
+def _check_resolved_public(d: Door, host: str, port: int,
+                           resolver=None) -> list[str]:
+    """Resolve *host* and refuse unless EVERY answer is globally routable.
+
+    A dynamic-host door takes an address the owner supplied, so it cannot be
+    held to a fixed host allowlist. What it can be held to is where that name
+    actually points. Checking the *name* alone is not a control: ``feeds.evil``
+    can answer ``169.254.169.254``, and a widget URL is reachable by anything
+    that can call ``dashboard_add_widget``.
+
+    Every answer must pass, not merely the first: a name that resolves to one
+    public and one private address is refused, because the stack picks which
+    one the socket gets. Returns the vetted answers: :func:`egress_request`
+    PINS the connection to the first of them (:mod:`pinned_net`), so the name
+    is never looked up a second time between this check and the connect --
+    that second lookup was the DNS-rebinding window.
+    """
+    try:
+        addresses = (resolver or _default_resolver)(host, port)
+    except OSError as exc:
+        raise EgressBlocked(
+            d.id, f"cannot resolve {host!r} ({type(exc).__name__})",
+            f"That address could not be looked up, so nothing was sent.")
+    if not addresses:
+        raise EgressBlocked(
+            d.id, f"{host!r} resolves to nothing",
+            f"That address could not be looked up, so nothing was sent.")
+    from puffpai.security import pinned_net
+    if pinned_net.filter_block(addresses, host):
+        raise EgressBlocked(
+            d.id, f"{host} was blocked by the network's filter",
+            "That website is blocked by your network's filter, so nothing "
+            "was sent.", code="network_filter")
+    for addr in addresses:
+        reason = _internal_reason(addr)
+        if reason:
+            raise EgressBlocked(
+                d.id, f"{host} resolves to {addr}, which {reason}",
+                f"That request tried to reach {host}, which points at an "
+                f"address on this machine or this network, so nothing was "
+                f"sent.", code="inside_address")
+    return [str(a) for a in addresses]
+
+
+def _verify_peer(d: Door, response, host: str) -> None:
+    """Belt and braces: re-check the peer when the transport exposes it.
+
+    The control that closes DNS rebinding is the PIN (:mod:`pinned_net`): the
+    socket is opened to the address :func:`_check_resolved_public` vetted, and
+    the pinned connection itself compares the socket's real peer with that
+    address before a byte is sent. With urllib3 2.6 ``response.raw`` does not
+    expose the socket, so this after-the-fact check usually has nothing to
+    look at and returns; it stays for transports (and tests) that do.
+    """
+    peer = None
+    try:
+        peer = response.raw._connection.sock.getpeername()[0]
+    except Exception:
+        peer = getattr(response, "peer_address", None)
+    if peer is None:
+        return
+    reason = _internal_reason(str(peer))
+    if reason:
+        # The bytes are already on the wire; the body is never handed back.
+        raise EgressBlocked(
+            d.id, f"connection to {host} landed on {peer}, which {reason}",
+            f"That request reached an address on this machine or this "
+            f"network, so the reply was discarded.")
+
+
+def _dynamic_check_url(d: Door, url: Any, hop_host: str = "") -> str:
+    """Refuse anything the door does not cover. Opens nothing. Returns the host.
+
+    ``hop_host`` is set when re-validating a redirect target: for a dynamic
+    door the hop must stay on the host the owner originally named.
+    """
+    if not isinstance(url, str) or not url.strip():
+        raise EgressBlocked(d.id, "empty url",
+                            "That request had no address to fetch.")
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        raise EgressBlocked(d.id, "unparseable url",
+                            "That web address could not be read.")
+
+    host = _clean_host(parts.hostname or "")
+
+    if parts.scheme.lower() != "https":
+        # Every door here is an https endpoint. Refusing http outright means a
+        # downgrade cannot be introduced by a redirect or a hand-edited config.
+        raise EgressBlocked(
+            d.id, f"scheme {parts.scheme!r} is not https",
+            "That request was refused because it was not an encrypted "
+            "connection.")
+    if parts.username or parts.password:
+        # The reason string must not echo the credentials back into a log.
+        raise EgressBlocked(d.id, "url carries credentials",
+                            "That web address was refused.")
+    if not host:
+        raise EgressBlocked(d.id, "url has no host",
+                            "That web address was refused.")
+    if is_app_door(d) and _port_of(url) != 443:
+        # An app's door was declared by a manifest, not reviewed by a human,
+        # so it gets the default https port and nothing else.
+        raise EgressBlocked(
+            d.id, f"port {_port_of(url)} is not 443",
+            "That request was refused because it used an unusual port.")
+
+    if d.dynamic_hosts:
+        if _is_private_host(host):
+            raise EgressBlocked(
+                d.id, f"host {host!r} is a private or loopback address",
+                f"That request tried to reach {host}, which is an address on "
+                f"this machine or this network, so nothing was sent.")
+        if hop_host and host != hop_host:
+            raise EgressBlocked(
+                d.id, f"redirect to {host!r} leaves the requested host "
+                      f"{hop_host!r}",
+                f"That feed redirected to {host}, which is not where you "
+                f"pointed it, so nothing was fetched.")
+        return host
+
+    if host not in d.hosts and host not in d.picture_hosts:
+        raise EgressBlocked(
+            d.id,
+            f"host {host!r} is not declared by door {d.id!r}; declared: "
+            f"{', '.join(d.hosts)}",
+            f"That request tried to reach {host}, which is not one of the "
+            f"addresses the {d.id!r} service covers, so nothing was sent.")
+    return host
+
+
+# ── credentials ──────────────────────────────────────────────────────────────
+#
+# A door says *where* a request may go. Until now it said nothing about *what
+# authority rides along*: ``egress_request`` forwarded ``**kwargs`` straight to
+# ``requests.request``, so any in-process caller could attach an
+# ``Authorization`` header and the door layer would carry it through redirect
+# hops without ever knowing a credential was on the wire. The rules below make
+# that impossible by default and give a credential exactly one way in.
+
+#: Header names that always carry authority, refused from callers outright.
+_CREDENTIAL_HEADERS = frozenset({
+    "authorization", "proxy-authorization", "cookie", "set-cookie",
+    "x-api-key", "x-auth-token",
+})
+
+#: Substrings that make a header name credential-shaped. Deliberately broad:
+#: a false refusal on ``X-Monkey-Id`` costs one explicit exception here, a
+#: false accept on ``X-Session-Key`` costs a leaked credential.
+_CREDENTIAL_SUBSTRINGS = ("auth", "token", "secret", "key", "cookie")
+
+_SECURITY_PACKAGE = __name__.rsplit(".", 1)[0]  # "puffpai.security"
+
+#: The mark :meth:`_BoundCredential.__init__` puts on every credential it
+#: builds. An object forged with ``object.__new__`` has no mark, so presenting
+#: one to :func:`egress_request` is refused even though its type matches.
+#: A mark on the object, NOT a module-wide list of issued credentials: such a
+#: list would let any code in the process walk it and read a key while its
+#: request is in flight.
+_ISSUE_MARK = object()
+
+
+def _is_credential_header(name: Any) -> bool:
+    """True when *name* looks like it carries authority. Errs toward True."""
+    if not isinstance(name, str):
+        return True  # cannot be screened, so it does not go on the wire
+    low = name.strip().lower()
+    if low in _CREDENTIAL_HEADERS:
+        return True
+    return any(part in low for part in _CREDENTIAL_SUBSTRINGS)
+
+
+def _ascii_host(host: Any) -> str:
+    """Host normalised for comparison: lower-case, no trailing dot, IDN→ASCII.
+
+    Both sides of the bound-host check go through this, so a credential bound
+    to ``example.com`` is not handed to ``exämple.com`` and vice versa.
+    """
+    cleaned = _clean_host(host)
+    if not cleaned:
+        return ""
+    try:
+        return cleaned.encode("idna").decode("ascii").lower()
+    except (UnicodeError, ValueError):
+        # Not an IDN-encodable name (literal IP, underscore label, over-long
+        # label). Comparison then happens on the cleaned form, which is the
+        # same transformation applied to the bound hosts.
+        return cleaned
+
+
+class _BoundCredential:
+    """One header's worth of authority, bound to the hosts it may reach.
+
+    **This class is the single sanctioned way a credential reaches the wire.**
+    The key broker (:mod:`puffpai.security.keys`) mints these through
+    :func:`_bind_credential`, and the rules in :func:`egress_request` govern
+    every one:
+
+    * TLS only, and the destination host must be one of ``hosts``, exact
+      match, IDN-normalised to ASCII, never a wildcard or a suffix match;
+    * zero redirects: any 3xx is a refusal, not a hop, so the header is never
+      offered to a target the server chose;
+    * the header is attached immediately before the call and stripped from
+      ``response.request.headers`` before the response is handed back;
+    * the value never appears in a log line, a refusal message or a repr.
+
+    It cannot be constructed from outside ``puffpai.security``: ``__init__``
+    checks the calling module. That is a guard against accident and against an
+    LLM-driven or plugin call site talking itself into attaching a token, not
+    a sandbox. Any code already running in this process can monkeypatch this
+    module; the boundary this defends is between the security package and the
+    rest of the application, not between the application and an attacker with
+    code execution.
+    """
+
+    __slots__ = ("_header", "_value", "_hosts", "_mark", "__weakref__")
+
+    def __init__(self, header_name: str, value: str,
+                 hosts: "tuple[str, ...] | list[str] | set[str]"):
+        caller = sys._getframe(1).f_globals.get("__name__", "")
+        if not (caller == _SECURITY_PACKAGE
+                or caller.startswith(_SECURITY_PACKAGE + ".")):
+            raise PermissionError(
+                "_BoundCredential may only be constructed inside "
+                f"{_SECURITY_PACKAGE!r}; {caller!r} must ask the security "
+                "package for a bound credential instead.")
+
+        if not isinstance(header_name, str) or not header_name.strip():
+            raise ValueError("credential header name must be a non-empty string")
+        header = header_name.strip()
+        if not header.isascii() or any(c in header for c in "\r\n\t :"):
+            # A header name carrying a separator is header injection.
+            raise ValueError("credential header name is not a valid header name")
+
+        if not isinstance(value, str) or not value:
+            # No value in the message: this exception may be logged.
+            raise ValueError("credential value must be a non-empty string")
+        if "\r" in value or "\n" in value:
+            raise ValueError("credential value contains a line break")
+
+        if isinstance(hosts, str) or not hosts:
+            raise ValueError("credential hosts must be a non-empty collection")
+        bound = set()
+        for h in hosts:
+            if not isinstance(h, str) or not h.strip():
+                raise ValueError("credential host entries must be non-empty strings")
+            if "*" in h:
+                raise ValueError("credential hosts are exact; no wildcards")
+            bound.add(_ascii_host(h))
+        if "" in bound:
+            raise ValueError("credential host entries must be non-empty strings")
+
+        self._header = header
+        self._value = value
+        self._hosts = frozenset(bound)
+        self._mark = _ISSUE_MARK
+
+    @property
+    def header_name(self) -> str:
+        return self._header
+
+    @property
+    def hosts(self) -> frozenset:
+        return self._hosts
+
+    def __repr__(self) -> str:  # never the value
+        return (f"<_BoundCredential header={self._header!r} "
+                f"hosts={sorted(self._hosts)!r}>")
+
+    __str__ = __repr__
+
+
+#: Where a bound credential may ride. Header only: a
+#: key in a query string is copied into every log, proxy and exception text
+#: that ever sees the address, so v1 refuses it outright.
+CREDENTIAL_PLACEMENTS = ("header",)
+
+
+def _bind_credential(header_name: str, value: str, hosts, *,
+                     placement: str = "header") -> _BoundCredential:
+    """Module-private factory for the credential broker
+    (:mod:`puffpai.security.keys`).
+
+    Not exported, and -- like the constructor -- refused to any caller outside
+    ``puffpai.security``: without this check the factory itself was a way
+    round the constructor's guard, because the constructor only saw this
+    module as its caller. *placement* must be ``"header"``; anything else
+    (``"query"``) raises before a credential exists.
+    """
+    caller = sys._getframe(1).f_globals.get("__name__", "")
+    if not (caller == _SECURITY_PACKAGE
+            or caller.startswith(_SECURITY_PACKAGE + ".")):
+        raise PermissionError(
+            "_bind_credential may only be called inside "
+            f"{_SECURITY_PACKAGE!r}; {caller!r} must use the key broker "
+            "(puffpai.security.keys) instead.")
+    if placement not in CREDENTIAL_PLACEMENTS:
+        # No value in the message: this exception may be logged.
+        raise ValueError("a key may only travel in a request header")
+    return _BoundCredential(header_name, value, hosts)
+
+
+def _screen_kwargs(door_id: str, kwargs: dict) -> None:
+    """Refuse caller-supplied authority before anything touches the network.
+
+    Refusal messages name the *header*, never its value, because they are
+    written to a log and shown to a person.
+    """
+    if "auth" in kwargs:
+        raise EgressBlocked(
+            door_id, "caller supplied an auth= argument",
+            "That request tried to attach a sign-in to an outbound call, "
+            "which this connection does not carry.")
+    if kwargs.get("cookies"):
+        raise EgressBlocked(
+            door_id, "caller supplied cookies=",
+            "That request tried to attach a sign-in to an outbound call, "
+            "which this connection does not carry.")
+
+    headers = kwargs.get("headers")
+    if headers is None:
+        return
+    if not isinstance(headers, Mapping):
+        # Unscreenable, so it does not go out. requests accepts a sequence of
+        # pairs; a caller that needs that can pass a dict.
+        raise EgressBlocked(
+            door_id, f"headers must be a mapping, got {type(headers).__name__}",
+            "That request was refused because its headers could not be "
+            "checked.")
+    for name in headers:
+        if _is_credential_header(name):
+            shown = name if isinstance(name, str) else type(name).__name__
+            raise EgressBlocked(
+                door_id, f"caller supplied credential-bearing header {shown!r}",
+                "That request tried to attach a sign-in to an outbound call, "
+                "which this connection does not carry.")
+
+
+def _check_credential(door_id: str, credential: Any) -> _BoundCredential:
+    """Refuse anything that is not a credential this package issued."""
+    if type(credential) is not _BoundCredential \
+            or getattr(credential, "_mark", None) is not _ISSUE_MARK:
+        raise EgressBlocked(
+            door_id, "credential was not issued by the security package",
+            "That request tried to attach a sign-in that this system did not "
+            "issue, so nothing was sent.")
+    return credential
+
+
+def _strip_credential_header(resp: Any, header_name: str) -> None:
+    """Remove the credential from the response's record of the request."""
+    try:
+        headers = getattr(getattr(resp, "request", None), "headers", None)
+        if headers is None:
+            return
+        for key in [k for k in headers
+                    if isinstance(k, str) and k.lower() == header_name.lower()]:
+            del headers[key]
+    except Exception:  # a stub transport with an odd request object
+        logger.debug("could not strip credential header from response.request")
+
+
+# ── a sign-up key on one source_fetch.fetch_small request ────────────────────
+#
+# ``source_fetch.fetch_small(..., key_id="github")`` may carry a sign-up key.
+# The WHOLE keyed request happens here, inside the security package:
+# :func:`keyed_first_hop` checks the owner's switch for the service, reads the
+# key, binds it with :func:`_bind_credential` to the hosts the curated row,
+# the key index AND the stored record all name (exact, IDN-normalised), opens
+# its own PINNED connection (never a caller's transport), sends, reads at most
+# the size the caller allows, removes any echo of the key from the body and
+# the answer headers, writes the one outside-traffic line for the hop (every
+# outcome, refusals included) and hands back a plain answer object that holds
+# no credential.
+#
+# Where the key lives while a request is in flight: ONLY in the
+# local variables of the one :func:`keyed_first_hop` call and the request
+# objects it builds. No module-level table, list or cache in this package
+# holds the key, its header value, the words removed from the answer, or a
+# bound credential (the issued-credential list became a mark on the object
+# for the same reason). The helpers that touch the value
+# (:func:`_fetch_key_credential`, :func:`_credential_header_for`) refuse any
+# caller outside the package, the same guard :func:`_bind_credential` has.
+#
+# Other rules, as ``keys.keyed_get``: the curated row must exist, a key that
+# was rejected or is over its caps is not used, a card-backed key never works
+# with the vault locked, the key rides ONLY the first hop (a redirect never
+# gets it), and one use is counted only when a request is about to go out.
+# The header value follows the row's ``placement.value_format`` (default
+# ``{key}``; GitHub: ``Bearer {key}``).
+#
+# Residual, stated plainly:
+# * The switch check and the log line are enforced HERE, not by trusting the
+#   caller, so they hold even for a caller that gets past the caller check
+#   below (that check reads the calling frame, which code running ``exec``
+#   with made-up globals can imitate).
+# * The service name is the caller's choice, as it is for every fetch_small
+#   call: a key is bound to hosts, not to one service. A caller that names a
+#   service whose switch is on can spend the key's per-minute and monthly
+#   allowance against its bound hosts, and the log shows that service.
+# * Python gives code in the same process ways to read another call's local
+#   variables (``gc``, ``sys._current_frames``, ``ctypes``). Those, and
+#   monkeypatching this module, are out of scope, as for every guard here:
+#   the boundary kept is that no ordinary name or function outside
+#   ``puffpai.security`` hands out the key.
+
+_FETCH_KEY_DOOR = "fetch_small"
+_MAX_VALUE_FORMAT = 64
+_KEYED_MAX_READ = 64 * 1024 * 1024
+#: The functions outside this package that may send a keyed hop:
+#: (module, qualified name) of the closure ``fetch_small`` builds for one
+#: request, and the one ``get_archive`` builds for one download (a
+#: private project of the owner's, through GitHub's archive address). Not the module
+#: as a whole: a module-level helper there would be a way round the switch
+#: check.
+_KEYED_HOP_CALLER = ("puffpai.source_fetch", "fetch_small.<locals>._send_keyed")
+_KEYED_HOP_CALLERS = frozenset({
+    _KEYED_HOP_CALLER,
+    ("puffpai.source_fetch", "get_archive.<locals>._send_keyed"),
+})
+#: The ledger id a keyed hop is logged under when its service is not known
+#: (the caller's own text never becomes a service id).
+_KEYED_UNKNOWN_SERVICE = "fetch_small"
+_KEYED_REDIRECTS = (301, 302, 303, 307, 308)
+#: Shortest tail of a key that is still removed when a body is cut mid-key.
+_MIN_ECHO_TAIL = 6
+
+
+def _require_security_caller(what: str) -> None:
+    """Refuse when the function that called *what* is outside the package."""
+    caller = sys._getframe(2).f_globals.get("__name__", "")
+    if not (caller == _SECURITY_PACKAGE
+            or caller.startswith(_SECURITY_PACKAGE + ".")):
+        raise PermissionError(
+            f"{what} may only be called inside {_SECURITY_PACKAGE!r}; "
+            f"{caller!r} must use source_fetch.fetch_small(key_id=...) instead.")
+
+
+def _value_format_ok(fmt: Any) -> bool:
+    if not isinstance(fmt, str) or len(fmt) > _MAX_VALUE_FORMAT:
+        return False
+    if fmt.count("{key}") != 1:
+        return False
+    rest = fmt.replace("{key}", "")
+    return rest.isascii() and all(32 <= ord(ch) < 127 for ch in rest) \
+        and "{" not in rest and "}" not in rest
+
+
+def fetch_key_hosts(key_id: Any) -> Optional[frozenset]:
+    """The hosts the curated key row *key_id* may go to, or None (no such
+    usable row). Reads no vault and sends nothing."""
+    from puffpai.security import keys
+    try:
+        row = keys.spec(key_id)
+    except Exception:
+        return None
+    if not isinstance(row, dict):
+        return None
+    hosts = frozenset(_ascii_host(h) for h in (row.get("hosts") or [])
+                      if isinstance(h, str))
+    return frozenset(h for h in hosts if h) or None
+
+
+def _fetch_key_credential(key_id: Any, host: Any, *, caller: str,
+                          only_target: bool = False
+                          ) -> "tuple[Optional[_BoundCredential], str, tuple[bytes, ...]]":
+    """``(credential, "ok", echoes)`` for one keyed request to *host*, else
+    ``(None, "key_host" | "key_unavailable", ())``. Counts one use when
+    issued. *echoes* are the byte strings to remove from the answer (the key
+    and its header value); the caller keeps them in a local variable only.
+
+    Package-private: refused (``PermissionError``) to any caller outside
+    ``puffpai.security``. With *only_target* the credential is bound to
+    *host* alone (a browser app's key: exactly the host it was asked for).
+    """
+    _require_security_caller("_fetch_key_credential")
+    from puffpai.security import keys
+    sid = str(key_id or "")
+    target = _ascii_host(host)
+    try:
+        row = keys.spec(sid)
+    except Exception:
+        row = None
+    if not isinstance(row, dict) or not target:
+        return None, "key_unavailable", ()
+    row_hosts = {_ascii_host(h) for h in (row.get("hosts") or [])
+                 if isinstance(h, str)}
+    if target not in row_hosts:
+        keys._audit("credential_use", caller, "refused", f"{sid} {target} host")  # noqa: SLF001
+        return None, "key_host", ()
+    placement = row.get("placement") or {}
+    fmt = placement.get("value_format", "{key}")
+    if not _value_format_ok(fmt) or placement.get("in") != "header":
+        return None, "key_unavailable", ()
+    try:
+        entry = keys._read_index().get(sid)  # noqa: SLF001 - same package
+    except Exception:
+        entry = None
+    if not isinstance(entry, dict) or entry.get("rejected_at"):
+        return None, "key_unavailable", ()
+    entry_hosts = {_ascii_host(h) for h in (entry.get("hosts") or [])
+                   if isinstance(h, str)}
+    if target not in entry_hosts:
+        keys._audit("credential_use", caller, "refused", f"{sid} {target} host")  # noqa: SLF001
+        return None, "key_host", ()
+    cap = row.get("monthly_cap")
+    if cap is not None:
+        used = keys.uses_this_month(sid)
+        if used is None or used >= cap:
+            return None, "key_unavailable", ()
+    vault = keys._vault(None)  # noqa: SLF001
+    is_open = keys._is_open(vault)  # noqa: SLF001
+    if not is_open and (row.get("card_required")
+                        or entry.get("card_required") is not False
+                        or not entry.get("background")
+                        or row.get("vault_only")):
+        keys._audit("credential_use", caller, "refused", f"{sid} {target} locked")  # noqa: SLF001
+        return None, "key_unavailable", ()
+    record = keys._record_for(vault, sid)  # noqa: SLF001
+    raw = None
+    try:
+        if record is None or (record.get("card_required") is True and not is_open):
+            return None, "key_unavailable", ()
+        record_hosts = {_ascii_host(h) for h in (record.get("hosts") or [])
+                        if isinstance(h, str)}
+        if target not in record_hosts:
+            keys._audit("credential_use", caller, "refused", f"{sid} {target} host")  # noqa: SLF001
+            return None, "key_host", ()
+        if not keys._per_minute_ok(sid, row):  # noqa: SLF001
+            return None, "key_unavailable", ()
+        bound = sorted(row_hosts & entry_hosts & record_hosts)
+        if only_target:
+            bound = [target] if target in bound else []
+        if not bound:
+            return None, "key_host", ()
+        raw = record.get("value")
+        if not isinstance(raw, str) or not raw:
+            return None, "key_unavailable", ()
+        try:
+            cred = _bind_credential(str(placement.get("name") or ""),
+                                    fmt.replace("{key}", raw), bound)
+        except (ValueError, TypeError):
+            return None, "key_unavailable", ()
+        keys._count_use(sid)  # noqa: SLF001 - counted before sending
+        echoes = tuple({raw.encode("utf-8"),
+                        fmt.replace("{key}", raw).encode("utf-8")})
+        keys._audit("credential_use", caller, "issued", f"{sid} {target}")  # noqa: SLF001
+        return cred, "ok", echoes
+    finally:
+        record = None
+        raw = None
+
+
+def _credential_header_for(credential: Any, url: Any) -> Optional[tuple[str, str]]:
+    """``(header, value)`` to attach for *url*, or None when *url* is not a
+    plain https address on one of the credential's own hosts. Raises
+    :class:`EgressBlocked` for a credential this package did not issue.
+
+    Package-private: refused (``PermissionError``) to any caller outside
+    ``puffpai.security``.
+    """
+    _require_security_caller("_credential_header_for")
+    cred = _check_credential(_FETCH_KEY_DOOR, credential)
+    try:
+        parts = urlsplit(str(url))
+        port = parts.port
+    except ValueError:
+        return None
+    if (parts.scheme or "").lower() != "https" or port not in (None, 443) \
+            or parts.username is not None or parts.password is not None \
+            or "@" in (parts.netloc or ""):
+        return None
+    if _ascii_host(parts.hostname or "") not in cred.hosts:
+        return None
+    return cred.header_name, cred._value  # noqa: SLF001 - the one use
+
+
+def _credential_scrub(echoes: "tuple[bytes, ...]", data: bytes) -> bytes:
+    """*data* with every one of *echoes* replaced, including one cut short at
+    the very end of *data*. Returns bytes only."""
+    if not isinstance(data, (bytes, bytearray)):
+        return data
+    out = bytes(data)
+    for needle in echoes or ():
+        if not needle:
+            continue
+        if needle in out:
+            out = out.replace(needle, b"[removed]")
+        # A body read up to a size limit can end part-way through the key.
+        for k in range(len(needle) - 1, _MIN_ECHO_TAIL - 1, -1):
+            if out.endswith(needle[:k]):
+                out = out[:-k] + b"[removed]"
+                break
+    return out
+
+
+def _fetch_key_answered(key_id: Any, host: Any, status: Any, *, caller: str) -> None:
+    """After a keyed answer: a status the row lists as "rejected" stops the key."""
+    from puffpai.security import keys
+    sid = str(key_id or "")
+    row = keys.spec(sid)
+    if not isinstance(row, dict):
+        return
+    target = _ascii_host(host)
+    try:
+        code = int(status)
+    except (TypeError, ValueError):
+        code = 0
+    rejected = ((row.get("check") or {}).get("rejected") or [])
+    if code in rejected:
+        keys._mark_rejected(sid)  # noqa: SLF001
+        keys._audit("credential_use", caller, "rejected", f"{sid} {target} {code // 100}xx")  # noqa: SLF001
+    else:
+        keys._audit("credential_use", caller, "done", f"{sid} {target} {code // 100}xx")  # noqa: SLF001
+
+
+class KeyedAnswer:
+    """What :func:`keyed_first_hop` hands back: a status, the answer headers
+    and at most the bytes the caller allowed, every echo of the key removed.
+    It holds no credential. ``raw_length`` is how many bytes came off the
+    wire before the echo was removed (for the caller's size rule)."""
+
+    __slots__ = ("status", "headers", "raw_length", "_body")
+
+    def __init__(self, status: int, headers: dict, body: bytes, raw_length: int):
+        self.status = status
+        self.headers = headers
+        self.raw_length = raw_length
+        self._body = body
+
+    def read(self, n: int = -1) -> bytes:
+        if n is None or n < 0:
+            out, self._body = self._body, b""
+        else:
+            out, self._body = self._body[:n], self._body[n:]
+        return out
+
+    def close(self) -> None:
+        self._body = b""
+
+
+def _keyed_wire(url: str, headers: dict, timeout: float) -> Any:
+    """The one network call for a keyed request: pinned (every address the
+    name resolves to must be public, and the socket goes to the address that
+    was checked while TLS checks the name), no redirects, no proxy, no
+    cookies. Never a caller-supplied transport."""
+    import urllib.error
+    import urllib.request
+    from puffpai.security import pinned_net
+
+    class _NoFollow(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, hdrs, newurl):
+            return None
+
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    opener = pinned_net.urllib_opener(pinned_net.Pin(), _NoFollow)
+    try:
+        return opener.open(request, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        return exc
+
+
+def _keyed_url_ok(url: Any) -> bool:
+    """Printable ASCII with no space (as ``source_fetch.url_chars_ok``): the
+    HTTP library raises on anything else, and CR/LF could split a request."""
+    return isinstance(url, str) and bool(url) and url.isascii() \
+        and all(32 < ord(ch) < 127 for ch in url)
+
+
+def _pin_refused_code(exc: BaseException) -> str:
+    """The pinned connection's refusal word inside *exc*, or ''."""
+    from puffpai.security.egress_ledger import REASON_CODES
+    from puffpai.security.pinned_net import PinRefused
+    for candidate in (exc, getattr(exc, "reason", None), exc.__cause__,
+                      exc.__context__):
+        if isinstance(candidate, PinRefused):
+            code = getattr(candidate, "code", "")
+            return code if code in REASON_CODES and code else "inside_address"
+    return ""
+
+
+def keyed_first_hop(key_id: Any, url: str, headers: Mapping, *, service: str,
+                    max_bytes: int, allow_truncated: bool = False,
+                    timeout: float) -> "tuple[Optional[KeyedAnswer], str]":
+    """Send ONE GET to *url* carrying the sign-up key *key_id*.
+
+    Returns ``(answer, "ok")`` or ``(None, code)`` with *code* one word from
+    ``egress_ledger.REASON_CODES`` (``switched_off``, ``not_allowed``,
+    ``sign_in_refused``, ``key_host``, ``key_unavailable``,
+    ``inside_address``, ``no_answer``, ``bad_answer``, ``too_big``).
+
+    Checked and written HERE, whoever the caller is: the owner's switch for
+    *service* (a known service, else refused), and exactly one
+    outside-traffic line for this hop, host only, whatever the outcome. The
+    answer never holds the key. The body is at most ``max_bytes + 1`` bytes;
+    a longer one is refused (``too_big``) unless *allow_truncated*. A
+    redirect answer carries its ``Location`` and no body; the caller follows
+    it WITHOUT a key (and logs that next hop itself).
+
+    Only the closure ``source_fetch.fetch_small`` builds for one request may
+    call it; any other caller gets ``PermissionError``.
+    """
+    frame = sys._getframe(1)
+    where = (frame.f_globals.get("__name__", ""), frame.f_code.co_qualname)
+    frame = None
+    if where not in _KEYED_HOP_CALLERS:
+        raise PermissionError(
+            "keyed_first_hop may only be called by source_fetch.fetch_small "
+            "or source_fetch.get_archive; "
+            f"{where[0]!r} must use that instead.")
+    from puffpai.security import egress_ledger, outside_switches
+    svc = service if isinstance(service, str) else ""
+    what = egress_ledger.FETCH_SERVICES.get(svc)
+    target = egress_ledger.safe_host(url) if isinstance(url, str) else ""
+
+    def _line(outcome: str, **fields: Any) -> None:
+        egress_ledger.record(svc if what else _KEYED_UNKNOWN_SERVICE,
+                             host=target, outcome=outcome,
+                             what=what or "request", **fields)
+
+    def _refuse(code: str) -> "tuple[None, str]":
+        _line("refused", code=code, bytes_in=0, bytes_out=0)
+        return None, code
+
+    if what is None:
+        return _refuse("not_allowed")
+    if outside_switches.is_off(svc):
+        return _refuse("switched_off")
+    if not _keyed_url_ok(url):
+        return _refuse("not_allowed")
+    if not isinstance(headers, Mapping) \
+            or any(_is_credential_header(n) for n in headers):
+        return _refuse("sign_in_refused")
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) \
+            or max_bytes <= 0:
+        return _refuse("not_allowed")
+    limit = min(max_bytes + 1, _KEYED_MAX_READ)
+    try:
+        host = urlsplit(url).hostname or ""
+    except ValueError:
+        return _refuse("key_host")
+    cred, code, echoes = _fetch_key_credential(key_id, host, caller=svc)
+    if cred is None:
+        return _refuse(code)
+    try:
+        extra = _credential_header_for(cred, url)
+        if extra is None:
+            return _refuse("key_host")
+        send = {str(k): str(v) for k, v in headers.items()}
+        send[extra[0]] = extra[1]
+        extra = None
+        sent = len(url) + sum(len(k) + len(v) + 4 for k, v in send.items()) + 16
+        try:
+            resp = _keyed_wire(url, send, timeout)
+        except OSError as exc:
+            refused = _pin_refused_code(exc)
+            if refused:
+                return _refuse(refused)
+            _line("failed", code="no_answer", bytes_out=sent)
+            return None, "no_answer"
+        except (http.client.HTTPException, ValueError):
+            _line("failed", code="bad_answer", bytes_out=sent)
+            return None, "bad_answer"
+        finally:
+            send = {}
+        raw = b""
+        failure = ""
+        status = 0
+        try:
+            for attr in ("status", "code"):
+                value = getattr(resp, attr, None)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    status = value
+                    break
+            answer_headers: dict[str, str] = {}
+            declared = ""
+            try:
+                for name, value in list(getattr(resp, "headers", {}).items()):
+                    text = _credential_scrub(echoes, str(value).encode(
+                        "utf-8", "replace")).decode("utf-8", "replace")
+                    answer_headers.setdefault(str(name), text)
+                    if str(name).strip().lower() == "content-length" and not declared:
+                        declared = text.strip()
+            except Exception:
+                answer_headers = {}
+            if status in _KEYED_REDIRECTS:
+                pass
+            elif not allow_truncated and declared.isdigit() \
+                    and int(declared) > max_bytes:
+                failure = "too_big"
+            else:
+                try:
+                    got = resp.read(limit)
+                except (OSError, http.client.HTTPException, ValueError):
+                    failure = "no_answer"
+                else:
+                    raw = bytes(got) if isinstance(got, (bytes, bytearray)) else b""
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
+            resp = None
+        _fetch_key_answered(key_id, host, status, caller=svc)
+        if failure == "no_answer":
+            _line("failed", code="no_answer", status=status, bytes_out=sent)
+            return None, "no_answer"
+        if failure == "too_big" or (len(raw) > max_bytes and not allow_truncated):
+            _line("refused", code="too_big", status=status, bytes_out=sent,
+                  bytes_in=len(raw))
+            return None, "too_big"
+        _line("done", status=status, bytes_out=sent,
+              bytes_in=min(len(raw), max_bytes))
+        body = _credential_scrub(echoes, raw)
+        return KeyedAnswer(status, answer_headers, body, len(raw)), "ok"
+    finally:
+        cred = None
+        echoes = ()
+
+
+# ── before the bot is set up: one check of a pasted key ─────────────────────
+#
+# The wizard asks about GitHub early, before it has recorded
+# what the finished bot may reach, so the door cannot open yet (no run
+# setting). The build-time channel (fetch_small: the owner's switch and the
+# Bridge, no run setting) is what the wizard's own searches use. This is the
+# one keyed request that may go out on it with a value not yet stored: the
+# curated row's own test address, once, for a row marked
+# ``check_before_setup``, under its ``setup_service`` switch, which the owner's yes
+# has just switched on. Same rules as the keyed hop: header only, bound to
+# that one host, pinned, no redirect, one outside-traffic line, the answer
+# discarded (only the status comes back). Only ``puffpai.security.keys`` may
+# call it.
+
+def setup_check_hop(key_id: Any, value: str, *, timeout: float = 8.0
+                    ) -> "tuple[Optional[int], str, dict]":
+    """``(status, "ok", answer)`` or ``(None, code, {})`` for ONE test GET of
+    a pasted key before the bot is set up. *answer* is ``{"user": {login,
+    name, avatar_url}, "headers": {x-oauth-scopes}}`` from a 200 (the key's
+    echo removed), else {}. Refused unless the wizard run says setup is under
+    way (``github_account.before_setup``: a positive signal, fail closed)."""
+    caller = sys._getframe(1).f_globals.get("__name__", "")
+    if caller != _SECURITY_PACKAGE + ".keys":
+        raise PermissionError("setup_check_hop may only be called by puffpai.security.keys")
+    from puffpai import USER_AGENT
+    from puffpai.security import egress_ledger, keys, outside_switches
+    row = keys.spec(key_id)
+    svc = str((row or {}).get("setup_service") or "")
+    what = egress_ledger.FETCH_SERVICES.get(svc)
+    url = str(((row or {}).get("check") or {}).get("url") or "")
+    target = egress_ledger.safe_host(url) if url else ""
+
+    def _line(outcome: str, **fields: Any) -> None:
+        egress_ledger.record(svc if what else _KEYED_UNKNOWN_SERVICE, host=target,
+                             outcome=outcome, what=what or "request", **fields)
+
+    if not isinstance(row, dict) or row.get("check_before_setup") is not True or what is None:
+        _line("refused", code="not_allowed", bytes_in=0, bytes_out=0)
+        return None, "not_allowed", {}
+    try:
+        from puffpai import github_account
+        under_way = github_account.before_setup()
+    except Exception:  # noqa: BLE001 - not knowing is "set up": refused
+        under_way = False
+    if not under_way:
+        _line("refused", code="bot_offline", bytes_in=0, bytes_out=0)
+        return None, "bot_offline", {}
+    if outside_switches.is_off(svc):
+        _line("refused", code="switched_off", bytes_in=0, bytes_out=0)
+        return None, "switched_off", {}
+    try:
+        host = _ascii_host(urlsplit(url).hostname or "")
+    except ValueError:
+        host = ""
+    row_hosts = {_ascii_host(h) for h in row.get("hosts") or [] if isinstance(h, str)}
+    fmt = (row.get("placement") or {}).get("value_format", "{key}")
+    if not host or host not in row_hosts or not _keyed_url_ok(url) \
+            or not _value_format_ok(fmt) or not isinstance(value, str) or not value:
+        _line("refused", code="key_host", bytes_in=0, bytes_out=0)
+        return None, "key_host", {}
+    cred = _bind_credential(str((row.get("placement") or {}).get("name") or ""),
+                            fmt.replace("{key}", value), [host])
+    try:
+        extra = _credential_header_for(cred, url)
+        if extra is None:
+            _line("refused", code="key_host", bytes_in=0, bytes_out=0)
+            return None, "key_host", {}
+        echoes = (value.encode("utf-8"), extra[1].encode("utf-8"))
+        send = {"User-Agent": USER_AGENT, "Accept": "application/json",
+                "Accept-Encoding": "identity", extra[0]: extra[1]}
+        extra = None
+        sent = len(url) + sum(len(k) + len(v) + 4 for k, v in send.items()) + 16
+        try:
+            resp = _keyed_wire(url, send, timeout)
+        except OSError as exc:
+            refused = _pin_refused_code(exc)
+            if refused:
+                _line("refused", code=refused, bytes_in=0, bytes_out=0)
+                return None, refused, {}
+            _line("failed", code="no_answer", bytes_out=sent)
+            return None, "no_answer", {}
+        except (http.client.HTTPException, ValueError):
+            _line("failed", code="bad_answer", bytes_out=sent)
+            return None, "bad_answer", {}
+        finally:
+            send = {}
+        status = 0
+        got = 0
+        body = b""
+        scopes = ""
+        try:
+            for attr in ("status", "code"):
+                v = getattr(resp, attr, None)
+                if isinstance(v, int) and not isinstance(v, bool):
+                    status = v
+                    break
+            try:
+                for name, hv in list(getattr(resp, "headers", {}).items()):
+                    if str(name).strip().lower() == "x-oauth-scopes":
+                        scopes = str(hv)[:400]
+            except Exception:
+                scopes = ""
+            try:
+                body = bytes(resp.read(64 * 1024) or b"")
+                got = len(body)
+            except (OSError, http.client.HTTPException, ValueError):
+                got, body = 0, b""
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
+            resp = None
+        _line("done", status=status, bytes_out=sent, bytes_in=got)
+        answer: dict = {}
+        if status == 200:
+            try:
+                data = json.loads(_credential_scrub(echoes, body).decode("utf-8", "replace"))
+            except ValueError:
+                data = None
+            if isinstance(data, dict):
+                answer = {"user": {k: str(data.get(k) or "")[:300]
+                                   for k in ("login", "name", "avatar_url")},
+                          "headers": ({"x-oauth-scopes": scopes} if scopes else {})}
+        body = b""
+        echoes = ()
+        return status, "ok", answer
+    finally:
+        cred = None
+
+
+# ── the one network call, and its log line ───────────────────────────────────
+
+def _new_pin(resolver=None):
+    from puffpai.security import pinned_net
+    return pinned_net.Pin(resolver=resolver)
+
+
+def pin_add(pin, host: str, answers) -> None:
+    """Pin *host* to answers :func:`_check_resolved_public` already vetted."""
+    from puffpai.security import pinned_net
+    fresh = pinned_net.Pin(preset={host: list(answers)})
+    with pin._lock:  # noqa: SLF001 - one pin per request, same package
+        pin._pinned.update(fresh._pinned)  # noqa: SLF001
+
+
+def _send(method: str, url: str, *, pin, **kwargs):
+    """THE network call for every door, card, picture, town lookup and sample.
+
+    A pinned ``requests`` session (:func:`pinned_net.requests_session`):
+    https only, no proxy from the environment, and the socket goes to the
+    address *pin* holds for the URL's host. Tests replace this one function.
+    """
+    from puffpai.security import pinned_net
+    session = pinned_net.requests_session(pin)
+    try:
+        return session.request(method, url, **kwargs)
+    finally:
+        session.close()
+
+
+#: Door id -> what the request was for (``egress_ledger.WHAT`` key).
+_WHAT_BY_DOOR = {"weather": "forecast", "air_quality": "air_quality",
+                 "news_rss": "headlines", "web_fetch": "web_page",
+                 "geocode": "town_lookup",
+                 # searches (and a key's one test search)
+                 "web_search": "web_search",
+                 "brave_search": "web_search",
+                 "marginalia_search": "web_search",
+                 # the owner's own GitHub account (the sign-in check, the
+                 # device sign-in)
+                 "github": "github_account",
+                 # Toolsmith's cloud model (never the key, never the words)
+                 "toolsmith_cloud": "toolsmith_install"}
+
+#: Doors whose address carries no owner value in its path: the path is kept
+#: in the log. Every other exit logs the host only.
+_PATH_KEPT = frozenset({"weather", "air_quality", "geocode"})
+
+
+def reason_code(exc: BaseException) -> str:
+    """The closed-list reason word for a refusal (``egress_ledger``)."""
+    code = str(getattr(exc, "code", "") or "")
+    if code:
+        return code
+    return _code_from_text(str(getattr(exc, "reason", "") or exc))
+
+
+def _code_from_text(reason: str) -> str:
+    """The closed-list reason word for a refusal's reason text."""
+    text = str(reason or "").lower()
+    if "the bridge" in text:
+        return "bridge_up"
+    if "no egress door named" in text or "not declared" in text:
+        return "not_on_list"
+    if "forces every app door shut" in text or "=off" in text:
+        return "turned_off_here"
+    if "posture:" in text and "is shut" in text:
+        return ("switched_off" if f"posture: {OPEN_POSTURE}" in text
+                else "bot_offline")
+    if "is shut" in text or "switched" in text:
+        return "switched_off"
+    if "https" in text or "scheme" in text:
+        return "not_encrypted"
+    if "credential" in text or "auth" in text or "cookie" in text:
+        return "sign_in_refused"
+    if "landed on" in text:
+        return "peer_moved"
+    if "cannot resolve" in text or "resolves to nothing" in text \
+            or "look up" in text:
+        return "cannot_look_up"
+    if "private" in text or "loopback" in text or "resolves to" in text \
+            or "points at" in text:
+        return "inside_address"
+    if "more than" in text and "redirect" in text:
+        return "too_many_redirects"
+    if "redirect" in text:
+        return "redirected_away"
+    return "not_allowed"
+
+
+def _ledger_service(door_id: str) -> str:
+    """The outside-services id a door's traffic is logged under."""
+    app = app_of(door_id) if _is_feed_door(door_id) else None
+    if app:
+        return f"card-{app}"
+    return str(door_id or "").strip().lower() or "unknown"
+
+
+def _bytes_out(method: str, url: str, headers: Any, body: Any) -> Optional[int]:
+    """About how many bytes the request put on the wire (line + headers + body).
+
+    A length only: nothing of the request's content is kept.
+    """
+    try:
+        parts = urlsplit(str(url))
+        target = (parts.path or "/") + (("?" + parts.query) if parts.query else "")
+        total = len(f"{method} {target} HTTP/1.1\r\n".encode("utf-8"))
+        total += len(f"Host: {parts.hostname or ''}\r\n".encode("utf-8"))
+        if isinstance(headers, Mapping):
+            for key, value in headers.items():
+                total += len(f"{key}: {value}\r\n".encode("utf-8", "replace"))
+        if isinstance(body, (bytes, bytearray)):
+            total += len(body)
+        elif isinstance(body, str):
+            total += len(body.encode("utf-8", "replace"))
+        return total + 2
+    except Exception:
+        return None
+
+
+def _bytes_in(resp: Any, streamed: bool) -> Optional[int]:
+    """The reply's size when it is known without consuming a stream."""
+    if not streamed:
+        if hasattr(resp, "_content"):
+            content = getattr(resp, "_content", None)
+        else:
+            content = getattr(resp, "content", None)
+        if isinstance(content, (bytes, bytearray)):
+            return len(content)
+    try:
+        declared = (getattr(resp, "headers", None) or {}).get("Content-Length")
+        return int(declared) if declared is not None else None
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+class _LedgerTag:
+    """Writes the outside-traffic log line for one :func:`egress_request`."""
+
+    def __init__(self, service: str, what: str, keep_path: bool,
+                 picture_host: str = ""):
+        self.service = service
+        self.what = what
+        self.keep_path = keep_path
+        self.picture_host = picture_host
+
+    @classmethod
+    def for_door(cls, d: Optional[Door], door_id: str, url: str) -> "_LedgerTag":
+        key = str(door_id or "").strip().lower()
+        if d is not None and _is_feed_door(d):
+            picture = d.picture_hosts[0] if d.picture_hosts else (
+                d.hosts[1] if len(d.hosts) > 1 else "")
+            return cls(_ledger_service(key), "card_data", False, picture)
+        return cls(_ledger_service(key), _WHAT_BY_DOOR.get(key, "request"),
+                   key in _PATH_KEPT)
+
+    def _what_for(self, url: str) -> str:
+        try:
+            host = _clean_host(urlsplit(str(url)).hostname or "")
+        except ValueError:
+            host = ""
+        if self.picture_host and host == self.picture_host:
+            return "card_picture"
+        return self.what
+
+    def _path(self, url: str) -> str:
+        if not self.keep_path:
+            return ""
+        from puffpai.security import egress_ledger
+        return egress_ledger.safe_path(url)
+
+    def refused(self, blocked: BaseException, url: str, method: str) -> None:
+        from puffpai.security import egress_ledger
+        egress_ledger.record(
+            self.service, host=egress_ledger.safe_host(url),
+            outcome="refused", method=method, path=self._path(url),
+            code=reason_code(blocked), what=self._what_for(url),
+            bytes_out=0, bytes_in=0)
+
+    def send(self, pin, d: Door, method: str, url: str, **kwargs):
+        """Send one hop through :func:`_send`, log it, and return the reply."""
+        from puffpai.security import egress_ledger
+        host = egress_ledger.safe_host(url)
+        out = _bytes_out(method, url, kwargs.get("headers"),
+                         kwargs.get("data") or kwargs.get("json"))
+        try:
+            resp = _send(method, url, pin=pin, **kwargs)
+        except Exception as exc:
+            refused = getattr(pin, "refused", None)
+            if refused is not None:
+                blocked = EgressBlocked(
+                    d.id, f"pinned connection refused: {refused.reason}",
+                    "That request tried to reach an address on this machine "
+                    "or this network, so nothing was sent.",
+                    code=getattr(refused, "code", "inside_address"))
+                self.refused(blocked, url, method)
+                raise blocked from None
+            egress_ledger.record(
+                self.service, host=host, outcome="failed", method=method,
+                path=self._path(url), code="no_answer",
+                what=self._what_for(url), bytes_out=out)
+            raise exc
+        req = getattr(resp, "request", None)
+        if req is not None and isinstance(getattr(req, "headers", None), Mapping):
+            out = _bytes_out(method, url, req.headers,
+                             getattr(req, "body", None)) or out
+        egress_ledger.record(
+            self.service, host=host, outcome="done", method=method,
+            path=self._path(url), status=getattr(resp, "status_code", None),
+            bytes_in=_bytes_in(resp, bool(kwargs.get("stream"))),
+            bytes_out=out, what=self._what_for(url))
+        return resp
+
+
+# ── pictures only ───────────────────────────────────────────────────────────
+
+def _picture_request_ok(d: "Door", method: str, kwargs: dict, credential: Any) -> None:
+    """A pictures-only host gets a plain GET: no query of ours, no body, no
+    sign-in (headers were already screened for anything credential-shaped)."""
+    if str(method).upper() != "GET" or credential is not None \
+            or any(k in kwargs for k in ("params", "data", "json", "files")):
+        raise EgressBlocked(d.id, "a pictures-only site gets a plain GET only",
+                            "That site is reached for pictures only, so nothing was sent.",
+                            code="not_on_list")
+
+
+class _PictureAnswer:
+    """A picture answer read in full (capped), standing in for the response."""
+
+    def __init__(self, status: int, headers: dict, body: bytes):
+        self.status_code, self.headers, self.content = status, headers, body
+        self.ok = 200 <= status < 300
+
+    def iter_content(self, chunk_size: int = 65536, *_a, **_k):
+        size = max(1, int(chunk_size or 65536))
+        for i in range(0, len(self.content), size):
+            yield self.content[i:i + size]
+
+    def close(self) -> None:
+        pass
+
+
+def _picture_answer(d: "Door", resp: Any,
+                    max_bytes: Optional[int] = None) -> "_PictureAnswer":
+    """Only a picture comes back from a pictures-only site: an image type
+    (never SVG), at most :data:`RESULT_PICTURE_MAX_BYTES`. Anything else is
+    refused (:class:`EgressBlocked`, code ``not_a_picture`` / ``too_big``)."""
+    cap = int(max_bytes or RESULT_PICTURE_MAX_BYTES)
+    try:
+        status = int(getattr(resp, "status_code", 0) or 0)
+        headers = {str(k).lower(): str(v) for k, v in
+                   dict(getattr(resp, "headers", {}) or {}).items()}
+        ctype = headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if status == 200 and ctype not in RESULT_PICTURE_TYPES:
+            raise EgressBlocked(d.id, f"answer is {ctype or 'untyped'}",
+                                "That address did not answer with a picture.",
+                                code="not_a_picture")
+        declared = headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > cap:
+            raise EgressBlocked(d.id, "picture too big", "That picture was too big.",
+                                code="too_big")
+        chunks, total = [], 0
+        it = getattr(resp, "iter_content", None)
+        for chunk in (it(65536) if callable(it) else [getattr(resp, "content", b"") or b""]):
+            total += len(chunk or b"")
+            if total > cap:
+                raise EgressBlocked(d.id, "picture too big", "That picture was too big.",
+                                    code="too_big")
+            chunks.append(bytes(chunk or b""))
+    finally:
+        close = getattr(resp, "close", None)
+        if callable(close):
+            close()
+    keep = {k: v for k, v in headers.items() if k in ("content-type", "cache-control",
+                                                      "last-modified", "etag")}
+    out = {"Content-Type": keep.pop("content-type", "")}
+    out.update(keep)
+    return _PictureAnswer(status, out, b"".join(chunks))
+
+
+# ── pictures a source's own results point to ─────────────────────────────────
+#
+# A data source's switch row says "<source> and the picture sites its results
+# point to" (build.setup); the owner's yes to it covers both. The picture sites are
+# not known before the owner's yes (no look may run before it), so they are not a
+# host list: a picture is let through ONLY when the source's own door is open
+# (that yes, and the run posture) AND its host appeared in that source's own
+# results (the caller keeps those, build: assemble.server.host). GET only, no
+# query of the owner's, no cookie or key, image types only (never SVG), size-capped,
+# same public-address pinning and same-host redirects as any dynamic door.
+
+_SCOPE_KEY = object()
+
+
+class _PictureScope:
+    """Made only by :func:`result_picture_get`; anything else is refused."""
+    __slots__ = ("source_door", "hosts", "_key")
+
+    def __init__(self, source_door: str, hosts: frozenset, key: object):
+        self.source_door, self.hosts, self._key = source_door, hosts, key
+
+
+def _picture_scope_open(door_id: Any, method: str, url: str, scope: Any, kwargs: dict,
+                        credential: Any) -> tuple[Door, str]:
+    if str(door_id) != RESULT_PICTURES or not isinstance(scope, _PictureScope) \
+            or scope._key is not _SCOPE_KEY:  # noqa: SLF001 - same module
+        raise EgressBlocked(str(door_id), "picture door without its scope",
+                            "That picture was not asked for the usual way, so nothing "
+                            "was fetched.", code="not_on_list")
+    if str(method).upper() != "GET" or credential is not None or set(kwargs) - {"stream"}:
+        raise EgressBlocked(RESULT_PICTURES, "picture request carries more than a GET",
+                            "Only a plain picture request is allowed there.",
+                            code="not_on_list")
+    off = _as_bool(os.environ.get(door(RESULT_PICTURES).env_var) or "")
+    if off is False:
+        raise EgressBlocked(RESULT_PICTURES, "PUFFPAI_EGRESS_RESULT_PICTURES=off",
+                            door(RESULT_PICTURES).settings_hint, code="turned_off_here")
+    require_open(scope.source_door)          # the owner's yes to the source
+    d = door(RESULT_PICTURES)
+    host = _dynamic_check_url(d, url)
+    if host not in scope.hosts:
+        raise EgressBlocked(RESULT_PICTURES, f"{host!r} is not in the source's results",
+                            "That picture's site was not in the source's own results, so "
+                            "nothing was fetched.", code="not_on_list")
+    return d, host
+
+
+_PICTURE_AUDITED: set[tuple[str, str]] = set()
+
+
+def result_picture_get(source_door: str, url: str, result_hosts: Any, *,
+                       timeout: float = DEFAULT_TIMEOUT,
+                       max_bytes: int = RESULT_PICTURE_MAX_BYTES) -> tuple[int, dict, bytes]:
+    """One picture from a site *source_door*'s own results pointed to
+    (*result_hosts*: hosts seen in them). ``(status, headers, body)``.
+    Raises :class:`EgressBlocked` when the source is shut, the host was not
+    in its results, or the answer is not a picture or too big."""
+    hosts = frozenset(str(h).strip().rstrip(".").lower() for h in result_hosts or ()
+                      if isinstance(h, str) and h)
+    scope = _PictureScope(str(source_door), hosts, _SCOPE_KEY)
+    answer = egress_request(RESULT_PICTURES, "GET", url, timeout=timeout,
+                            picture_scope=scope)
+    if len(answer.content) > max_bytes:
+        raise EgressBlocked(RESULT_PICTURES, "picture too big", "That picture was too big.",
+                            code="too_big")
+    status = int(answer.status_code)
+    headers = {str(k).lower(): str(v) for k, v in answer.headers.items()}
+    host = _clean_host(urlsplit(url.strip()).hostname or "")
+    if (str(source_door), host) not in _PICTURE_AUDITED:
+        _PICTURE_AUDITED.add((str(source_door), host))
+        try:
+            from puffpai.security.audit_log import AuditLog
+            AuditLog().log(action="result_picture", user="owner", result="fetched",
+                           details=f"{str(source_door)[:80]} -> {host}"[:200])
+        except Exception:  # noqa: BLE001 - the ledger line is kept anyway
+            pass
+    return status, {k: v for k, v in headers.items() if k in ("content-type",)}, \
+        answer.content
+
+
+def _picture_request(door_id: Any, method: str, url: str, scope: Any,
+                     kwargs: dict, credential: Any, *, timeout: float,
+                     resolver=None) -> "_PictureAnswer":
+    """The one path through :data:`RESULT_PICTURES`: a plain GET to a host a
+    source's own results named, pinned to its checked address, same-host
+    redirects only, answered by a size-capped image."""
+    tag = _LedgerTag.for_door(door(RESULT_PICTURES), str(door_id), url)
+    try:
+        d, origin_host = _picture_scope_open(door_id, method, url, scope, kwargs,
+                                             credential)
+        pin = _new_pin(resolver)
+        pin_add(pin, origin_host,
+                _check_resolved_public(d, origin_host, _port_of(url), resolver))
+    except EgressBlocked as blocked:
+        tag.refused(blocked, url, method)
+        raise
+    current, current_host = url, origin_host
+    for _hop in range(MAX_REDIRECTS + 1):
+        resp = tag.send(pin, d, "GET", current, timeout=timeout,
+                        allow_redirects=False, stream=True)
+        _verify_peer(d, resp, current_host)
+        if resp.status_code in (301, 302, 303, 307, 308):
+            location = resp.headers.get("Location") or ""
+            _close_quietly(resp)
+            nxt = urljoin(current, location)
+            try:
+                nxt_host = _dynamic_check_url(d, nxt, hop_host=origin_host)
+                pin_add(pin, nxt_host,
+                        _check_resolved_public(d, nxt_host, _port_of(nxt),
+                                               resolver))
+            except EgressBlocked as blocked:
+                tag.refused(blocked, nxt, method)
+                raise
+            current, current_host = nxt, nxt_host
+            continue
+        return _picture_answer(d, resp)
+    blocked = EgressBlocked(
+        d.id, f"more than {MAX_REDIRECTS} redirects",
+        "That site redirected too many times, so nothing was fetched.",
+        code="too_many_redirects")
+    tag.refused(blocked, current, method)
+    raise blocked
+
+
+# ── a browser app's outside sites, on the app door ───────────────────────────
+#
+# A browser app Toolsmith added (``puffpai.webapps``) runs in its own locked
+# frame with no internet. When the install-time scan finds it needs an outside
+# site (its data service, its maps), the app's forwarding address sends the
+# request here, and ONLY here: :func:`app_web_request`.
+#
+# Built on the app feed door above, with the same rules made narrower:
+#
+# 1. **Registered, bounded.** :func:`register_web_app_door` gives the app one
+#    door, ``app:<app id>:web``, naming at most :data:`MAX_FEED_DOOR_HOSTS`
+#    public names (each through :func:`is_registrable_hostname`). Web doors
+#    live in their own table: :func:`door` and :func:`egress_request` never
+#    see them, so no other path (and no config key or per-door environment
+#    value) can open one.
+# 2. **Each site is its own yes.** A site is off until the owner switches it
+#    on with an owner-only consent ticket (``app_host_on``, bound to this app
+#    and this site). The recorded yes lives in ``egress_app_doors.json`` under
+#    a flag bound to the door's WHOLE site set, so an app that now names a new
+#    site has every site off again until the owner says yes anew. Switching a
+#    site off never needs a ticket. ``PUFFPAI_EGRESS_APPS=off`` forces every
+#    site off. With the Bridge sealed nothing goes out at all.
+# 3. **Narrow requests.** https on 443, no sign-in in the address, every
+#    address the name resolves to public, and the socket pinned to the
+#    address that was checked. Request headers: only ``content-type``,
+#    ``accept``, ``accept-language`` (others are dropped, and only their
+#    names are logged). A sign-up key rides only when the caller names its
+#    handle, only on the first hop, bound to exactly that site, and every echo
+#    of it is removed from the answer. At most two redirects, each only to a
+#    site of this app that is switched on; a redirect never carries the key.
+# 4. **Narrow answers.** Only ``content-type``, ``content-length``,
+#    ``cache-control``, ``etag`` and ``last-modified`` come back (never
+#    ``Set-Cookie``, a CSP, ``Clear-Site-Data``, ``Service-Worker-Allowed`` or
+#    ``Location``), and sizes are capped both ways.
+# 5. **Logged.** One outside-traffic line per request on the wire (and one per
+#    refusal), host only, ``what="app_traffic"``, service ``app:<id>:web``.
+
+def _bot_offline() -> bool:
+    """True when the Bridge lets nothing reach the internet."""
+    return _bridge_level() == "sealed"
+
+
+#: The web door id's last part.
+WEB_DOOR_SUFFIX = ":web"
+
+#: A browser app's id as ``integrate.records`` issues it (``webapps.ID_RE``):
+#: re-stated, not imported, like :data:`_APP_ID_RE`. At most 39 characters.
+_WEB_APP_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,29}-[a-z2-7]{8}\Z")
+
+#: Methods a browser app may forward. Anything else is refused.
+WEB_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"})
+
+#: Request headers an app may send (lower-case). Every other one is dropped.
+WEB_REQUEST_HEADERS = ("content-type", "accept", "accept-language")
+
+#: Answer headers an app gets back (lower-case). Every other one is dropped.
+WEB_ANSWER_HEADERS = ("content-type", "content-length", "cache-control", "etag",
+                      "last-modified")
+
+#: The refusal words :func:`app_web_request` answers with (``{"refused": code}``).
+WEB_REFUSALS = frozenset({
+    "switched_off", "not_https", "not_443", "userinfo", "inside_address",
+    "too_big", "redirect_off_list", "unknown_app",
+    # also honest, beyond the pinned list: the bot is set to stay off the
+    # internet, a method or size the app may not use, no DNS answer, a third
+    # redirect, a key that cannot be used or not for this site, no answer.
+    "bot_offline", "not_allowed", "cannot_look_up", "redirects",
+    "key_unavailable", "key_host", "no_answer", "bad_answer", "peer_moved",
+    # a DNS filter at home (Pi-hole, AdGuard Home) blocked the name.
+    "network_filter"})
+
+WEB_MAX_REDIRECTS = 2
+WEB_TIMEOUT = 15.0
+_WEB_MAX_OUT_CAP = 10 * 1024 * 1024
+_WEB_MAX_IN_CAP = 50 * 1024 * 1024
+_WEB_MAX_HEADER_VALUE = 512
+_WEB_WHAT = "app_traffic"
+#: The log's service id for a request naming no web door this build has.
+_WEB_UNKNOWN_SERVICE = "app_web"
+#: Tests replace this; the running app looks names up with the system.
+_WEB_RESOLVER = None
+
+#: The pinned refusal word -> the outside-traffic log's own word (so the
+#: "What leaves your computer" page has words for every line).
+_WEB_LEDGER_CODE = {
+    "unknown_app": "not_on_list", "not_https": "not_encrypted",
+    "not_443": "not_allowed", "userinfo": "sign_in_refused",
+    "redirect_off_list": "redirected_away",
+}
+
+_WEB_DOORS: dict[str, Door] = {}
+
+
+def web_door_id(app_id: str) -> str:
+    """``app:<app id>:web``."""
+    return f"{APP_DOOR_PREFIX}{app_id}{WEB_DOOR_SUFFIX}"
+
+
+def _web_flag(app_id: str, hosts) -> str:
+    """The recorded-yes key: this app and its WHOLE site set."""
+    return f"app_{app_id}_web_{_host_digest(sorted(set(hosts)))}"
+
+
+def _web_host(host: Any) -> str:
+    return str(host).strip().rstrip(".").lower() if isinstance(host, str) else ""
+
+
+def register_web_app_door(app_id: str, hosts: list[str]) -> str:
+    """Give browser app *app_id* its door for *hosts*; returns its id.
+
+    Raises ``ValueError`` for an id that is not a browser app's, a name that
+    is not a public registrable one, or more than :data:`MAX_WEB_APP_HOSTS`
+    sites. Registering again replaces the door; a different site set means a
+    different recorded-yes key, so every site starts off again.
+    """
+    if not isinstance(app_id, str) or not _WEB_APP_ID_RE.match(app_id):
+        raise ValueError("not a browser app's id")
+    if isinstance(hosts, (str, bytes)) or not isinstance(hosts, (list, tuple)):
+        raise ValueError("hosts must be a list of site names")
+    clean: list[str] = []
+    for raw in hosts:
+        host = _web_host(raw)
+        if not is_registrable_hostname(host):
+            raise ValueError("a site is not a public name")
+        if host not in clean:
+            clean.append(host)
+    if len(clean) > MAX_WEB_APP_HOSTS:
+        raise ValueError(f"at most {MAX_WEB_APP_HOSTS} outside sites per app")
+    flag = _web_flag(app_id, clean)
+    d = Door(
+        id=web_door_id(app_id), hosts=tuple(clean),
+        purpose="An added app's outside sites.",
+        data_sent="What the app sends there, and your internet address.",
+        config_flag=flag,
+        # Never read for a web door: a site opens only with the owner's
+        # recorded yes. Only the operator's "off" (APPS_KILL_ENV) is honoured.
+        env_var=APPS_KILL_ENV,
+        consent_kind="owner_flag",
+        enforcement="registry",
+        probe_ok=False,
+        settings_hint=("That outside site is switched off for this app, so "
+                       "nothing was sent."),
+        default=False,
+        notes=("A browser app's outside sites. Each is off until the owner "
+               "says yes to it; only app_web_request uses this door."))
+    with _APP_LOCK:
+        _WEB_DOORS[app_id] = d
+    logger.info("egress: browser app %s may ask for %d outside site(s), all "
+                "off until the owner says yes", _shown(app_id), len(clean))
+    return d.id
+
+
+def unregister_web_app_door(app_id: str) -> bool:
+    """Forget *app_id*'s door and every yes recorded for it (app removed)."""
+    key = app_id if isinstance(app_id, str) else ""
+    with _APP_LOCK:
+        gone = _WEB_DOORS.pop(key, None)
+    if key:
+        with _web_set_lock:
+            _store_web_consent(key, None)
+    return gone is not None
+
+
+def web_app_door(app_id: str) -> Optional[Door]:
+    """The web door for *app_id*, or None."""
+    with _APP_LOCK:
+        return _WEB_DOORS.get(app_id if isinstance(app_id, str) else "")
+
+
+def web_app_ids() -> tuple[str, ...]:
+    """Every browser app with a web door, in registration order."""
+    with _APP_LOCK:
+        return tuple(_WEB_DOORS)
+
+
+def clear_web_app_doors() -> None:
+    """Forget every web door (tests). Recorded yeses stay on disk."""
+    with _APP_LOCK:
+        _WEB_DOORS.clear()
+
+
+def _web_on_in(entry: Any, d: Door) -> set[str]:
+    """The sites of *d* a recorded entry has on (fails to none)."""
+    if not isinstance(entry, dict) or entry.get("kind") != "web" \
+            or entry.get("open") is not True:
+        return set()
+    listed = entry.get("hosts_on")
+    if not isinstance(listed, list):
+        return set()
+    return {h for h in listed if isinstance(h, str) and h in d.hosts}
+
+
+def _recorded_web_on(d: Door) -> set[str]:
+    """The sites of *d* the owner switched on (the file only; fails to none)."""
+    return _web_on_in(_read_app_consent().get(d.config_flag), d)
+
+
+def _web_killed() -> bool:
+    kill = os.environ.get(APPS_KILL_ENV)
+    return kill is not None and _as_bool(kill) is False
+
+
+def app_web_hosts(app_id: str) -> dict[str, bool]:
+    """``{site: on}`` for every site of *app_id*'s door; ``{}`` when it has none.
+
+    On means the owner said yes to that site and this computer's settings do
+    not force app sites off.
+    """
+    d = web_app_door(app_id)
+    if d is None:
+        return {}
+    on = set() if _web_killed() else _recorded_web_on(d)
+    return {h: (h in on) for h in d.hosts}
+
+
+def _by_kind(by: Any) -> str:
+    text = str(by or "")
+    if text.startswith("device:"):
+        return "device"
+    if text.startswith("terminal:"):
+        return "terminal"
+    return text if text in ("owner", "wizard", "installer") else "owner"
+
+
+#: Held across every change to a browser app's sites: the read of what is
+#: on, the spending of the owner's yes, and the write. Without it, a change
+#: that read "site A is on" before the owner switched A off could write A back
+#: on with no new yes. Re-entrant so a change made from inside another (a
+#: nested owner action on this thread) cannot deadlock. Taken BEFORE
+#: ``_consent_lock``, never while holding it.
+_web_set_lock = threading.RLock()
+
+
+def _store_web_consent(app_id: str,
+                       entry: "Optional[dict] | Callable[[dict], dict]") -> None:
+    """Write (or with None, drop every) web yes for *app_id*. Atomic.
+
+    *entry* may be a function of the freshly read ``{flag: entry}`` map that
+    returns the entry to write: it runs under the file lock, so a change is
+    applied to what is on the disk now, not to an older read.
+
+    Raises ``OSError``/``ValueError`` rather than write a yes over a file that
+    could not be read.
+    """
+    from datetime import datetime, timezone
+    path = app_consent_path()
+    with _consent_lock:
+        existing: dict[str, Any] = {}
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                loaded = json.load(fh)
+            if (isinstance(loaded, dict)
+                    and loaded.get("schema") == APP_CONSENT_SCHEMA
+                    and isinstance(loaded.get("doors"), dict)):
+                existing = {k: v for k, v in loaded["doors"].items()
+                            if isinstance(k, str) and isinstance(v, dict)}
+        except FileNotFoundError:
+            existing = {}
+        except (OSError, ValueError):
+            # Never write over a file that could not be read: that would
+            # lose every other recorded yes (and the evidence). While it
+            # cannot be read, every app door and site reads as shut anyway,
+            # so a removal has nothing more to do and a change is refused.
+            if entry is None:
+                return
+            raise
+        if callable(entry):
+            entry = entry(dict(existing))
+        # One app has one web door: yeses for its older site sets go too.
+        existing = {k: v for k, v in existing.items()
+                    if not (v.get("kind") == "web" and v.get("app") == app_id)}
+        if entry is not None:
+            entry = dict(entry)
+            entry.setdefault("at", datetime.now(timezone.utc)
+                             .isoformat(timespec="seconds"))
+            existing[entry.pop("flag")] = entry
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"schema": APP_CONSENT_SCHEMA, "doors": existing}, fh,
+                      indent=2, sort_keys=True)
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:  # pragma: no cover - Windows ignores the mode
+            pass
+        os.replace(tmp, path)
+        _consent_cache.update({"path": None, "mtime": None, "doors": {}})
+
+
+_WEB_SET_WORDS = {
+    "unknown_app": "That app has no outside sites here, so nothing was changed.",
+    "not_on_list": "That app did not ask for that site, so nothing was changed.",
+    "one_at_a_time": "Say yes to one outside site at a time.",
+    "cannot": "Your choice could not be saved on this computer, so nothing "
+              "was changed.",
+}
+
+
+def set_app_web_hosts(app_id: str, hosts_on: list[str], *, by: str,
+                      ticket: Optional[str] = None) -> dict:
+    """Record which of *app_id*'s sites are on: *hosts_on*, never more.
+
+    A site ends up on only if it is on when the change is written or its yes
+    is spent in this call, so a site switched off while this call was in
+    flight stays off. Switching a site OFF needs nothing. Switching one ON needs *ticket*: an
+    owner-only consent ticket (``app_host_on``, target
+    ``consent_tickets.target_app_host(app_id, site)``) minted for the device
+    *by* names (``device:<id>`` or ``terminal:<id>``), spent here. One site
+    can be switched on per call. Opens no socket.
+
+    Returns ``{"ok": True, "door", "hosts": {site: on}, "switched_on",
+    "switched_off", "bot_offline"}`` or ``{"ok": False, "refused": code,
+    "message": plain words}``.
+    """
+    from puffpai.security import consent_tickets
+
+    def _no(code: str, words: str = "") -> dict:
+        return {"ok": False, "refused": code,
+                "message": words or _WEB_SET_WORDS.get(code, "")}
+
+    d = web_app_door(app_id)
+    if d is None:
+        return _no("unknown_app")
+    if isinstance(hosts_on, (str, bytes)) \
+            or not isinstance(hosts_on, (list, tuple, set, frozenset)):
+        return _no("not_on_list")
+    want: set[str] = set()
+    for raw in hosts_on:
+        host = _web_host(raw)
+        if host not in d.hosts:
+            return _no("not_on_list")
+        want.add(host)
+    # One lock across read, yes and write, and the write applied to what is
+    # on the disk at that moment: a site can end up on only if it is on
+    # there now or its yes was spent in this call. So a site switched off
+    # while this call was in flight stays off.
+    with _web_set_lock:
+        current = _recorded_web_on(d)
+        new_on = sorted(want - current)
+        if len(new_on) > 1:
+            return _no("one_at_a_time")
+        if new_on:
+            target = consent_tickets.target_app_host(app_id, new_on[0])
+            ok, verdict = consent_tickets.redeem(ticket, by, "app_host_on", target)
+            if not ok:
+                return _no(verdict, consent_tickets.refusal_words(verdict))
+        done = _write_web_hosts(d, app_id, keep=want, add=set(new_on), by=by)
+    if done is None:
+        return _no("cannot")
+    before, after = done
+    on, off = sorted(after - before), sorted(before - after)
+    logger.info("egress: browser app %s: %d outside site(s) switched on, %d "
+                "off", _shown(app_id), len(on), len(off))
+    return {"ok": True, "door": d.id, "hosts": app_web_hosts(app_id),
+            "switched_on": on, "switched_off": off,
+            "bot_offline": _bot_offline()}
+
+
+def _write_web_hosts(d: Door, app_id: str, *, keep: set[str], add: set[str],
+                     by: str) -> "Optional[tuple[set[str], set[str]]]":
+    """Write *d*'s sites as ``(on now & keep) | add``, where "on now" is read
+    under the file lock. *add* must only hold sites whose yes was just spent.
+    Returns ``(before, after)``, or None when it could not be saved (nothing
+    changed). Call with :data:`_web_set_lock` held."""
+    seen: dict[str, set[str]] = {}
+
+    def build(existing: dict) -> dict:
+        before = _web_on_in(existing.get(d.config_flag), d)
+        after = (before & keep) | (add & set(d.hosts))
+        seen["before"], seen["after"] = before, after
+        return {"flag": d.config_flag, "kind": "web", "app": app_id,
+                "open": bool(after), "hosts": list(d.hosts),
+                "hosts_on": sorted(after), "by": _by_kind(by)}
+
+    try:
+        _store_web_consent(app_id, build)
+    except (OSError, ValueError):
+        return None
+    return seen["before"], seen["after"]
+
+
+def switch_off_web_hosts(app_id: str, hosts: list[str], *, by: str) -> dict:
+    """Switch *hosts* of *app_id* off, and nothing else. Needs no yes.
+
+    Unlike :func:`set_app_web_hosts` this names only the sites to switch
+    off, so a site switched on (with its own yes) since the caller last
+    looked is left as it is. Sites the app did not ask for are ignored.
+    Returns the same shape as :func:`set_app_web_hosts`. Opens no socket.
+    """
+    d = web_app_door(app_id)
+    if d is None:
+        return {"ok": False, "refused": "unknown_app",
+                "message": _WEB_SET_WORDS["unknown_app"]}
+    if isinstance(hosts, (str, bytes)) \
+            or not isinstance(hosts, (list, tuple, set, frozenset)):
+        return {"ok": False, "refused": "not_on_list",
+                "message": _WEB_SET_WORDS["not_on_list"]}
+    gone = {_web_host(h) for h in hosts}
+    with _web_set_lock:
+        done = _write_web_hosts(d, app_id, keep=set(d.hosts) - gone, add=set(),
+                                by=by)
+    if done is None:
+        return {"ok": False, "refused": "cannot",
+                "message": _WEB_SET_WORDS["cannot"]}
+    before, after = done
+    off = sorted(before - after)
+    logger.info("egress: browser app %s: %d outside site(s) switched off",
+                _shown(app_id), len(off))
+    return {"ok": True, "door": d.id, "hosts": app_web_hosts(app_id),
+            "switched_on": [], "switched_off": off,
+            "bot_offline": _bot_offline()}
+
+
+def _web_url_code(url: Any) -> "tuple[str, str]":
+    """``('', host)`` when *url* has the shape a web request may use, else
+    ``(code, host_or_'')``. Opens nothing."""
+    if not _keyed_url_ok(url):
+        return "not_allowed", ""
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return "not_allowed", ""
+    host = _web_host(parts.hostname or "")
+    if (parts.scheme or "").lower() != "https":
+        return "not_https", host
+    if parts.username is not None or parts.password is not None \
+            or "@" in (parts.netloc or ""):
+        return "userinfo", host
+    if port is not None and port != 443:
+        return "not_443", host
+    if not host:
+        return "not_allowed", ""
+    return "", host
+
+
+def _web_request_headers(headers: Any) -> "tuple[dict[str, str], list[str]]":
+    """``(kept, dropped names)``: only :data:`WEB_REQUEST_HEADERS`, values
+    printable, short and single-line."""
+    kept: dict[str, str] = {}
+    dropped: list[str] = []
+    if headers is None:
+        return kept, dropped
+    if not isinstance(headers, Mapping):
+        return kept, ["(not a list of headers)"]
+    for name, value in headers.items():
+        low = name.strip().lower() if isinstance(name, str) else ""
+        ok_value = (isinstance(value, str) and len(value) <= _WEB_MAX_HEADER_VALUE
+                    and value.isascii()
+                    and all(32 <= ord(c) < 127 or c == "\t" for c in value))
+        if low in WEB_REQUEST_HEADERS and ok_value and low not in kept:
+            kept[low] = value
+        else:
+            dropped.append(name if isinstance(name, str) else type(name).__name__)
+    return ({"-".join(p.capitalize() for p in k.split("-")): v
+             for k, v in kept.items()}, dropped)
+
+
+def _web_header_items(resp: Any) -> list:
+    try:
+        headers = getattr(resp, "headers", None)
+        return list(headers.items()) if headers is not None else []
+    except Exception:
+        return []
+
+
+def _web_header(resp: Any, name: str) -> str:
+    """One answer header, whatever case the server wrote it in."""
+    wanted = name.lower()
+    for key, value in _web_header_items(resp):
+        if isinstance(key, str) and key.strip().lower() == wanted:
+            return str(value)
+    return ""
+
+
+def _web_answer_headers(resp: Any, echoes: "tuple[bytes, ...]") -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key, value in _web_header_items(resp):
+        low = key.strip().lower() if isinstance(key, str) else ""
+        if low not in WEB_ANSWER_HEADERS or low in out:
+            continue
+        text = str(value)
+        if echoes:
+            text = _credential_scrub(echoes, text.encode("utf-8", "replace")
+                                     ).decode("utf-8", "replace")
+        if len(text) > _WEB_MAX_HEADER_VALUE \
+                or any(ord(c) < 32 and c != "\t" for c in text):
+            continue
+        if low == "content-length" and not text.strip().isdigit():
+            continue
+        out[low] = text
+    return out
+
+
+def _web_wire(method: str, url: str, headers: dict, body: Optional[bytes],
+              timeout: float, pin: Any) -> Any:
+    """THE network call for a browser app's outside request: pinned to the
+    address that was checked, no redirects followed, no proxy, no cookies.
+    Tests replace this one function."""
+    import urllib.error
+    import urllib.request
+    from puffpai.security import pinned_net
+
+    class _NoFollow(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, hdrs, newurl):
+            return None
+
+    request = urllib.request.Request(url, data=body, headers=headers,
+                                     method=method)
+    opener = pinned_net.urllib_opener(pin, _NoFollow)
+    try:
+        return opener.open(request, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        return exc
+
+
+def _web_status(resp: Any) -> int:
+    for attr in ("status", "code"):
+        value = getattr(resp, attr, None)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return 0
+
+
+def _web_close(resp: Any) -> None:
+    try:
+        resp.close()
+    except Exception:
+        pass
+
+
+def _web_size(value: Any, cap: int) -> Optional[int]:
+    """A caller's size limit, clamped to *cap*; None when it is not one."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return min(value, cap)
+
+
+# -- a refusal the owner should hear about -------------------------------------
+#
+# An app that reaches a site it has no place for (no door at all, or a site
+# its door does not name) is refused, which on its own leaves its panels
+# empty with no word why. The refusal stays exactly as it is; on top of it,
+# the site is handed to the build's runtime capture
+# (``puffpai.build.make.note_runtime_refusal``), which records ONE
+# "Allow <app> to reach <host>" setup row per app, asked once. Nothing here
+# opens anything, and a capture that fails never changes the refusal.
+
+#: Tests (and the build layer, if it wants) set this; None means the build
+#: layer's own capture, imported when first needed.
+WEB_REFUSAL_HOOK: Optional[Callable[[str, str, str], Any]] = None
+
+
+def _note_web_refusal(app_id: str, url: Any, code: str) -> None:
+    """Hand one refusal (app, host, code) to the capture. Never raises."""
+    try:
+        bad, host = _web_url_code(url)
+        if bad or not host or not is_registrable_hostname(host):
+            return
+        fn = WEB_REFUSAL_HOOK
+        if fn is None:
+            import importlib
+            fn = getattr(importlib.import_module("puffpai.build.make"),
+                         "note_runtime_refusal", None)
+        if callable(fn):
+            fn(app_id, host, code)
+    except Exception as exc:  # noqa: BLE001 - the refusal itself already stands
+        logger.debug("egress: refusal not handed on (%s)", type(exc).__name__)
+
+
+def app_web_request(app_id: str, method: str, url: str, *,
+                    body: Optional[bytes] = None,
+                    headers: Optional[dict] = None,
+                    key_handle: Optional[str] = None,
+                    max_out: int = 1_000_000, max_in: int = 5_000_000) -> dict:
+    """One outside request for browser app *app_id*. Never raises.
+
+    Returns ``{"status", "headers", "body"}`` or ``{"refused": code}`` with
+    *code* from :data:`WEB_REFUSALS`. Nothing is sent unless every check
+    passes; see the section notes above for the rules.
+    """
+    from puffpai.security import egress_ledger, keys, pinned_net
+
+    app = app_id if isinstance(app_id, str) else ""
+    d = web_app_door(app)
+    service = web_door_id(app) if d is not None else _WEB_UNKNOWN_SERVICE
+    verb = method.strip().upper() if isinstance(method, str) else ""
+    logged_verb = verb if verb in WEB_METHODS else "GET"
+
+    def _line(target: Any, outcome: str, **fields: Any) -> None:
+        code = fields.pop("code", "")
+        if code:
+            fields["code"] = _WEB_LEDGER_CODE.get(code, code)
+        egress_ledger.record(service, host=egress_ledger.safe_host(target),
+                             outcome=outcome, method=logged_verb,
+                             what=_WEB_WHAT, **fields)
+
+    def _refuse(code: str, target: Any = url, *, sent: int = 0) -> dict:
+        _line(target, "refused", code=code, bytes_in=0, bytes_out=sent)
+        return {"refused": code}
+
+    if d is None:
+        _note_web_refusal(app, url, "unknown_app")
+        return _refuse("unknown_app")
+    if verb not in WEB_METHODS:
+        return _refuse("not_allowed")
+    cap_out = _web_size(max_out, _WEB_MAX_OUT_CAP)
+    cap_in = _web_size(max_in, _WEB_MAX_IN_CAP)
+    if cap_out is None or cap_in is None:
+        return _refuse("not_allowed")
+    code, host = _web_url_code(url)
+    if code:
+        return _refuse(code)
+    if _web_killed():
+        _line(url, "refused", code="turned_off_here", bytes_in=0, bytes_out=0)
+        return {"refused": "switched_off"}
+    if host not in _recorded_web_on(d):
+        if host not in d.hosts:
+            # A site its door does not name: no switch could ever open it.
+            _note_web_refusal(app, url, "not_on_list")
+        return _refuse("switched_off")
+    if _bot_offline():
+        return _refuse("bot_offline")
+    if body is not None and not isinstance(body, (bytes, bytearray)):
+        return _refuse("not_allowed")
+    if body is not None and len(body) == 0:
+        body = None
+    if body is not None:
+        if verb in ("GET", "HEAD"):
+            return _refuse("not_allowed")
+        if len(body) > cap_out:
+            return _refuse("too_big")
+        body = bytes(body)
+    send, dropped = _web_request_headers(headers)
+    if dropped:
+        logger.info("browser app %s: request headers not sent: %s",
+                    _shown(app), ", ".join(_shown(n) for n in dropped[:10]))
+    sid = ""
+    cred = None
+    echoes: "tuple[bytes, ...]" = ()
+    try:
+        if key_handle is not None:
+            sid = keys.service_of(key_handle)
+            if not sid:
+                return _refuse("key_unavailable")
+            cred, key_code, echoes = _fetch_key_credential(
+                sid, host, caller="app_web", only_target=True)
+            if cred is None:
+                return _refuse(key_code if key_code in WEB_REFUSALS
+                               else "key_unavailable")
+        current, current_host = url, host
+        send_method, send_body = verb, body
+        for hop in range(WEB_MAX_REDIRECTS + 1):
+            try:
+                answers = pinned_net.resolve_public(current_host, 443,
+                                                    _WEB_RESOLVER)
+            except pinned_net.PinRefused as exc:
+                word = exc.code if exc.code in WEB_REFUSALS else "inside_address"
+                return _refuse(word, current)
+            pin = pinned_net.Pin(preset={current_host: answers})
+            wire_headers = {"User-Agent": FEED_USER_AGENT,
+                            "Accept-Encoding": "identity", **send}
+            keyed = hop == 0 and cred is not None
+            if keyed:
+                extra = _credential_header_for(cred, current)
+                if extra is None:
+                    return _refuse("key_host", current)
+                wire_headers[extra[0]] = extra[1]
+                extra = None
+            sent = _bytes_out(send_method, current, wire_headers, send_body) or 0
+            try:
+                resp = _web_wire(send_method, current, wire_headers, send_body,
+                                 WEB_TIMEOUT, pin)
+            except OSError as exc:
+                refused = _pin_refused_code(exc)
+                if refused:
+                    return _refuse(refused if refused in WEB_REFUSALS
+                                   else "inside_address", current)
+                _line(current, "failed", code="no_answer", bytes_out=sent)
+                return {"refused": "no_answer"}
+            except (http.client.HTTPException, ValueError):
+                _line(current, "failed", code="bad_answer", bytes_out=sent)
+                return {"refused": "bad_answer"}
+            finally:
+                wire_headers = {}
+            status = _web_status(resp)
+            if keyed:
+                cred = None  # a key rides the first hop only
+                _fetch_key_answered(sid, current_host, status, caller="app_web")
+            if status in _KEYED_REDIRECTS:
+                location = _web_header(resp, "location")
+                _web_close(resp)
+                _line(current, "done", status=status, bytes_out=sent, bytes_in=0)
+                if hop >= WEB_MAX_REDIRECTS:
+                    return _refuse("redirects", current)
+                nxt = urljoin(current, location) if location else ""
+                code, nxt_host = _web_url_code(nxt)
+                if not location or code == "not_allowed":
+                    _line(current, "failed", code="bad_answer", bytes_out=0)
+                    return {"refused": "bad_answer"}
+                if code:
+                    return _refuse(code, nxt)
+                if _web_killed() or nxt_host not in _recorded_web_on(d):
+                    return _refuse("redirect_off_list", nxt)
+                if status == 303 or (status in (301, 302) and send_method == "POST"):
+                    send_method = "HEAD" if send_method == "HEAD" else "GET"
+                    send_body = None
+                    send = {k: v for k, v in send.items() if k != "Content-Type"}
+                current, current_host = nxt, nxt_host
+                continue
+            try:
+                declared = _web_header(resp, "content-length").strip()
+                if declared.isdigit() and int(declared) > cap_in:
+                    _line(current, "refused", code="too_big", status=status,
+                          bytes_out=sent, bytes_in=0)
+                    return {"refused": "too_big"}
+                data = b"" if send_method == "HEAD" else resp.read(cap_in + 1)
+            except (OSError, http.client.HTTPException, ValueError):
+                _line(current, "failed", code="no_answer", status=status,
+                      bytes_out=sent)
+                return {"refused": "no_answer"}
+            finally:
+                _web_close(resp)
+            data = bytes(data) if isinstance(data, (bytes, bytearray)) else b""
+            if len(data) > cap_in:
+                _line(current, "refused", code="too_big", status=status,
+                      bytes_out=sent, bytes_in=len(data))
+                return {"refused": "too_big"}
+            answer_headers = _web_answer_headers(resp, echoes)
+            if echoes:
+                data = _credential_scrub(echoes, data)
+            if send_method != "HEAD" and "content-length" in answer_headers:
+                # The length of what is handed back, not what the server said.
+                answer_headers["content-length"] = str(len(data))
+            _line(current, "done", status=status, bytes_out=sent,
+                  bytes_in=len(data))
+            return {"status": status, "headers": answer_headers, "body": data}
+        return _refuse("redirects", current)  # pragma: no cover - loop returns
+    except Exception as exc:  # noqa: BLE001 - never raise to the app's page
+        logger.warning("browser app %s: outside request failed (%s)",
+                       _shown(app), type(exc).__name__)
+        _line(url, "failed", code="no_answer", bytes_out=0)
+        return {"refused": "no_answer"}
+    finally:
+        cred = None
+        echoes = ()
+
+
+# ── build-time probe: one look at a catalog-listed keyless endpoint ──────────
+#
+# When the build engine drafts a feed app from a live-data service it found in a
+# catalog, it needs to see ONE sample reply to know which fields hold a picture,
+# a number or a list. That look happens while building, so it is governed by
+# the build-network answer (like :mod:`puffpai.source_fetch`), not by the run
+# posture, and it is not a door: nothing the finished bot does can reach it.
+#
+# It is deliberately narrower than any door:
+#   * the caller must say the build is online (the wizard's own answer), and
+#     ``PUFFPAI_BUILD_PROBES=off`` refuses every probe regardless;
+#   * https on 443 only, exactly the declared host, a registrable public name,
+#     every resolved address public, and the socket pinned to the address
+#     that was checked (the name is never looked up twice);
+#   * ZERO redirects -- a 3xx is recorded and refused, never followed;
+#   * GET only, fixed headers, no caller kwargs at all (so no credential, no
+#     cookie, no body), and the reply is read up to ``max_bytes`` and no more.
+
+#: Operator switch that refuses every build-time probe. Only "off" is honoured.
+BUILD_PROBE_ENV = "PUFFPAI_BUILD_PROBES"
+
+#: Hard ceiling on what one probe reads, whatever the caller asks for.
+BUILD_PROBE_MAX_BYTES = 512 * 1024
+
+#: The one User-Agent every probe and feed sends. Several public APIs (for
+#: example MusicBrainz and Wikidata) refuse anonymous clients; this names the
+#: product and nothing about the household.
+from puffpai import USER_AGENT as FEED_USER_AGENT  # noqa: E402
+
+_PROBE_DOOR = Door(
+    id="build_probe", hosts=(), purpose="One look at a sample reply while "
+    "building.", data_sent="A request for the sample address only.",
+    config_flag="build_probe", env_var=BUILD_PROBE_ENV,
+    consent_kind="owner_flag", enforcement="registry", probe_ok=False,
+    settings_hint="The build could not take a sample look at that service.",
+    default=False, dynamic_hosts=False,
+)
+
+
+#: What the owner is told when the Bridge holds a sample look back.
+SAMPLE_LOOK_HELD_LINE = (
+    "The Bridge is up and \"Looking at a service before adding it\" is not "
+    "switched on, so nothing was fetched. You can switch it on in Settings, "
+    "Bridge switches, Service previews.")
+
+
+def sample_look_held() -> bool:
+    """True when the Bridge (or the owner's switch) keeps sample looks in. Fails closed."""
+    try:
+        from puffpai.security import outside_switches
+        return outside_switches.is_off(SAMPLE_LOOK_SERVICE)
+    except Exception:  # unreadable: held, never let out
+        return True
+
+
+def build_probe_get(url: str, *, host: str, build_online: bool,
+                    max_bytes: int = BUILD_PROBE_MAX_BYTES,
+                    timeout: float = DEFAULT_TIMEOUT,
+                    resolver=None) -> dict[str, Any]:
+    """Fetch one sample reply from *url* on *host*, or raise :class:`EgressBlocked`.
+
+    Returns ``{"status", "content_type", "bytes", "truncated", "body"}`` where
+    ``body`` is at most *max_bytes* (capped at :data:`BUILD_PROBE_MAX_BYTES`)
+    raw bytes. The body is data; this function never parses or follows it.
+    Every look -- and every refusal -- is one line in the outside-traffic log
+    under the ``sample_look`` service, host only.
+    """
+    from puffpai.security import egress_ledger
+    pd = _PROBE_DOOR
+
+    def _refuse(reason: str, message: str, code: str) -> EgressBlocked:
+        blocked = EgressBlocked(pd.id, reason, message, code=code)
+        egress_ledger.record(SAMPLE_LOOK_SERVICE,
+                             host=egress_ledger.safe_host(url),
+                             outcome="refused", code=code, what="sample_look",
+                             bytes_in=0, bytes_out=0)
+        return blocked
+
+    kill = os.environ.get(BUILD_PROBE_ENV)
+    if kill is not None and _as_bool(kill) is False:
+        raise _refuse(f"{BUILD_PROBE_ENV}=off",
+                      "Sample looks at outside services are switched off on "
+                      "this computer, so nothing was fetched.",
+                      "turned_off_here")
+    if _owner_switch(SAMPLE_LOOK_SERVICE) is False:
+        raise _refuse("the owner switched sample looks off",
+                      "Sample looks at outside services are switched off, so "
+                      "nothing was fetched.", "switched_off")
+    if sample_look_held():
+        # With the Bridge up only an explicit ON lets a look
+        # out (this file is a listed exit, so the connect-time backstop
+        # cannot tell a look from any other request it makes).
+        raise _refuse("the Bridge is up and sample looks are not switched on",
+                      SAMPLE_LOOK_HELD_LINE, "bridge_up")
+    if build_online is not True:
+        raise _refuse("the build is not online",
+                      "This build was set up to stay offline while building, "
+                      "so nothing was fetched.", "bot_offline")
+    want = _clean_host(host)
+    if not is_registrable_hostname(want):
+        raise _refuse(f"host {_shown(host)} is not a public name",
+                      "That service's address was not a normal public web "
+                      "address, so nothing was fetched.", "not_on_list")
+    try:
+        parts = urlsplit(str(url or "").strip())
+        port = parts.port or 443
+    except ValueError:
+        raise _refuse("unparseable url", "That web address could not be read.",
+                      "not_allowed")
+    if parts.scheme.lower() != "https" or port != 443:
+        raise _refuse("not https on 443",
+                      "That request was refused because it was not an "
+                      "ordinary encrypted connection.", "not_encrypted")
+    if parts.username or parts.password:
+        raise _refuse("url carries credentials", "That web address was refused.",
+                      "not_allowed")
+    got = _clean_host(parts.hostname or "")
+    if got != want:
+        raise _refuse(f"url host {got!r} is not {want!r}",
+                      "That address was not on the service it claimed to be, "
+                      "so nothing was fetched.", "not_on_list")
+    try:
+        answers = _check_resolved_public(pd, got, 443, resolver)
+    except EgressBlocked as blocked:
+        egress_ledger.record(SAMPLE_LOOK_SERVICE, host=got, outcome="refused",
+                             code=reason_code(blocked), what="sample_look",
+                             bytes_in=0, bytes_out=0)
+        raise
+    pin = _new_pin(resolver)
+    pin_add(pin, got, answers)
+
+    limit = max(1, min(int(max_bytes), BUILD_PROBE_MAX_BYTES))
+    headers = {"User-Agent": FEED_USER_AGENT, "Accept": "application/json"}
+    out = _bytes_out("GET", parts.geturl(), headers, None)
+    try:
+        resp = _send("GET", parts.geturl(), pin=pin, timeout=timeout,
+                     allow_redirects=False, stream=True, headers=headers)
+    except Exception:
+        refused = getattr(pin, "refused", None)
+        if refused is not None:
+            raise _refuse(f"pinned connection refused: {refused.reason}",
+                          "That request tried to reach an address on this "
+                          "machine or this network, so nothing was sent.",
+                          getattr(refused, "code", "inside_address")) from None
+        egress_ledger.record(SAMPLE_LOOK_SERVICE, host=got, outcome="failed",
+                             code="no_answer", what="sample_look",
+                             bytes_out=out)
+        raise
+    total = 0
+    try:
+        _verify_peer(pd, resp, got)
+        if resp.status_code in (301, 302, 303, 307, 308):
+            egress_ledger.record(SAMPLE_LOOK_SERVICE, host=got, outcome="done",
+                                 status=resp.status_code, what="sample_look",
+                                 bytes_in=0, bytes_out=out)
+            raise EgressBlocked(pd.id, f"redirect ({resp.status_code})",
+                                "That service sent the request somewhere else, "
+                                "so nothing was fetched.", code="redirected_away")
+        chunks: list[bytes] = []
+        truncated = False
+        for chunk in resp.iter_content(chunk_size=16384):
+            if not chunk:
+                continue
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > limit:
+                truncated = True
+                break
+        body = b"".join(chunks)[:limit]
+        egress_ledger.record(SAMPLE_LOOK_SERVICE, host=got, outcome="done",
+                             status=resp.status_code, what="sample_look",
+                             bytes_in=total, bytes_out=out)
+        return {"status": int(resp.status_code),
+                "content_type": str(resp.headers.get("Content-Type") or "")[:120],
+                "bytes": len(body), "truncated": truncated, "body": body}
+    finally:
+        try:
+            resp.close()
+        except Exception:  # pragma: no cover - a stub transport
+            pass
+
+
+#: The outside-services id sample looks are logged and switched under.
+SAMPLE_LOOK_SERVICE = "sample_look"
 
 
 __all__ = [
@@ -2447,4 +5953,52 @@ __all__ = [
     "REASON_RESOLVED_PRIVATE",
     "REASON_UNRESOLVABLE",
     "set_resolver_override",
+    "APPS_KILL_ENV",
+    "OPEN_POSTURE",
+    "BUILD_PROBE_ENV",
+    "SAMPLE_LOOK_SERVICE",
+    "BUILD_PROBE_MAX_BYTES",
+    "FEED_USER_AGENT",
+    "WEB_ANSWER_HEADERS",
+    "WEB_DOOR_SUFFIX",
+    "WEB_MAX_REDIRECTS",
+    "WEB_METHODS",
+    "WEB_REFUSALS",
+    "WEB_REQUEST_HEADERS",
+    "app_door",
+    "app_door_consent",
+    "app_web_hosts",
+    "app_web_request",
+    "clear_web_app_doors",
+    "register_web_app_door",
+    "set_app_web_hosts",
+    "switch_off_web_hosts",
+    "unregister_web_app_door",
+    "web_app_door",
+    "web_app_ids",
+    "web_door_id",
+    "build_probe_get",
+    "door_states",
+    "internal_address_reason",
+    "is_app_door",
+    "is_ip_literal",
+    "is_registrable_hostname",
+    "set_app_door_consent",
+    "reason_code",
+    "resolve_addresses",
+    "run_posture",
+    "settings_hint",
+    "shut_reason",
+    "KEYED_DOORS",
+    "MAX_FEED_DOOR_HOSTS",
+    "RESULT_PICTURES",
+    "RESULT_PICTURE_MAX_BYTES",
+    "feed_doors",
+    "register_feed_doors",
+    "result_picture_get",
+    "sample_look_held",
+    "SAMPLE_LOOK_HELD_LINE",
+    "setup_check_hop",
+    "fetch_key_hosts",
+    "CREDENTIAL_PLACEMENTS",
 ]

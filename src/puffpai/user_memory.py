@@ -163,10 +163,6 @@ class UserMemory:
         if len(recent) > self.MAX_RECENT_TOPICS:
             self.data['recent_topics'] = recent[-self.MAX_RECENT_TOPICS:]
 
-    def set_preference(self, key: str, value: str):
-        """Explicitly set a user preference."""
-        self.data['preferences'][key] = value
-
     def get_memory_context(self) -> str:
         """Build a concise context string for LLM system prompt injection.
 

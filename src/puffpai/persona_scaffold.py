@@ -110,9 +110,28 @@ def surface_taxonomy_entries() -> dict[str, dict[str, Any]]:
     exists exactly as long as the persona's folder does.
     """
     return {persona_surface(app_id): {
-        "label": f"{app_id}, a persona you made",
+        "label": _owner_app_label(app_id),
         "sensitive": False,
     } for app_id in scaffolded_ids()}
+
+
+def _owner_app_label(app_id: str) -> str:
+    """The owner's app in words: its own name, and whether it is a live card.
+
+    A live card this build made (it has a ``feed`` block) is not a persona, and
+    its folder name is an id nobody should have to read. Never raises.
+    """
+    try:
+        path = os.path.join(app_registry.user_apps_dir(), app_id,
+                            app_registry.MANIFEST_NAME)
+        with open(path, "r", encoding="utf-8") as fh:
+            manifest = json.load(fh)
+    except (OSError, ValueError):
+        manifest = {}
+    name = str((manifest or {}).get("name") or app_id).strip()[:60] or app_id
+    if isinstance(manifest, dict) and isinstance(manifest.get("feed"), dict):
+        return f"{name} (a live card)"
+    return f"{name}, a persona you made"
 
 
 #: Where the generic app page lives in THIS tree's dashboard: an app with no page
@@ -233,15 +252,58 @@ def goal_keywords(goal: str) -> list[str]:
     router to answer for the word "help".
     """
     from puffpai import build_interview
+    from puffpai.catalogs import goal_words
 
     clean = _ascii_plain(goal, MAX_GOAL_CHARS)
     words = build_interview._content_tokens(clean)
-    ordered = [w for w in _WORD_RE.findall(clean.lower()) if w in words]
+    # Only words goal_words.search_terms keeps, so nothing personal and no
+    # news or filler word becomes a router keyword (else "WeddingBot" answers
+    # to "sister" and "able").
+    keep: set[str] = set()
+    for t in goal_words.search_terms(str(goal or ""), limit=24):
+        keep |= {t, goal_words.singular(t)}
+    ordered = [w for w in _WORD_RE.findall(clean.lower())
+               if w in words and (w in keep or goal_words.singular(w) in keep)]
     out: list[str] = []
     for word in ordered:
         if word not in out and len(word) >= app_registry.MIN_KEYWORD_LEN:
             out.append(word)
     return out[:MAX_GOAL_KEYWORDS]
+
+
+#: Goal words that are never the topic: feelings, wants, filler and the
+#: words for a bot itself. "I love dinosaurs" is about dinosaurs, not love.
+NOT_TOPIC_WORDS = frozenset({
+    "love", "like", "want", "wants", "need", "needs", "works", "work", "helper",
+    "helps", "buddy", "friend", "smart", "keep", "keeps", "running", "stuff",
+    "cool", "thing", "things", "every", "everything", "knows", "know", "tips",
+    "bot", "bots", "assistant", "about", "shows", "show", "help", "make",
+})
+
+
+def topic_word(goal: str) -> str:
+    """The goal's topic in one word: "I love dinosaurs" -> "dinosaur".
+
+    The first word of the bot's one topic phrase
+    (:func:`puffpai.bot_identity.topic_phrase`, which also names the daily
+    update and the greeting), letters only, lower case, singular: "Help me
+    bake bread" -> "bread", never "bake". When the goal has no topic phrase,
+    the first meaningful goal word (:data:`NOT_TOPIC_WORDS` skipped). ""
+    when nothing fits.
+    """
+    try:
+        from puffpai import bot_identity
+        phrase = bot_identity.topic_phrase(str(goal or ""), form="subject")
+    except Exception:  # noqa: BLE001 - the plain word list below still works
+        phrase = ""
+    words = [w.lower() for w in phrase.split() if w.isalpha() and len(w) >= 3]
+    for word in words[:1] or [w for w in goal_keywords(str(goal or ""))
+                              if w.isalpha() and len(w) >= 3
+                              and w not in NOT_TOPIC_WORDS][:1]:
+        if word.endswith("s") and not word.endswith("ss") and len(word) > 4:
+            word = word[:-1]
+        return word
+    return ""
 
 
 def suggest_id(name: str, goal: Any = "") -> str:
@@ -363,7 +425,8 @@ def preview(app_id: Any, name: Any = "", goal: Any = "",
                                  app_registry.MANIFEST_NAME),
         "pack_path": os.path.join(app_registry.user_packs_dir(), request["id"],
                                   app_registry.PACK_MANIFEST_NAME),
-        "taken": request["id"] in app_registry.installed_ids(manifests),
+        "taken": request["id"] in app_registry.installed_ids(
+            app_registry.load_manifests(include_off=True)),
         "pack_taken": request["id"] in pack_ids,
         "suggested_id": suggest_id(request["name"]),
     }
@@ -405,14 +468,18 @@ def build_app_manifest(app_id: str, name: str, goal: str = "",
              "says": f"remove something from the {label} list"},
         ]
 
-    blurb = (f"Scaffolded from your goal: {clean_goal}" if clean_goal
-             else f"{display}, scaffolded with no goal recorded.")
+    # The owner's whole goal sentence ("My brother just got engaged ...")
+    # must never be the bot's tagline on the home page or the Apps page: the
+    # tagline is the bot's plain subject. The goal itself is kept in the app's
+    # own record ("goal"), read back by goal_of and never copied to a page.
+    blurb = tagline(clean_goal, display)
 
     manifest: dict[str, Any] = {
         "schema": app_registry.SCHEMA,
         "id": app_id,
         "name": display,
         "blurb": _ascii_plain(blurb, MAX_BLURB_CHARS),
+        "goal": clean_goal,
         "version": "1.0.0",
         "author": "You",
         "license": "Apache-2.0",
@@ -563,7 +630,7 @@ def scaffold(app_id: str, *, name: str = "", goal: str = "",
             f"'{app_id}' already exists here: {', '.join(existing)}. Pick "
             f"another id, or edit that file - nothing of yours is overwritten.")
 
-    for other in app_registry.load_manifests():
+    for other in app_registry.load_manifests(include_off=True):
         if str(other.get("id")) == app_id:
             raise ScaffoldError(
                 f"An app called '{app_id}' is already installed on this build. "
@@ -806,14 +873,37 @@ def _lists_in_order(manifest: dict[str, Any]) -> list[str]:
 _GOAL_BLURB_PREFIX = "Scaffolded from your goal: "
 
 
-def goal_of(manifest: dict[str, Any]) -> str:
-    """The goal recorded in a scaffolded app's blurb, or "".
+def tagline(goal: str, name: str = "") -> str:
+    """The line shown under a scaffolded bot's name: its plain subject ("A
+    wedding planner bot."), never the owner's goal sentence, which may tell their
+    family's news. With no subject, a plain line
+    that says nothing about the owner."""
+    from puffpai.catalogs import personal_words
+    try:
+        subject = personal_words.subject_of(str(goal or ""))
+    except Exception:  # noqa: BLE001 - the plain line below still works
+        subject = ""
+    subject = _ascii_plain(subject, 60).strip()
+    if subject:
+        article = "An" if subject[:1].lower() in "aeiou" else "A"
+        return f"{article} {subject} bot."
+    label = _ascii_plain(name, app_registry.MAX_UI_NAME_LEN).strip()
+    return f"{label}, made from your goal." if label else "Made from your goal."
 
-    The blurb is where :func:`build_app_manifest` puts it, so this reads it back
-    rather than asking the owner to retype their goal on every edit. A blurb the
-    owner rewrote by hand simply yields no goal, which costs the vocabulary a few
-    keywords and loses nothing.
+
+def goal_of(manifest: dict[str, Any]) -> str:
+    """The goal recorded in a scaffolded app's record, or "".
+
+    :func:`build_app_manifest` keeps it in the app's own ``goal`` field, so
+    this reads it back rather than asking the owner to retype their goal on
+    every edit. An older app keeps it in its blurb
+    ("Scaffolded from your goal: ..."), which is still read. A blurb the
+    owner rewrote by hand simply yields no goal, which costs the vocabulary a
+    few keywords and loses nothing.
     """
+    goal = manifest.get("goal")
+    if isinstance(goal, str) and goal.strip():
+        return goal.strip()
     blurb = str(manifest.get("blurb") or "")
     if blurb.startswith(_GOAL_BLURB_PREFIX):
         return blurb[len(_GOAL_BLURB_PREFIX):].strip()
@@ -937,7 +1027,7 @@ def rename_id(app_id: str, new_id: str) -> dict[str, Any]:
         raise ScaffoldError(
             f"'{new_id}' already exists here: {', '.join(taken)}. Pick another "
             f"id - nothing of yours is overwritten, so nothing was changed.")
-    for other in app_registry.load_manifests():
+    for other in app_registry.load_manifests(include_off=True):
         if str(other.get("id")) == new_id:
             raise ScaffoldError(
                 f"An app called '{new_id}' is already installed on this build. "
@@ -1116,9 +1206,21 @@ def repair_surfaces() -> dict[str, Any]:
         except ScaffoldError:
             continue
         declared = [str(s) for s in (manifest.get("surfaces") or [])]
-        if surface not in declared:
-            updated = dict(manifest)
+        updated = dict(manifest)
+        missing_surface = surface not in declared
+        if missing_surface:
             updated["surfaces"] = [surface]
+        # An older app shows the owner's goal sentence as its tagline ("Scaffolded
+        # from your goal: ..."). The
+        # goal moves to the app's own record and the tagline becomes the
+        # bot's plain subject. Only these two fields change.
+        legacy = str(manifest.get("blurb") or "")
+        if legacy.startswith(_GOAL_BLURB_PREFIX) and not manifest.get("goal"):
+            old_goal = legacy[len(_GOAL_BLURB_PREFIX):].strip()
+            updated["goal"] = old_goal
+            updated["blurb"] = _ascii_plain(
+                tagline(old_goal, str(manifest.get("name") or "")), MAX_BLURB_CHARS)
+        if updated != manifest:
             if app_registry.validate_manifest(
                     updated, _known_surfaces(app_id)) is None:
                 try:
@@ -1130,8 +1232,9 @@ def repair_surfaces() -> dict[str, Any]:
                 # allowlist. A persona that already declares one and is not on
                 # the list is not broken - it is an owner who took it off, and
                 # putting it back on every read would make that impossible.
-                add[surface] = _surface_reason(
-                    app_id, str(manifest.get("name") or ""))
+                if missing_surface:
+                    add[surface] = _surface_reason(
+                        app_id, str(manifest.get("name") or ""))
 
     if add:
         out["build_manifest"] = _update_build_surfaces(add=add)
@@ -1196,6 +1299,7 @@ def owner_apps() -> list[dict[str, Any]]:
     manifest - nothing about the router's vocabulary is exposed here.
     """
     _repair_quietly()
+    own = build_persona_id()
     out: list[dict[str, Any]] = []
     for manifest in app_registry.current_manifests():
         app_id = str(manifest.get("id") or "")
@@ -1207,12 +1311,55 @@ def owner_apps() -> list[dict[str, Any]]:
             "id": app_id,
             "name": str(manifest.get("name") or app_id),
             "blurb": str(manifest.get("blurb") or ""),
+            # What the bot is for, as the pages show it: its plain subject,
+            # never the owner's goal sentence. The sentence stays in the app's
+            # own record for the bot itself.
+            "goal": tagline(goal_of(manifest), str(manifest.get("name") or ""))
+            if goal_of(manifest) else "",
             "route": str((ui or {}).get("route") or f"{ROUTE_PREFIX}{app_id}"),
             "lists": keys,
             "list_labels": [list_label(key) for key in keys],
             "try": try_phrase(keys[0]) if keys else "",
+            # A persona with nothing in it: no list to keep and no saved row.
+            # The Apps page and the home launcher leave such a tile out; the
+            # bot's own page and rail entry stay.
+            "empty": _persona_is_empty(app_id, manifest, keys),
+            # The bot's own page (the place the build scaffolded for itself),
+            # not an app the owner added: no "Remove this app" on it.
+            "own": bool(own) and app_id == own,
         })
     return out
+
+
+def build_persona_id() -> str:
+    """The id of the place this build scaffolded for the bot itself, or ""."""
+    try:
+        from puffpai import build_manifest, prove
+        manifest = build_manifest.read_manifest() or {}
+        block = manifest.get("persona") if isinstance(manifest, dict) else None
+        return prove.persona_id_of(block if isinstance(block, dict) else {})
+    except Exception:  # noqa: BLE001 - unknown means "not the bot's own"
+        return ""
+
+
+def _persona_is_empty(app_id: str, manifest: dict[str, Any],
+                      keys: list[str]) -> bool:
+    """True only for a scaffolded persona that declares no list and holds no
+    row. Any other app, an unreadable store, or a list declared (even an empty
+    one the owner is about to fill) is not empty: hiding is the rare case."""
+    surfaces = manifest.get("surfaces") or []
+    if persona_surface(app_id) not in surfaces or keys:
+        return False
+    try:
+        from puffpai import app_data as app_data_mod
+        document = app_data_mod.AppData().get_data(app_id)
+    except Exception:  # noqa: BLE001 - unreadable means "show it"
+        return False
+    if document is None:
+        return True
+    if not isinstance(document, dict):
+        return False
+    return not any(isinstance(v, list) and v for v in document.values())
 
 
 def is_user_persona(app_id: Any) -> bool:

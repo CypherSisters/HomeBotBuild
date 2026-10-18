@@ -83,6 +83,15 @@ class KnowledgeIngestion:
     CHUNK_SIZE = 800       # characters per chunk
     CHUNK_OVERLAP = 100    # overlap between chunks
 
+    # A ZIM pack's chunks are written this many at a time. One write per
+    # article made a 10 MB pack take about 23 minutes (about five articles a
+    # second, measured); the embedder and the store both do far
+    # better on a batch.
+    ZIM_BATCH_CHUNKS = 256
+
+    # How often ingest_zim reports progress, in articles stored.
+    PROGRESS_EVERY = 250
+
     def __init__(self, vault_collection=None, knowledge_collection=None):
         """Initialize with ChromaDB collection handles.
 
@@ -93,6 +102,10 @@ class KnowledgeIngestion:
         self._vault = vault_collection
         self._knowledge = knowledge_collection
         self.last_skipped = 0  # articles skipped by ingest_zim's resume filter
+        # Called with the number of articles stored so far, every
+        # PROGRESS_EVERY articles, while a ZIM pack is being indexed.
+        self.on_progress = None
+        self._batch = None  # knowledge chunks waiting to be written (ZIM only)
 
     # ── Text Ingestion ──────────────────────────────────────────────────────
 
@@ -152,7 +165,13 @@ class KnowledgeIngestion:
 
         # Store in ChromaDB
         collection = self._vault if zone == TargetZone.VAULT else self._knowledge
-        if collection is not None:
+        batch = getattr(self, '_batch', None)
+        if collection is not None and batch is not None \
+                and zone == TargetZone.KNOWLEDGE:
+            batch.extend(chunks)
+            if len(batch) >= self.ZIM_BATCH_CHUNKS:
+                self._flush_batch()
+        elif collection is not None:
             self._store_chunks(collection, chunks)
 
         return IngestedDocument(
@@ -244,10 +263,23 @@ class KnowledgeIngestion:
         from .zim_reader import ZIMReader
 
         results = []
-        count = 0
         self.last_skipped = 0
         mimes = self.INDEXABLE_MIMES if include_media_text else ('text/html',)
+        self._batch = []
+        try:
+            self._ingest_zim_articles(zim_path, ZIMReader, mimes, results,
+                                      max_articles, min_text_length,
+                                      skip_doc_ids, provenance)
+            self._flush_batch()
+        finally:
+            self._batch = None
+        return results
 
+    def _ingest_zim_articles(self, zim_path, ZIMReader, mimes, results,
+                             max_articles, min_text_length, skip_doc_ids,
+                             provenance) -> None:
+        """The article loop of :meth:`ingest_zim`; chunks go to ``self._batch``."""
+        count = 0
         with ZIMReader(zim_path) as reader:
             namespace = self._detect_article_namespace(reader)
 
@@ -289,8 +321,32 @@ class KnowledgeIngestion:
                 doc.file_origin = zim_path
                 results.append(doc)
                 count += 1
+                progress = getattr(self, 'on_progress', None)
+                if progress is not None and count % self.PROGRESS_EVERY == 0:
+                    try:
+                        progress(count)
+                    except Exception:  # noqa: BLE001 - a report never stops indexing
+                        pass
 
-        return results
+    def _flush_batch(self) -> None:
+        """Write the waiting knowledge chunks in one call.
+
+        A pack can hold the same article twice; its chunks share an id, and
+        one write with a repeated id is refused, so repeats are dropped here
+        (the store keeps the first copy either way).
+        """
+        batch = getattr(self, '_batch', None)
+        if not batch:
+            return
+        seen: set = set()
+        unique = []
+        for chunk in batch:
+            if chunk.chunk_id in seen:
+                continue
+            seen.add(chunk.chunk_id)
+            unique.append(chunk)
+        batch.clear()
+        self._store_chunks(self._knowledge, unique)
 
     # ── ZIM namespace handling ──────────────────────────────────────────────
 
@@ -457,8 +513,17 @@ class KnowledgeIngestion:
             ))
             return chunks
 
-        # Split by paragraphs first, then merge into chunks
-        paragraphs = re.split(r'\n\s*\n', text)
+        # Split by paragraphs first, then merge into chunks. A paragraph longer
+        # than one chunk (or text with no blank lines at all) is cut into
+        # sentence windows first, so no chunk is a whole article.
+        from .chunking import chunk_windows
+        paragraphs = []
+        for para in re.split(r'\n\s*\n', text):
+            if len(para.strip()) > self.CHUNK_SIZE:
+                paragraphs.extend(chunk_windows(para, self.CHUNK_SIZE,
+                                                self.CHUNK_OVERLAP))
+            else:
+                paragraphs.append(para)
         current_chunk = ''
         chunk_idx = 0
 

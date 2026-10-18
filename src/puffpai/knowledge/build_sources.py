@@ -55,10 +55,13 @@ STATUS_OFFERED = "offered"
 FORM_DOCUMENTS = "documents"
 FORM_LIVE_SOURCE = "live_source"
 
-#: The only command in this build that downloads a vetted source. There is no
-#: `puffpai sources fetch`; the wizard's sourcing step is the download path, and
-#: the size acknowledgement is a separate flag on purpose.
-FETCH_COMMAND = "puffpai setup --yes --fetch-source {source_id} --accept-source-size"
+#: The command that downloads one source after the build. It shows the size and
+#: license and asks for a yes before a byte moves (a script adds
+#: ``--yes --accept-size``, the separate deliberate flag).
+FETCH_COMMAND = "puffpai sources add {source_id}"
+
+#: What ``selected_by`` says for a book the owner added after the build.
+ADDED_BY_OWNER = "added by you"
 
 #: Interview pack ids mapped onto the registry rows that would actually satisfy
 #: them. Only mappings we are confident about: a pack with no row here is
@@ -145,6 +148,34 @@ PACK_SOURCE_IDS: dict[str, tuple[str, ...]] = {
 SYNC_COMMAND = "puffpai knowledge sync"
 
 
+def pack_source_ids(pack: str) -> tuple[str, ...]:
+    """The downloads that would satisfy one interview pack, or ``()``.
+
+    The Kiwix row of ``config/catalog_index.json`` lists, per pack, the source
+    registry ids and ``kiwix:`` book ids that would satisfy it; a pack it does
+    not list falls back to :data:`PACK_SOURCE_IDS`. An id that is neither a
+    ``kiwix:`` book nor a row in the source registry is dropped, and a pack
+    with nothing listed is reported as unmapped rather than guessed at.
+    """
+    try:
+        from puffpai import catalogs
+        row = catalogs.catalog_row("kiwix") or {}
+        listed = (row.get("interview_packs") or {}).get(str(pack)) or []
+    except Exception:  # noqa: BLE001 - no index means the table below
+        listed = []
+    if not isinstance(listed, list):
+        listed = []
+    if not listed:
+        listed = list(PACK_SOURCE_IDS.get(str(pack), ()))
+    from puffpai import source_registry
+    out: list[str] = []
+    for ident in listed:
+        text = str(ident)
+        if text.startswith("kiwix:") or source_registry.get_source(text) is not None:
+            out.append(text)
+    return tuple(out)
+
+
 def _size_label(size_mb: Any) -> str:
     """Plain words for a download size. Unknown stays unknown."""
     try:
@@ -172,6 +203,30 @@ def _load_registry(registry: Optional[dict[str, Any]]) -> dict[str, dict[str, An
         if isinstance(row, dict) and row.get("id"):
             out[str(row["id"])] = row
     return out
+
+
+def _library_entry(source_id: str) -> Optional[dict[str, Any]]:
+    """Label, license and size for a Kiwix book the wizard offered, from the saved list.
+
+    A book the wizard offered but nobody chose is not in any registry file, so
+    without this it would show up as a bare id. Read-only and offline.
+    """
+    if not source_id.startswith("kiwix:"):
+        return None
+    try:
+        from puffpai.catalogs import knowledge_resolver
+        cand = knowledge_resolver.candidate_by_id(source_id)
+    except Exception:  # noqa: BLE001 - a label is a nicety, never a stop
+        return None
+    if not cand:
+        return None
+    size = cand.get("size_bytes")
+    return {"id": source_id, "label": cand.get("name"), "kind": "zim",
+            "license": cand.get("license") if cand.get("fetchable") else "",
+            "license_url": cand.get("license_url") or "",
+            "commercial_use": cand.get("commercial_ok") is True,
+            "what_it_is": cand.get("what_it_is") or "",
+            "size_mb": (size / (1024 * 1024)) if isinstance(size, int) else None}
 
 
 def _sources_dir(data_dir: Optional[str]) -> str:
@@ -370,8 +425,10 @@ def _source_item(source_id: str, entry: dict[str, Any], status: str,
     }
     if status == STATUS_SELECTED_NOT_DOWNLOADED:
         item["command"] = FETCH_COMMAND.format(source_id=source_id)
+        chosen = ("You added this" if ADDED_BY_OWNER in selected_by
+                  else "Chosen during the build")
         item["note"] = (
-            f"Chosen during the build. Nothing was downloaded: this is "
+            f"{chosen}. Nothing was downloaded yet: this is "
             f"{item['size_label']}."
         )
     elif status == STATUS_OFFERED:
@@ -436,12 +493,17 @@ def source_status(
     selected_by: dict[str, list[str]] = {}
     unmapped_packs: list[str] = []
     for pack in packs:
-        mapped = PACK_SOURCE_IDS.get(pack)
+        mapped = pack_source_ids(pack)
         if not mapped:
             unmapped_packs.append(pack)
             continue
         for source_id in mapped:
             selected_by.setdefault(source_id, []).append(pack)
+    # Books the owner added after the build are chosen too, even though the
+    # build record never saw them: the overlay row is the record of that yes.
+    for source_id, row in rows.items():
+        if str(row.get("provenance") or "") == "owner_added":
+            selected_by.setdefault(source_id, []).append(ADDED_BY_OWNER)
 
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -451,7 +513,7 @@ def source_status(
         if source_id in seen:
             continue
         seen.add(source_id)
-        entry = rows.get(source_id) or {"id": source_id}
+        entry = rows.get(source_id) or _library_entry(source_id) or {"id": source_id}
         present = disk.get(source_id)
         on_this_disk = present is not None
         kind = str(entry.get("kind") or "")
@@ -507,8 +569,9 @@ def source_status(
             "selected_by": [pack],
             "command": SYNC_COMMAND,
             "note": ("Chosen during the build. This build has no vetted "
-                     "download for it: put the .zim in the knowledge folder, "
-                     "then run the command."),
+                     "download for this one (its license is not confirmed): put "
+                     "the .zim file in the knowledge folder, then run the "
+                     "command."),
         })
 
     counts = {
@@ -530,7 +593,55 @@ def source_status(
     }
 
 
+def shelf_rows(pack_records: Optional[list[dict]] = None, *,
+               registry: Optional[dict[str, Any]] = None,
+               skip_names: Any = ()) -> list[dict[str, Any]]:
+    """The downloaded books, shaped like the Knowledge shelf's other rows.
+
+    ``GET /knowledge/libraries`` listed only uploads and hand-indexed
+    libraries, so a book fetched by the wizard or by Find more answered in
+    chat and never showed on the shelf. Read from the pack index: every book
+    whose learning finished. Never raises.
+    """
+    from puffpai.knowledge.auto_index import STATUS_COMPLETE
+
+    rows = _load_registry(registry)
+    skip = {str(n).strip().lower() for n in skip_names or ()}
+    out: list[dict[str, Any]] = []
+    for record in _pack_records(pack_records):
+        if str(record.get("status")) != STATUS_COMPLETE:
+            continue
+        source_id = str(record.get("source_id") or "")
+        filename = os.path.basename(str(record.get("filename") or ""))
+        entry = rows.get(source_id) or (_library_entry(source_id)
+                                        if source_id else None) or {}
+        name = str(entry.get("label") or record.get("name")
+                   or os.path.splitext(filename)[0] or source_id or "Downloaded book")
+        if name.strip().lower() in skip:
+            continue
+        skip.add(name.strip().lower())
+        try:
+            size = os.path.getsize(str(record.get("path") or ""))
+        except OSError:
+            size = 0
+        indexed_at = str(record.get("indexed_at") or "")
+        out.append({
+            "name": name, "collection": "", "zone": "knowledge",
+            "library_id": f"book:{source_id or filename}",
+            # A book whose quick stage is done answers from every article
+            # already, before (or without) its deeper passages.
+            "chunk_count": (max(int(record.get("chunks") or 0), int(record.get("docs") or 0))
+                            if record.get("quick") == "complete"
+                            else int(record.get("chunks") or 0)), "size": size,
+            "added": indexed_at, "uploaded_at": "", "is_upload": False,
+            "source_available": False, "source_content_type": "",
+            "downloaded": True,
+        })
+    return out
+
+
 __all__ = [
+    "shelf_rows",
     "SCHEMA",
     "STATUS_INDEXED",
     "STATUS_FETCHED_NOT_INDEXED",
@@ -539,7 +650,9 @@ __all__ = [
     "FORM_DOCUMENTS",
     "FORM_LIVE_SOURCE",
     "FETCH_COMMAND",
+    "ADDED_BY_OWNER",
     "PACK_SOURCE_IDS",
+    "pack_source_ids",
     "on_disk_sources",
     "source_status",
 ]

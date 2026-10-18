@@ -21,7 +21,13 @@ as lists and strings. No field is ever imported, resolved to a module path,
 untrusted input, and the routing layer being keyword-based rather than
 prompt-injected tool definitions is what makes a hostile app's vocabulary
 harmless: it can add words to a matcher, and that is all it can do. Do not
-"improve" routing by feeding app declarations to the model as text.
+"improve" routing by feeding app declarations to the model as text. The one
+exception is narrow and does not come from a manifest: for a browser app
+Toolsmith added (``kind: "web"``), the action words Toolsmith's
+compiler made from the app itself and Drawbridge checked (R1-R12, sealed, see
+:mod:`puffpai.webapps.recipes`) may be shown to the model as tool
+descriptions. A web manifest itself still carries no words for the router and
+no actions.
 
 A declared surface is a claim of membership, not a grant of capability. Naming
 ``house.cameras`` says which existing surface this app belongs to so the gate can
@@ -81,6 +87,12 @@ PACK_MANIFEST_NAME = "pack.json"
 
 CONFIG_NAME = "app_manifests"
 PACK_CONFIG_NAME = "pack_manifests"
+
+#: A SHIPPED app whose manifest says ``"first_app": true`` is one of the bot's
+#: first apps: it ships turned off, and the owner (or the plan's Yes) turns it
+#: on per bot (:mod:`puffpai.first_apps`). An app in the owner's own folder is
+#: never off, whatever its manifest says.
+FIRST_APP_KEY = "first_app"
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +164,23 @@ _SAFE_ROUTE_RE = re.compile(r"^/[A-Za-z0-9._~/-]*$")
 # leading underscore. It is still passed through a containment check before it
 # touches a path - a pattern is a first line of defence, not the only one.
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+# The id Toolsmith issues for an app it added from outside
+# (``integrate.records.new_id``): ``<slug, <=30>-<8 random base32>``. The same
+# rule as :data:`puffpai.webapps.ID_RE` and ``integrate.records.ID_RE``; one
+# rule, so a browser app's manifest is never "not usable" here. Also safe as a
+# path component: lowercase letters, digits and hyphens, no dot, no leading
+# hyphen. A declarative app's id can never have this shape (no hyphen).
+ISSUED_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,29}-[a-z2-7]{8}\Z")
+
+#: A browser app's manifest (written by ``puffpai.webapps.install``) may hold
+#: exactly these keys; anything else (words for the router, actions, a data
+#: block, a feed, outside services) is refused.
+WEB_KIND = "web"
+_WEB_KEYS = frozenset({"schema", "id", "name", "blurb", "kind", "web", "outside", "ui"})
+_WEB_SOURCE_KEYS = frozenset({"repo", "commit", "license", "sha256"})
+MAX_WEB_NAME_LEN = 64
+MAX_WEB_OUTSIDE = 50
 
 # An exact hostname. A '*' is a VALIDATOR ERROR and not a silently dead door:
 # wildcard hosts fail as a mystery at request time today, and the one field the
@@ -653,13 +682,29 @@ def data_path(app_id: str, data_dir: str) -> str:
     """
     if not valid_id(app_id):
         raise ValueError(f"'{app_id}' is not a valid app id.")
+    if is_issued_id(app_id):
+        # A browser app Toolsmith added keeps its data in the bot's copy of its
+        # own storage (puffpai.webapps.mirror): no second store for it here.
+        raise ValueError(f"'{app_id}' is a browser app; it keeps its own data.")
     return resolve_within(data_dir, f"{app_id}.json")
 
 
+def is_issued_id(app_id: Any) -> bool:
+    """True for an id Toolsmith issued for an app it added (``<slug>-<8>``)."""
+    return isinstance(app_id, str) and bool(ISSUED_ID_RE.match(app_id))
+
+
 def valid_id(app_id: Any) -> bool:
-    """True when an app id is safe to use as a path component."""
+    """True when an app id is safe to use as a path component.
+
+    Either a declarative app's id (lowercase, starts with a letter, letters,
+    digits and underscores, 2 to 32 characters) or an id Toolsmith issued
+    (:data:`ISSUED_ID_RE`).
+    """
     if not isinstance(app_id, str):
         return False
+    if is_issued_id(app_id):
+        return True
     if not (MIN_ID_LEN <= len(app_id) <= MAX_ID_LEN):
         return False
     return bool(_ID_RE.match(app_id))
@@ -707,6 +752,9 @@ def validate_manifest(
             f"reads '{SCHEMA}'."
         )
 
+    if data.get("kind") == WEB_KIND or is_issued_id(data.get("id")):
+        return _validate_web_manifest(data)
+
     app_id = data.get("id")
     if not valid_id(app_id):
         return (
@@ -721,6 +769,9 @@ def validate_manifest(
     for field in ("blurb", "version", "author", "license"):
         if field in data and not _ascii_text(data.get(field), MAX_LABEL_LEN):
             return f"App '{app_id}' has an unusable '{field}'."
+
+    if FIRST_APP_KEY in data and not isinstance(data.get(FIRST_APP_KEY), bool):
+        return f"App '{app_id}' says '{FIRST_APP_KEY}' with something other than true or false."
 
     if "order" in data:
         order = data.get("order")
@@ -762,6 +813,14 @@ def validate_manifest(
     problem = _validate_privacy(app_id, data)
     if problem is not None:
         return problem
+
+    if "feed" in data:
+        # A live-data block: one named outside service, GET only, no code.
+        # Validated in full by puffpai.feeds, which refuses unknown fields.
+        from puffpai import feeds
+        problem = feeds.validate_feed(app_id, data.get("feed"))
+        if problem is not None:
+            return problem
 
     return _validate_ui(app_id, data.get("ui"))
 
@@ -863,11 +922,11 @@ def _validate_data(app_id: Any, block: Any) -> Optional[str]:
 
 
 def _validate_privacy(app_id: Any, data: Any) -> Optional[str]:
-    """The five Phase-A privacy fields, and nothing else.
+    """The five required privacy fields, and nothing else.
 
     ``doors[].hosts[]``, ``doors[].purpose``, ``doors[].data_sent_plain``,
     ``credential.kind``, ``children.may_be_used_by_minor``. The full 34-field
-    contract is Phase B and deliberately not required here: a ceremony in front
+    contract is deliberately not required here: a ceremony in front
     of an unenforced runtime taxes the honest author and costs a liar ninety
     seconds. ``hosts[]`` is the ONE field this box can independently check, so
     it is the one held to an exact-hostname rule.
@@ -979,6 +1038,70 @@ def _validate_privacy(app_id: Any, data: Any) -> Optional[str]:
     return None
 
 
+def _display_text(value: Any, limit: int) -> bool:
+    """Printable text for the dashboard (any language), bounded, one line.
+
+    A browser app's name comes from its own title, cleaned by Toolsmith
+    (``webapps.install.friendly_name``); it is rendered as plain text only.
+    Control, format (for example a right-to-left override), separator and line
+    characters other than a plain space are refused.
+    """
+    import unicodedata
+    if not isinstance(value, str) or not value.strip() or len(value) > limit:
+        return False
+    return all(ch == " " or unicodedata.category(ch)[0] not in ("C", "Z") for ch in value)
+
+
+def _validate_web_manifest(data: dict) -> Optional[str]:
+    """A browser app's manifest: data only, and only the fields it may have.
+
+    It declares no surfaces, no words for the router, no actions and no data
+    block: what the bot can do in the app are Toolsmith-compiled,
+    Drawbridge-checked actions kept apart from the manifest, and its data is
+    the bot's copy of the app's own storage.
+    """
+    app_id = data.get("id")
+    if data.get("kind") != WEB_KIND or not is_issued_id(app_id):
+        return (
+            f"App id {app_id!r} is not usable. A browser app's id is the one "
+            f"Toolsmith issued, and its manifest says kind 'web'."
+        )
+    extra = sorted(str(k) for k in data if k not in _WEB_KEYS)
+    if extra:
+        return f"Browser app '{app_id}' declares fields it may not have: {', '.join(extra[:5])}."
+    if not _display_text(data.get("name"), MAX_WEB_NAME_LEN):
+        return f"Browser app '{app_id}' has no usable display name."
+    if "blurb" in data and not _display_text(data.get("blurb"), MAX_UI_BLURB_LEN):
+        return f"Browser app '{app_id}' has an unusable blurb."
+    web = data.get("web")
+    if not isinstance(web, dict) or set(web) - {"source", "files_root", "entry", "storage"}:
+        return f"Browser app '{app_id}' has an unusable web block."
+    if web.get("entry") != "index.html" or web.get("storage") != "mirror":
+        return f"Browser app '{app_id}' has an unusable web block."
+    if not isinstance(web.get("files_root"), str) or len(web["files_root"]) > 1024:
+        return f"Browser app '{app_id}' has an unusable web block."
+    source = web.get("source", {})
+    if not isinstance(source, dict) or set(source) - _WEB_SOURCE_KEYS or not all(
+            isinstance(v, str) and len(v) <= 300 for v in source.values()):
+        return f"Browser app '{app_id}' has an unusable source."
+    outside = data.get("outside", [])
+    if not isinstance(outside, list) or len(outside) > MAX_WEB_OUTSIDE:
+        return f"Browser app '{app_id}' has an unusable outside list."
+    for row in outside:
+        if not isinstance(row, dict) or set(row) - {"host", "for", "learned"}:
+            return f"Browser app '{app_id}' has an unusable outside list."
+        host = row.get("host")
+        if not isinstance(host, str) or len(host) > MAX_HOST_LEN or not _HOST_RE.match(host):
+            return f"Browser app '{app_id}' names an unusable outside host."
+        if not _display_text(row.get("for"), 80) or row.get("learned") != "scan":
+            return f"Browser app '{app_id}' has an unusable outside list."
+    ui = data.get("ui")
+    if not isinstance(ui, dict) or set(ui) != {"route"} \
+            or ui.get("route") != f"/dashboard/apps/{app_id}":
+        return f"Browser app '{app_id}' must open at /dashboard/apps/{app_id} and nowhere else."
+    return None
+
+
 def _validate_ui(app_id: Any, ui: Any) -> Optional[str]:
     if ui is None:
         return None
@@ -1016,8 +1139,18 @@ def _sort_key(manifest: dict) -> tuple:
     return (order, str(manifest.get("id", "")))
 
 
-def load_manifests(path: Optional[str] = None) -> list:
-    """Every valid installed manifest, in consultation order.
+def is_first_app(manifest: dict[str, Any]) -> bool:
+    """True for a SHIPPED app that starts turned off (``"first_app": true``)."""
+    app_id = manifest.get("id") if isinstance(manifest, dict) else None
+    if (manifest.get(FIRST_APP_KEY) is not True or not valid_id(app_id)
+            or is_issued_id(app_id)):
+        return False
+    return os.path.isfile(os.path.join(_apps_dir(), str(app_id), MANIFEST_NAME))
+
+
+def load_manifests(path: Optional[str] = None, *,
+                   include_off: bool = False) -> list[dict[str, Any]]:
+    """Every valid installed manifest that is turned on, in consultation order.
 
     Installing is rescanning: this function IS the install mechanism. One bad
     manifest does not take the others down - it is recorded through
@@ -1034,6 +1167,12 @@ def load_manifests(path: Optional[str] = None) -> list:
     owner's :func:`user_apps_dir` - so a build whose checkout is read-only can
     still be extended. A named ``path`` scans exactly that folder and nothing
     else, which is what every caller that passes one means.
+
+    With no ``path``, a first app (:func:`is_first_app`) that this bot has not
+    turned on is left out: it is not in the sidebar, not offered to the brain
+    and not in the router's words. ``include_off=True`` keeps it, for the few
+    callers that must see every app on disk (the data layer, the Apps page's
+    "Your first apps" list, the wizard's suggestions, id collision checks).
     """
     _clear_problems(CONFIG_NAME)
     known_surfaces = set(surface_taxonomy())
@@ -1053,6 +1192,9 @@ def load_manifests(path: Optional[str] = None) -> list:
             f"first {MAX_INSTALLED_APPS}. Remove some and rescan.",
         )
         manifests = manifests[:MAX_INSTALLED_APPS]
+    if path is None and not include_off:
+        from puffpai import first_apps
+        manifests = first_apps.only_on(manifests)
     return manifests
 
 
@@ -1169,6 +1311,9 @@ _cached_fingerprint: Optional[tuple] = None
 #: api_server's AppData instance is the one that matters -- watches this number
 #: instead of re-deriving what changed. See :func:`generation`.
 _generation = 0
+#: Every manifest on disk, turned on or not, keyed by the folders it was read
+#: from (a moved state folder reads again). Dropped by :func:`rescan`.
+_cached_all: Optional[tuple[tuple[str, ...], list[dict[str, Any]]]] = None
 
 
 def _root_fingerprint(root: str) -> tuple:
@@ -1363,6 +1508,17 @@ def current_manifests() -> list:
     return result
 
 
+def all_manifests() -> list[dict[str, Any]]:
+    """Every manifest on disk, first apps that are off included, scanning
+    once per set of folders and reusing until :func:`rescan`."""
+    global _cached_all
+    key = tuple(apps_dirs())
+    with _cache_lock:
+        if _cached_all is None or _cached_all[0] != key:
+            _cached_all = (key, load_manifests(include_off=True))
+        return list(_cached_all[1])
+
+
 def rescan() -> list:
     """Re-read ``apps/`` from disk. This IS the install/uninstall mechanism.
 
@@ -1372,11 +1528,21 @@ def rescan() -> list:
     :func:`_root_fingerprint`), and the only way to force a rescan when a
     filesystem's timestamps cannot be trusted at all.
     """
-    global _cached_manifests, _cached_fingerprint
+    global _cached_manifests, _cached_fingerprint, _cached_all
     with _cache_lock:
         _cached_manifests = None
         _cached_fingerprint = None
-    return current_manifests()
+        _cached_all = None
+    manifests = current_manifests()
+    # A rescan IS install and uninstall, so it is also when an app's outside
+    # service (its feed host) is registered or dropped. Every one starts shut.
+    try:
+        from puffpai import feeds
+        feeds.sync_doors(manifests)
+    except Exception as exc:  # pragma: no cover - never blocks a rescan
+        _record(CONFIG_NAME, "feeds",
+                f"Live-data services could not be registered: {exc}")
+    return manifests
 
 
 def installed_ids(manifests: Optional[list] = None) -> list:
@@ -1474,6 +1640,15 @@ def validate_pack(data: Any, installed: Optional[set] = None) -> Optional[str]:
     return None
 
 
+def _off_first_apps(have: dict) -> list[dict[str, Any]]:
+    """The first apps on disk that are not in *have* (turned off). Never raises."""
+    try:
+        return [m for m in load_manifests(include_off=True)
+                if is_first_app(m) and str(m.get("id")) not in have]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def load_packs(path: Optional[str] = None,
                manifests: Optional[list] = None,
                available: Optional[dict] = None) -> list:
@@ -1512,6 +1687,10 @@ def _load_packs_from(target: str, app_manifests: list,
                      available: Optional[dict]) -> list:
     """Read ONE packs root. Records its own faults; never clears them."""
     by_app_id = {str(m["id"]): m for m in app_manifests if valid_id(m.get("id"))}
+    # A first app that is turned off is still on disk: a pack naming it is not
+    # broken (puffpai.first_apps).
+    for first in _off_first_apps(by_app_id):
+        by_app_id.setdefault(str(first["id"]), first)
 
     try:
         names = sorted(os.listdir(target))
@@ -1754,8 +1933,20 @@ def ui_records(manifests: Optional[list] = None,
             "icon": (str(icon)[:MAX_UI_ICON_LEN] if isinstance(icon, str) else ""),
             "surfaces": surfaces,
             "order": max(0, min(int(order), MAX_ORDER)),
+            "feed": _feed_summary(manifest),
         })
     return out
+
+
+def _feed_summary(manifest: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """The app's live-data card, described in bounded fields, or None."""
+    if "feed" not in manifest:
+        return None
+    try:
+        from puffpai import feeds
+        return feeds.ui_summary(manifest)
+    except Exception:  # pragma: no cover - a record never fails on this
+        return None
 
 
 __all__ = [
@@ -1773,6 +1964,7 @@ __all__ = [
     "MAX_ACTIONS",
     "CORE_TOOL_APPS",
     "CAPABILITY_APPS",
+    "all_manifests",
     "app_dir",
     "apps_dirs",
     "packs_dirs",
@@ -1801,10 +1993,15 @@ __all__ = [
     "REQUIREMENT_UNVERIFIED",
     "pack_privacy_summary",
     "pack_record",
+    "is_first_app",
+    "FIRST_APP_KEY",
     "resolve_within",
     "surface_taxonomy",
     "ui_records",
     "valid_id",
+    "is_issued_id",
+    "ISSUED_ID_RE",
+    "WEB_KIND",
     "validate_manifest",
     "validate_pack",
 ]

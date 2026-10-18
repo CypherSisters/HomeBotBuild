@@ -92,19 +92,33 @@ def _save(items: list[dict]) -> None:
 
 def _audit(verdict: str, entity_id: str, reasons: list[str], requested_by: str,
            task_text: str = "") -> None:
+    """One line in the tile review log. Nothing in it keeps a key or a
+    password, or a piece of one: each text a caller gave is checked WHOLE
+    before it is cut (web_search.key_safe_text), and the id goes by the id
+    rule (web_search.checked_id): a Home Assistant entity id is written as
+    it is; any other id that looks like a key is refused, and then no line
+    is written at all (the verdict itself is unchanged)."""
+    try:
+        from puffpai.web_search import checked_id, key_safe_text
+        eid = checked_id(entity_id)
+        if eid is None:
+            return
+        line = json.dumps({
+            "ts": _utcnow(),
+            "action": "dashboard_add_camera",
+            "verdict": verdict,
+            "entity_id": eid,
+            "reasons": [key_safe_text(r) for r in (reasons or [])],
+            "requested_by": key_safe_text(requested_by),
+            "task_text": key_safe_text(task_text, 300),
+        })
+    except Exception:  # never the raw text instead; the verdict stands
+        return
     try:
         path = _audit_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "ts": _utcnow(),
-                "action": "dashboard_add_camera",
-                "verdict": verdict,
-                "entity_id": entity_id,
-                "reasons": reasons,
-                "requested_by": requested_by,
-                "task_text": task_text[:300],
-            }) + "\n")
+            f.write(line + "\n")
         # Hold this security log at 0640 like the egress ledgers, not the
         # default 0644. One definition of the mode lives in egress_ledger;
         # never raises.
@@ -207,18 +221,21 @@ def sentinel_check(entity_id: str, requested_by: str, task_text: str = "",
     nice = label or entity_id
     try:
         from puffpai.security import consent_requests as _creq
+        from puffpai.web_search import key_safe_text
         _creq.create_request(
             entity_id, nice, "dashboard_add_camera",
             f"no per-device consent (status: {status})",
             requested_by="sentinel",
-            context={"requested_by": requested_by, "task_text": task_text[:200]})
+            # Checked whole for a key before the cut, never cut first.
+            context={"requested_by": requested_by,
+                     "task_text": key_safe_text(task_text, 200)})
     except Exception:
         pass
     return False, (
         f"SENTINEL NEEDS USER PERMISSION: {nice} ({entity_id}) has no "
         f"per-device consent yet, so Sentinel filed a consent request. "
         f"Ask the user directly: 'Sentinel needs your permission to show "
-        f"{nice} on the dashboard — should I approve it?' If they say yes, "
+        f"{nice} on the dashboard. Should I approve it?' If they say yes, "
         f"call sentinel_approve_device; if no, call sentinel_deny_device.")
 
 
@@ -251,7 +268,7 @@ def add_camera_validated(bridge, query: str, label: str | None = None,
                        "on the dashboard.")
     if len(new) > 1:
         opts = "\n".join(f"  - {d.friendly_name} ({d.entity_id})" for d in new[:6])
-        return False, ("More than one camera matches — which one?\n" + opts)
+        return False, ("More than one camera matches. Which one?\n" + opts)
 
     dev = new[0]
     ok, verdict = sentinel_check(dev.entity_id, added_by, task_text,
@@ -269,5 +286,5 @@ def add_camera_validated(bridge, query: str, label: str | None = None,
         items = _load()
         items.append(entry)
         _save(items)
-    return True, (f"Done — {entry['label']} ({dev.entity_id}) is now live on "
+    return True, (f"Done, {entry['label']} ({dev.entity_id}) is now live on "
                   f"the dashboard. Sentinel verdict: {verdict}.")

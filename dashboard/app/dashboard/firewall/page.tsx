@@ -12,7 +12,7 @@
  * What replaced what
  * ------------------
  * The page offers no rule-add or lockdown controls: their backends answer 501
- * on the Orin by design. A control that cannot work is worse than no control,
+ * on the appliance by design. A control that cannot work is worse than no control,
  * because the owner concludes the house is protected. Everything here reads a
  * live route through `apiGet`, and the
  * host firewall — whose writes really are unavailable on this box — is shown as
@@ -220,15 +220,31 @@ const MODE_GLOSS: Record<string, string> = {
   always_allow: "Never filtered. For anything life-safety.",
 };
 
-function door_label(id: string | undefined): string {
-  return (id ?? "door").replace(/_/g, " ");
+/** The five household apps' own spellings; any other app id is shown de-snaked. */
+const APP_NAMES: Record<string, string> = {
+  alarmflow: "AlarmFlow",
+  calendar: "Calendar",
+  fitfam: "FitFam",
+  freshtable: "FreshTable",
+  trivia: "Trivia",
+};
+
+function app_name(app: string): string {
+  return APP_NAMES[app] ?? app.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+}
+
+/** A switch's name in plain words. An app's switch is named for the app,
+ *  never by its id ("app:alarmflow:0"). */
+function door_label(door: Door): string {
+  if (door.app) return `${app_name(door.app)} app`;
+  return (door.id ?? door.name ?? "switch").replace(/_/g, " ");
 }
 
 /* ── page ─────────────────────────────────────────────────────────────── */
 
 export default function FirewallPage() {
   const [zone3, setZone3] = useState<Zone3Status | null>(null);
-  const [zone3Off, setZone3Off] = useState("");
+  const [zone3Off, setZone3Off] = useState(false);
   const [managed, setManaged] = useState<DevicePolicy[]>([]);
   const [unmanaged, setUnmanaged] = useState<Unmanaged[]>([]);
   const [host, setHost] = useState<FirewallStatus | null>(null);
@@ -256,16 +272,14 @@ export default function FirewallPage() {
       apiGet<{ buckets: BucketRow[] }>("/zone3/buckets"),
     ]);
 
+    // When Zone 3 does not answer, the notice says so in its own sentence; the
+    // HTTP status words ("Service Unavailable") are never shown to the owner.
     if (z3.status === "fulfilled") {
       setZone3(z3.value);
-      setZone3Off("");
+      setZone3Off(false);
     } else {
       setZone3(null);
-      setZone3Off(
-        z3.reason instanceof Error
-          ? z3.reason.message
-          : "Zone 3 is not answering.",
-      );
+      setZone3Off(true);
     }
     setManaged(mg.status === "fulfilled" ? (mg.value.devices ?? []) : []);
     setUnmanaged(um.status === "fulfilled" ? (um.value.devices ?? []) : []);
@@ -511,7 +525,7 @@ export default function FirewallPage() {
           label="Host firewall"
           value={
             host
-              ? `${host.lockdown_active ? "Lockdown" : "Default-deny"}, ${openDoors} door${openDoors === 1 ? "" : "s"}`
+              ? `${host.lockdown_active ? "Lockdown" : "Default-deny"}, ${openDoors} switch${openDoors === 1 ? "" : "es"} on`
               : "—"
           }
           title={host?.reason || host?.backend}
@@ -523,7 +537,7 @@ export default function FirewallPage() {
       {zone3Off && (
         <Notice tone="var(--lemon)">
           Zone 3 is not running, so nothing on this network is being filtered or
-          logged. {zone3Off}
+          logged.
         </Notice>
       )}
 
@@ -729,7 +743,7 @@ export default function FirewallPage() {
         style={{ color: "var(--text2)" }}
       >
         These rules name Home Assistant as the client, because the hub is what
-        talks to a vendor&rsquo;s cloud — not the devices themselves.
+        talks to a vendor&rsquo;s cloud, not the devices themselves.
       </p>
 
       {loading && (
@@ -1045,16 +1059,16 @@ export default function FirewallPage() {
       {/* 4 — Doors. The box's own egress, not the household's. */}
       <SectionRule
         title="What can leave this house"
-        note={`${openDoors} of ${doors.length} door(s) open — PuffPAI's own outbound reach`}
+        note={`${openDoors} of ${doors.length} switches on: PuffPAI's own outbound reach`}
       />
       <TableFrame>
         <table className="puff-bridge-table w-full min-w-[640px] text-left text-xs">
-          <Thead columns={["Door", "State", "Set by", "Goes to"]} />
+          <Thead columns={["Switch", "State", "Set by", "Goes to"]} />
           <tbody>
             {doors.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-3 py-6 text-center" style={{ color: "var(--text2)" }}>
-                  {loading ? "Reading the door registry…" : "No doors reported."}
+                  {loading ? "Reading the switches..." : "No switches reported."}
                 </td>
               </tr>
             )}
@@ -1067,15 +1081,12 @@ export default function FirewallPage() {
                 <td className="px-3 py-2" style={{ color: "var(--text)" }}>
                   <span className="flex items-center gap-1.5">
                     <Icon path={mdiDoorClosed} size="13" />
-                    {door_label(door.id ?? door.name)}
-                    {door.app && (
-                      <Chip label={door.app} tone="var(--lav)" />
-                    )}
+                    {door_label(door)}
                   </span>
                 </td>
                 <td className="px-3 py-2">
                   <Chip
-                    label={door.open ? "open" : "shut"}
+                    label={door.open ? "on" : "off"}
                     tone={door.open ? "var(--lemon)" : "var(--text2)"}
                     title={door.reason}
                   />
@@ -1095,8 +1106,8 @@ export default function FirewallPage() {
           and their own disclosure copy on the Settings card, and duplicating a
           switch is how two surfaces come to disagree about one boolean. */}
       <p className="mt-1.5 text-[11px]" style={{ color: "var(--text2)" }}>
-        Shown here for context. Doors are opened and shut on the Settings card,
-        where each one's disclosure is printed beside it.
+        Shown here for context. Switches are turned on and off on the Settings
+        card, where each one says what it sends.
       </p>
 
       {/* 5 — Consent queue. */}

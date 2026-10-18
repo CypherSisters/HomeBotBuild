@@ -266,14 +266,52 @@ def log_activity(agent: str, event: str, task: str, status: str,
     return append(entry, path=path)
 
 
+# ── the build engine's writers ──────────────────────────────────────
+#
+# The places that install things, make pages, refresh feeds and run routines
+# call :func:`record` under the agent that owns the work, so the team page
+# shows it. Lines hold a short plain description and a tool name, never tool
+# arguments or replies: the feed is shown on a page and must not repeat what
+# the owner typed.
+
+#: The agent id of the chat tool loop, the one the owner talks to.
+CHAT_AGENT = "chat"
+
+
+def path() -> str:
+    """The feed's path (the same file :func:`get_activity_log_path` names)."""
+    return get_activity_log_path()
+
+
+def _short(text, limit: int = 160) -> str:
+    one = " ".join(str(text or "").split())
+    return one if len(one) <= limit else one[: limit - 3].rstrip() + "..."
+
+
+def record(agent: str, task: str, *, status: str = "completed",
+           tool: str = "", event: str = "work", reason: str = "") -> None:
+    """Add one line. Never raises: a feed that cannot be written never stops
+    the work it describes."""
+    entry = {"agent": str(agent or ""), "event": event, "task": _short(task),
+             "status": status, "timestamp": _utcnow()}
+    if tool:
+        entry["tool"] = _short(tool, 80)
+    if reason:
+        entry["reason"] = _short(reason, 200)  # why it did not work, plain words
+    append(entry)
+
+
 __all__ = [
     "ACTIVITY_LOG_NAME",
     "BACKUP_COUNT",
+    "CHAT_AGENT",
     "MAX_BYTES",
     "agent_logs_dir",
     "append",
     "get_activity_log_path",
     "log_activity",
+    "path",
+    "record",
     "reset_cache",
     "resolve_agent_log",
 ]

@@ -86,6 +86,18 @@ class DirectoryEntry:
     redirect_index: int = 0
 
 
+# Tags whose start or end is a paragraph break in the plain text.
+_BLOCK_TAG_RE = re.compile(
+    r'<\s*/?\s*(?:p|div|br|hr|h[1-6]|li|ul|ol|dl|dt|dd|tr|table|thead|tbody'
+    r'|blockquote|pre|section|article|header|footer|figure|figcaption'
+    r'|caption|details|summary)\b[^>]*>', re.IGNORECASE)
+
+
+def _paragraph_break(match: 're.Match[str]') -> str:
+    """One newline stays a line break; two or more become one blank line."""
+    return '\n\n' if match.group(0).count('\n') > 1 else '\n'
+
+
 @dataclass
 class Article:
     """A retrieved article with its content."""
@@ -102,15 +114,25 @@ class Article:
 
     @property
     def plain_text(self) -> str:
-        """Strip HTML tags and return plain text."""
+        """Strip HTML tags and return plain text, one paragraph per block.
+
+        Block-level tags (paragraphs, headings, list items, table rows, line
+        breaks) become paragraph breaks, so a long article keeps its shape
+        and can be cut into passages at natural places. Everything used to be
+        squashed onto one line, which made every article one giant passage
+        whose opening was all a search ever saw.
+        """
         text = self.text
         # Remove script/style blocks
         text = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', text,
                        flags=re.DOTALL | re.IGNORECASE)
-        # Remove tags
+        # Block-level tags end a paragraph.
+        text = _BLOCK_TAG_RE.sub('\n\n', text)
+        # Remove the other tags
         text = re.sub(r'<[^>]+>', ' ', text)
-        # Collapse whitespace
-        text = re.sub(r'\s+', ' ', text).strip()
+        # Collapse spaces inside lines, then runs of blank lines.
+        text = re.sub(r'[^\S\n]+', ' ', text)
+        text = re.sub(r' *\n[\n ]*', _paragraph_break, text).strip()
         # Decode common HTML entities
         for entity, char in [('&amp;', '&'), ('&lt;', '<'), ('&gt;', '>'),
                               ('&quot;', '"'), ('&#39;', "'"), ('&nbsp;', ' ')]:
@@ -579,13 +601,6 @@ class ZIMReader:
             if mime_filter and not entry.mime_type.startswith(mime_filter):
                 continue
             yield entry
-
-    def get_main_page(self) -> Optional[Article]:
-        """Return the main page article, if defined."""
-        main = self._header.main_page
-        if main == 0xFFFFFFFF:
-            return None
-        return self.get_article(main)
 
     def __repr__(self) -> str:
         return (

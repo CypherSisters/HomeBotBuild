@@ -273,7 +273,7 @@ def get_restart_ledger_path() -> str:
 def _tcp_reachable(host: str, port: int, timeout: float = _PROBE_TIMEOUT) -> bool:
     """Deterministic TCP connect probe. Never raises."""
     try:
-        with socket.create_connection((host, port), timeout=timeout):
+        with socket.create_connection((host, port), timeout=timeout):  # lan-egress: health probe of a service the owner configured on this computer or home network
             return True
     except Exception:
         return False

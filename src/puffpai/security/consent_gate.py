@@ -10,6 +10,17 @@ Implements the ``approve_*`` surface from agent-config.json:
                    automations before Bridge ever sees them.
 * sentinel_review — policy verdict (allow / flag / deny) on every automation
                    the agents author, with a JSONL audit trail.
+* ConsentLedger:  the owner's yes or no for things that are not Home
+                   Assistant devices (an outside service, a routine), kept
+                   default-pending with its own JSONL audit trail.
+
+No text a caller gives is ever kept with a key or a password in it, or a
+piece of one: every free-text field is checked WHOLE before it is cut
+(web_search.key_safe_text). An id is a lookup key, so it is never replaced
+by a placeholder (web_search.checked_id): an id with Home Assistant's
+entity-id shape is kept exactly as Home Assistant writes it; any other id
+that looks like a key or a password (or that the check cannot read) is
+refused, nothing about it is written, and it is treated as denied.
 
 ENFORCEMENT IS FLAG-GATED: set PUFFPAI_ENFORCE_CONSENT=1 to make deny
 verdicts binding. Default (unset/0) is log-only "dry-run" so nothing
@@ -25,7 +36,7 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 # statedir is a stdlib-only leaf, so importing it at module scope pulls in
 # nothing — it defers the puffpai.config import (and with it the secrets
@@ -33,6 +44,7 @@ from typing import Any
 # tests/test_statedir.py pins it to config.STATE_DIR_ENV, so reading it here
 # cannot drift from canon.
 from puffpai.statedir import _STATE_DIR_ENV, resolve_runtime_dir
+from puffpai.web_search import KEY_TEXT_PLACEHOLDER, checked_id, key_safe_text
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +103,8 @@ _data_dir_cache: str | None = None
 # resolvers below check for it explicitly and an override still wins. Clearing
 # any leftover on (re)import keeps a reload a full reset, exactly as it was
 # when these were plain constants.
-for _name in ("CONSENT_PATH", "REVIEW_LOG", "LEGACY_APPROVALS"):
+for _name in ("CONSENT_PATH", "REVIEW_LOG", "LEGACY_APPROVALS",
+              "CONSENT_LEDGER", "CONSENT_STATE"):
     globals().pop(_name, None)
 del _name
 
@@ -187,6 +200,14 @@ def _review_log_path() -> str:
 def _legacy_approvals_path() -> str:
     return _override("LEGACY_APPROVALS") or _state_file(
         "ha_device_approvals.jsonl")
+
+
+def _ledger_state_path() -> str:
+    return _override("CONSENT_STATE") or _state_file("consent_state.json")
+
+
+def _ledger_audit_path() -> str:
+    return _override("CONSENT_LEDGER") or _state_file("consent_ledger.jsonl")
 
 
 #: Resolved review-log paths already reported as unwritable, so the error is
@@ -294,6 +315,10 @@ def __getattr__(name: str) -> str:
         return _review_log_path()
     if name == "LEGACY_APPROVALS":
         return _legacy_approvals_path()
+    if name == "CONSENT_STATE":
+        return _ledger_state_path()
+    if name == "CONSENT_LEDGER":
+        return _ledger_audit_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 SAFETY_CRITICAL_DOMAINS = {"lock", "cover", "alarm_control_panel", "camera", "siren"}
@@ -301,6 +326,18 @@ ALLOWED_TRIGGER_TYPES = {"time", "state", "event", "sun"}
 ALLOWED_ACTION_TYPES = {"turn_off", "turn_on", "toggle", "dim", "notify", "lock", "unlock"}
 MAX_BLAST_RADIUS = int(os.environ.get("PUFFPAI_MAX_BLAST_RADIUS", "10"))
 _EXTERNAL_MARKERS = ("http://", "https://", "webhook.site", "requestbin", "ngrok")
+
+# ConsentLedger statuses.
+PENDING = "pending"
+APPROVED = "approved"
+DENIED = "denied"
+
+_PENDING_NOTE = (
+    "consent pending: device/entity not yet approved by a human, recorded for "
+    "review"
+)
+_REFUSED_NOTE = ("a target id looked like a key or a password, so it was "
+                 "refused and not kept")
 
 
 def enforcement_enabled() -> bool:
@@ -518,6 +555,209 @@ def get_store() -> ConsentStore:
     return _store
 
 
+# ─────────────────────── Consent ledger ───────────────────────
+
+class ConsentLedger:
+    """A persistent, human-driven consent ledger for devices and entities.
+
+    State lives in a JSON file (``consent_state.json``); every sighting and
+    decision is also appended to a JSONL audit trail (``consent_ledger.jsonl``).
+    Both resolve in the consent data dir, like the store's files. The ledger
+    holds no policy of its own: a human's :meth:`approve` / :meth:`deny` calls
+    are the only thing that moves an entity out of ``pending``.
+    """
+
+    def __init__(self, state_path: Optional[str] = None,
+                 audit_path: Optional[str] = None) -> None:
+        self._state_path = state_path or _ledger_state_path()
+        self._audit_path = audit_path or _ledger_audit_path()
+        self._lock = threading.Lock()
+        self._state: dict[str, dict] = self._load()
+
+    # ── persistence ──────────────────────────────────────────────────────
+    def _load(self) -> dict[str, dict]:
+        try:
+            with open(self._state_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return {}
+
+    def _save(self) -> None:
+        """Persist the state file atomically. Never raises."""
+        try:
+            os.makedirs(os.path.dirname(self._state_path), exist_ok=True)
+            tmp = f"{self._state_path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self._state, f, indent=2, default=str)
+            os.replace(tmp, self._state_path)
+        except OSError:
+            pass
+
+    def _audit(self, entry: dict) -> None:
+        """Append an entry to the JSONL audit trail. Never raises."""
+        try:
+            os.makedirs(os.path.dirname(self._audit_path), exist_ok=True)
+            with open(self._audit_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, default=str) + "\n")
+        except OSError:
+            pass
+
+    # ── core API ─────────────────────────────────────────────────────────
+    def record(self, entity_id: str, *, source: str = "agent",
+               context: str = "") -> str:
+        """Ensure ``entity_id`` is tracked; register it as pending if new.
+
+        Returns the entity's current status (``pending`` / ``approved`` /
+        ``denied``). An id refused by :func:`~puffpai.web_search.checked_id`
+        (it looks like a key or a password) is not recorded: ``denied``.
+        """
+        eid = checked_id(entity_id)
+        if eid is None:
+            return DENIED
+        with self._lock:
+            row = self._state.get(eid)
+            if row is None:
+                source = key_safe_text(source)
+                row = {
+                    "status": PENDING,
+                    "first_seen": _utcnow(),
+                    "source": source,
+                    "context": key_safe_text(context, 200),
+                    "decided_at": None,
+                }
+                self._state[eid] = row
+                self._save()
+                self._audit({"event": "seen", "entity_id": eid,
+                             "status": PENDING, "source": source,
+                             "at": row["first_seen"]})
+            return str(row["status"])
+
+    def status(self, entity_id: str) -> str:
+        """Return the current status of ``entity_id`` (``pending`` if unknown;
+        ``denied`` for an id :func:`~puffpai.web_search.checked_id` refuses)."""
+        eid = checked_id(entity_id)
+        if eid is None:
+            return DENIED
+        row = self._state.get(eid)
+        return str(row["status"]) if row else PENDING
+
+    def approve(self, entity_id: str, *, by: str = "owner") -> dict:
+        """Human approval: mark ``entity_id`` approved."""
+        return self._decide(entity_id, APPROVED, by)
+
+    def deny(self, entity_id: str, *, by: str = "owner") -> dict:
+        """Human denial: mark ``entity_id`` denied."""
+        return self._decide(entity_id, DENIED, by)
+
+    def _decide(self, entity_id: str, status: str, by: str) -> dict:
+        eid = checked_id(entity_id)
+        if eid is None:
+            # Refused: nothing is written, and it keeps reading as denied.
+            return {"entity_id": KEY_TEXT_PLACEHOLDER, "status": DENIED,
+                    "refused": _REFUSED_NOTE}
+        by = key_safe_text(by)
+        with self._lock:
+            row = self._state.get(eid) or {
+                "status": PENDING,
+                "first_seen": _utcnow(),
+                "source": "manual",
+                "context": "",
+                "decided_at": None,
+            }
+            row["status"] = status
+            row["decided_at"] = _utcnow()
+            row["decided_by"] = by
+            self._state[eid] = row
+            self._save()
+            self._audit({"event": "decision", "entity_id": eid,
+                         "status": status, "by": by, "at": row["decided_at"]})
+            return {"entity_id": eid, "status": status}
+
+    def pending(self) -> list[str]:
+        """Return the sorted ids of entities awaiting a human decision."""
+        return sorted(e for e, r in self._state.items()
+                      if r.get("status") == PENDING)
+
+    def all(self) -> dict[str, dict]:
+        """Return a copy of the full ledger state."""
+        return {e: dict(r) for e, r in self._state.items()}
+
+    # ── verdict for a set of targets ─────────────────────────────────────
+    def gate(self, targets: list[str], *, name: str = "", task_text: str = "",
+             authored_by: str = "agent") -> dict:
+        """Rule on a resolved target list using recorded human consent.
+
+        For each target, records it (pending if new) and reads its status:
+
+        * any target **denied**, or any target id that
+          :func:`~puffpai.web_search.checked_id` refuses (it looks like a key
+          or a password; never recorded, never named) → ``deny``;
+        * else any target **pending/unknown** → ``flag`` (allowed-but-noted);
+        * else (all **approved**) → ``allow``.
+
+        Returns ``{"action", "reasons", "targets", ...}``. No text in it (or in
+        the ledger) keeps a key: a refused id is left out of ``targets`` and
+        the reason does not name it.
+        """
+        clean: list[str] = []
+        refused = 0
+        for t in {t for t in targets if t}:
+            eid = checked_id(t)
+            if eid is None:
+                refused += 1
+            else:
+                clean.append(eid)
+        clean.sort()
+        denied: list[str] = []
+        pending: list[str] = []
+        for t in clean:
+            st = self.record(t, source=authored_by, context=task_text)
+            if st == DENIED:
+                denied.append(t)
+            elif st != APPROVED:
+                pending.append(t)
+
+        reasons: list[str] = []
+        if refused:
+            reasons.append(_REFUSED_NOTE)
+        if denied or refused:
+            action = "deny"
+            if denied:
+                reasons.append(f"consent denied by owner for: {denied[:5]}")
+        elif pending:
+            action = "flag"
+            reasons.append(_PENDING_NOTE)
+            reasons.append(f"awaiting approval for: {pending[:5]}")
+        else:
+            action = "allow"
+
+        result = {
+            "action": action,
+            "reasons": reasons,
+            "targets": clean,
+            "automation_name": key_safe_text(name),
+            "authored_by": key_safe_text(authored_by),
+            "task_text": key_safe_text(task_text, 200),
+            "reviewed_at": _utcnow(),
+            "gate": "gate_targets",
+        }
+        self._audit(result)
+        return result
+
+
+# ── module-level default ledger ──────────────────────────────────────────
+_default_ledger: Optional[ConsentLedger] = None
+
+
+def get_ledger() -> ConsentLedger:
+    """Return the process-wide default :class:`ConsentLedger` singleton."""
+    global _default_ledger
+    if _default_ledger is None:
+        _default_ledger = ConsentLedger()
+    return _default_ledger
+
+
 # ─────────────────────── Schema validation ───────────────────────
 
 _REQUIRED_KEYS = ("name", "trigger_type", "trigger_value", "action_type",
@@ -611,8 +851,8 @@ def sentinel_review(parsed: dict, states: list | None, task_text: str = "") -> d
         "reasons": reasons,
         "targets": targets,
         "reviewed_at": _utcnow(),
-        "task_text": task_text[:200],
-        "automation_name": parsed.get("name", ""),
+        "task_text": key_safe_text(task_text, 200),
+        "automation_name": key_safe_text(parsed.get("name", "")),
     }
     _append_review(result)
     return result
@@ -641,14 +881,27 @@ def gate_targets(
     """
     reasons: list[str] = []
     verdict = "allow"
-    targets = sorted({t for t in targets if t})
+    clean: list[str] = []
+    refused = 0
+    for raw in {t for t in targets if t}:
+        eid = checked_id(raw)
+        if eid is None:
+            refused += 1
+        else:
+            clean.append(eid)
+    targets = sorted(clean)
+    if refused:
+        # Never named: the id itself is what must not be kept.
+        verdict = "deny"
+        reasons.append(_REFUSED_NOTE)
     store = get_store()
 
     unapproved = [t for t in targets if store.status(t) != "approved"]
     legacy = [t for t in unapproved if store.status(t) == "legacy_blanket"]
     hard_pending = [t for t in unapproved if t not in legacy]
-    if legacy:
+    if legacy and verdict != "deny":
         verdict = "flag"
+    if legacy:
         reasons.append(
             f"{len(legacy)} target(s) only covered by the legacy blanket "
             f"approval (no per-device consent): {legacy[:5]}")
@@ -674,9 +927,9 @@ def gate_targets(
         "reasons": reasons,
         "targets": targets,
         "reviewed_at": _utcnow(),
-        "task_text": task_text[:200],
-        "automation_name": name,
-        "authored_by": authored_by,
+        "task_text": key_safe_text(task_text, 200),
+        "automation_name": key_safe_text(name),
+        "authored_by": key_safe_text(authored_by),
         "gate": "gate_targets",
     }
     _append_review(result)

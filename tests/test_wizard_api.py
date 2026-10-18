@@ -33,7 +33,11 @@ API_KEY = api_server._API_KEY
 
 _ROUTES = [("get", "/wizard/cards"), ("post", "/wizard/apply"),
            ("post", "/wizard/run"), ("get", "/wizard/state"),
-           ("post", "/wizard/resume")]
+           ("post", "/wizard/resume"),
+           # The conversation: same gate, no exceptions.
+           ("get", "/wizard/flow"), ("post", "/wizard/summary"),
+           ("post", "/wizard/approve"), ("post", "/wizard/vault/skip"),
+           ("get", "/wizard/build"), ("post", "/wizard/build")]
 
 
 def _auth():
@@ -107,20 +111,25 @@ def test_cards_are_ordered_and_change_nothing(client, scratch):
     resp = client.get("/wizard/cards", headers=_auth())
     assert resp.status_code == 200
     body = resp.get_json()
-    # The order is the runner's schedule, carried explicitly, with the part
-    # for the skill that asks three questions.
+    # The order is the schedule this build's setup walks (the console's, so
+    # the browser and the console cannot drift), carried explicitly, with the
+    # part for the skill that asks three questions.
+    from puffpai.wizard import host as wizard_host
     from puffpai.wizard import runner as wizard_runner
     scheduled = [f"{step.skill}:{part}" if part else step.skill
-                 for step in wizard_runner.SCHEDULE
+                 for step in wizard_host.setup_schedule()
                  for part in [wizard_runner.lifecycle_part(step.part)]
                  if part is not None and step.skill]
     assert body["order"] == scheduled
     assert {"secure:posture", "secure:vault", "secure:bridge"} <= set(
         body["order"]), "only one secure part is offered"
-    assert [row["skill"] for row in body["not_converted"]] == ["prove"]
+    on_schedule = {cid.split(":")[0] for cid in scheduled}
+    assert [row["skill"] for row in body["not_converted"]] == [
+        skill for skill in wizard_runner.SKILL_ORDER if skill not in on_schedule]
+    assert {"assemble", "prove"} <= {row["skill"] for row in body["not_converted"]}
     assert body["not_converted"][0]["title"]
     titles = {card["skill"]: card["title"] for card in body["cards"]}
-    assert titles["discover"] == "What this machine is"
+    assert titles["discover"] == "This computer"
     assert body["refusals"] == []
     after = sorted(os.listdir(get_config().CONFIG_DIR)) if os.path.isdir(
         get_config().CONFIG_DIR) else []
@@ -445,7 +454,7 @@ def test_an_http_apply_has_no_face_even_after_a_console_render(client, scratch):
     vault = next(c for c in body["cards"]
                  if c["skill"] == "secure" and c["part"] == "vault")
     assert vault["status"] == "needs_you"
-    assert "step-by-step setup" in vault["decided"]
+    assert "next screen" in vault["decided"]
     assert not any(f["kind"] == "secret_entry" for f in vault["fields"])
 
     resp = client.post("/wizard/apply", headers=_auth(),
@@ -473,7 +482,7 @@ def _stopped_record(cfg) -> str:
             "log": [{"entry": "discover.card", "skill": "discover",
                      "part": "card", "outcome": "done", "started_at": 1.0,
                      "finished_at": 2.0,
-                     "shown": {"title": "What this machine is"}}],
+                     "shown": {"title": "This computer"}}],
             "gaps": [], "sections": {}, "shared": {}}, handle)
     return path
 
@@ -486,7 +495,7 @@ def test_the_state_route_says_a_stopped_setup_is_there_to_continue(client,
     assert offer["offer"] is True
     assert offer["stopped_card"], "the banner has to say where it stopped"
     assert any(row["card"] == "discover" for row in offer["decided"])
-    assert "What this machine is" in [row["title"] for row in offer["decided"]]
+    assert "This computer" in [row["title"] for row in offer["decided"]]
 
 
 def test_no_stopped_setup_is_an_offer_of_nothing(client, scratch):

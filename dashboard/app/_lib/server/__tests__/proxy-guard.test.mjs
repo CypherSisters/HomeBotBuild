@@ -146,6 +146,9 @@ check("apps/calendar/data", isAllowedProxyPath(["apps", "calendar", "data"]), tr
 check("ha/service/light/turn_on", isAllowedProxyPath(["ha", "service", "light", "turn_on"]), true);
 check("knowledge/upload", isAllowedProxyPath(["knowledge", "upload"]), true);
 check("widgets/sync (not a surface in this build)", isAllowedProxyPath(["widgets", "sync"]), false);
+check("programs/<id>/launch", isAllowedProxyPath(["programs", "p0123abcd", "launch"]), true);
+check("files/open", isAllowedProxyPath(["files", "open"]), true);
+check("installed", isAllowedProxyPath(["installed"]), true);
 check("api/media/control", isAllowedProxyPath(["api", "media", "control"]), true);
 // Settings > Home point (HomePointCard.tsx). Rides the existing "api" prefix;
 // if it were not allowed, paired browsers would get 404 while :8000 said 200.

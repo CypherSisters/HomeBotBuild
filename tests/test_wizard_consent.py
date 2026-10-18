@@ -121,9 +121,15 @@ def test_a_yes_run_that_names_nothing_selects_nothing_and_says_why(
     assert sources["fetched"] == []
     assert sources["skipped"] == "non_interactive"
 
-    # The card said so on the screen, in the words a person can act on.
-    assert "Fetching none of them" in out
-    assert "consent nobody gave is not consent" in out
+    # The card says so, in the words a person can act on. HomeBot's console
+    # does not draw the Integrate card, so what it offered is read from the
+    # run record (wizard_run.json keeps every card's shown fields).
+    state = json.loads((root / "config" / "wizard_run.json")
+                       .read_text(encoding="utf-8"))
+    shown = [row.get("shown") or {} for row in state.get("log") or ()
+             if row.get("entry") == "integrate.card" and row.get("shown")]
+    assert shown, [row.get("entry") for row in state.get("log") or ()]
+    assert "no_consent" in (shown[-1].get("fields") or [])
 
 
 def test_the_sources_card_records_who_selected_on_an_unattended_run(

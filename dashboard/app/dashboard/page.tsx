@@ -251,8 +251,10 @@ export default function DashboardPage() {
     });
   }, []);
 
-  /* ── Owner name, from the one identity source (falls back to Operator) ── */
-  const displayName = useOwnerName("Operator");
+  /* ── Owner name, from the one identity source. With no name yet the
+     greeting goes without one; the transcript's initials keep Operator. ── */
+  const ownerName = useOwnerName("");
+  const displayName = ownerName || "Operator";
 
   // Registry widgets (news feeds, …) join the same grid as the built-ins.
   const widgets = useWidgets();
@@ -757,7 +759,7 @@ export default function DashboardPage() {
               color: "var(--text)",
             }}
           >
-            {getGreeting()}, {displayName}.
+            {ownerName ? `${getGreeting()}, ${ownerName}.` : `${getGreeting()}.`}
           </h1>
           <p
             className="max-w-[560px]"
@@ -930,7 +932,7 @@ export default function DashboardPage() {
             <span style={{ color: "var(--pink)", fontWeight: 700 }}>
               &ldquo;Puff, put the weather top left&rdquo;
             </span>
-            {hiddenTiles.length > 0 ? " — then add:" : "."}
+            {hiddenTiles.length > 0 ? ", then add:" : "."}
           </div>
           {hiddenTiles.map((t) => (
             <TrayPill key={t.id} icon="add" onClick={() => unhideTile(t.id)}>
@@ -1096,7 +1098,7 @@ function computeLiveRemaining(item: any, nowMs: number): number {
 }
 
 function formatRemaining(seconds: number): string {
-  if (seconds == null || isNaN(seconds)) return "—";
+  if (seconds == null || isNaN(seconds)) return "unknown";
   if (seconds <= 0) return "ringing!";
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -1573,7 +1575,7 @@ function AddCameraControl({
         onAdded();
       } else if (res.kind === "needs_permission") {
         // The backend's 403 text is written for the chat agent, not the owner.
-        setNotice("Permission needed — Drawbridge filed a request for this camera.");
+        setNotice("Permission needed. Drawbridge filed a request for this camera.");
         const reqs = await getConsentRequests().catch((): ConsentRequest[] => []);
         setPending(reqs.find((r) => r.entity_id === entityId) ?? null);
       } else {
@@ -1743,7 +1745,7 @@ function CameraFeed({
       else if (r.kind === "failed") setPowerNotice(r.message);
     },
     onConsentNeeded: () =>
-      setPowerNotice("Permission needed — approve this camera in Consent requests."),
+      setPowerNotice("Permission needed. Approve this camera in Consent requests."),
   });
 
   // Poll HA camera proxy for snapshots. Battery cams sleep — long probe
@@ -1909,7 +1911,7 @@ function CameraFeed({
                 action: "turn_off",
               })
             }
-            title={`Turn off ${label} — needs confirmation`}
+            title={`Turn off ${label} (asks you to confirm)`}
             aria-label={`Turn off ${label}`}
             className="puff-noblur cursor-pointer rounded-md border-0 bg-black/50 p-1 text-white/40 opacity-0 backdrop-blur-sm transition group-hover:opacity-100"
           >
