@@ -58,6 +58,8 @@ Copyright (c) 2025 Cypher Sisters. Apache-2.0 License.
 
 from __future__ import annotations
 
+import builtins
+
 import asyncio
 import hashlib
 import json
@@ -409,7 +411,8 @@ async def _with_session(rec: dict, headers: Optional[dict],
 
 def _leaf(exc: BaseException) -> BaseException:
     """The first real error inside an exception group (anyio wraps them)."""
-    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+    group = getattr(builtins, "BaseExceptionGroup", None)  # Python 3.11+
+    while group is not None and isinstance(exc, group) and exc.exceptions:
         exc = exc.exceptions[0]
     return exc
 

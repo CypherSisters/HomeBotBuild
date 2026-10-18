@@ -93,7 +93,10 @@ from puffpai import procflags
 import sys
 import threading
 import time
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib  # type: ignore[no-redef]
 import urllib.error
 import urllib.request
 from typing import Any, Callable, Optional

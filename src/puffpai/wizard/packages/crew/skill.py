@@ -92,11 +92,11 @@ def propose(ctx) -> dict:
                    "label": "Specialists on top of the team",
                    "min": 0, "max": fitted, "current": chosen,
                    "proposed": fitted})
-    # A figure the owner lowered is said back to them.
-    if stated:
-        plural = "specialist" if chosen == 1 else "specialists"
-        line = f"{line} Room for up to {chosen} {plural}, as you chose."
-        fields[0]["current"] = line
+    # The figure is always said; one the owner lowered is said back as theirs.
+    plural = "specialist" if chosen == 1 else "specialists"
+    line = (f"{line} Room for up to {chosen} {plural}, as you chose."
+            if stated else f"{line} Room for up to {chosen} {plural}.")
+    fields[0]["current"] = line
     card = {
         "skill": "crew", "section": "crew", "title": "Its helpers",
         "decided": line,

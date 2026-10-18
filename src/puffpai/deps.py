@@ -462,7 +462,10 @@ def _folder_files(folder: Optional[str], out: dict[str, list]) -> None:
         pyproject = os.path.join(base, "pyproject.toml")
         if os.path.isfile(pyproject):
             try:
-                import tomllib
+                try:
+                    import tomllib
+                except ModuleNotFoundError:  # Python 3.10
+                    import tomli as tomllib  # type: ignore[no-redef]
                 with open(pyproject, "rb") as fh:
                     data = tomllib.loads(fh.read(256 * 1024).decode("utf-8", "replace"))
             except Exception:  # noqa: BLE001 - a broken file declares nothing

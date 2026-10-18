@@ -32,8 +32,11 @@ from typing import Any, Optional
 
 try:
     import tomllib
-except ImportError:  # pragma: no cover - Python 3.10
-    tomllib = None  # type: ignore[assignment]
+except ImportError:  # Python 3.10
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ImportError:  # pragma: no cover
+        tomllib = None  # type: ignore[assignment]
 
 MAX_BYTES = 256 * 1024
 OPEN, LIMITED, CUSTOM, NONE = "open", "limited", "custom", "none"

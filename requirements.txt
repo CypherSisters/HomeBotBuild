@@ -91,3 +91,4 @@ pydantic>=2.0.0,<3.0
 # with no keychain service available the provider falls through to the
 # vault/env tiers instead of failing.
 keyring>=25.0
+tomli>=2.0; python_version < "3.11"
